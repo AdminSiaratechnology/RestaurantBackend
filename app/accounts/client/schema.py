@@ -1,0 +1,27 @@
+from pydantic import BaseModel, EmailStr
+from typing import Optional
+
+
+class ClientCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    partner_id: Optional[int] = None   # only for superadmin
+    is_active: Optional[bool] = True 
+
+class ClientUpdate(BaseModel):
+    name: Optional[str]
+    email: Optional[EmailStr]
+    password: Optional[str]
+    is_active: Optional[bool]
+
+
+class ClientOut(BaseModel):
+    id: int
+    name: str
+    email: str
+    partner_id: int
+    is_active: bool
+
+    class Config:
+        from_attributes = True
