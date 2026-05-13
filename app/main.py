@@ -29,6 +29,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",  # Vite dev server
         "http://localhost:3000",  # CRA dev server
+        "https://restaurantsystemsiara.netlify.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
