@@ -14,7 +14,7 @@ class Customer(Base):
     phone = Column(String, nullable=False, index=True)
     email = Column(String, nullable=True)
 
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
 
     # 🔥 NEW FIELDS
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)

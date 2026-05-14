@@ -12,7 +12,7 @@ class Branch(Base):
     city = Column(String, nullable=False)
 
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
-    brand_id = Column(Integer, ForeignKey("brands.id"), nullable=True)
+    brand_id = Column(Integer, ForeignKey("brands.id"), nullable=False)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -20,8 +20,7 @@ class Branch(Base):
     client = relationship("Client", back_populates="branches")
     brand = relationship("Brand", back_populates="branches")
 
-    tables = relationship("Table", back_populates="branch")  # ✅ MATCHES
-    # staffs = relationship("Staff", back_populates="branch")
+    tables = relationship("Table", back_populates="branch")  
     orders = relationship("Order", back_populates="branch")
     pricings = relationship("Pricing", back_populates="branch")
     categories = relationship("Category", back_populates="branch")

@@ -56,7 +56,7 @@ async def create_item(
 
     if not branch:
         raise HTTPException(400, "Invalid branch")
-
+    print(payload.name, payload.branch_id)
     # ✅ Duplicate Check
     result = await db.execute(
         select(Item).where(

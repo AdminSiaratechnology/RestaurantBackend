@@ -5,7 +5,7 @@ from datetime import datetime
 
 class CategoryCreate(BaseModel):
     name: str
-    icon: str
+    icon: str 
     branch_id: int
 
 

@@ -3,8 +3,9 @@ from sqlalchemy import select, delete
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
+from app.accounts.client.model import Client
 from app.db.config import SessionDep
-from app.accounts.deps import access_three, get_client_if_accessible
+from app.accounts.deps import access_one, get_client_if_accessible
 
 from app.accounts.item.model import Item
 from app.accounts.order.model import Order, OrderItem
@@ -17,14 +18,16 @@ router = APIRouter(prefix="/order", tags=["Order"])
 # =========================
 # ✅ GET MENU
 # =========================
+
 @router.get("/menu")
 async def get_menu(
     client_id: int,
     branch_id: int,
     db: SessionDep,
-    current=Depends(access_three)
+    current=Depends(access_one)
 ):
     try:
+        # ✅ Tenant access
         await get_client_if_accessible(client_id, db, current)
 
         result = await db.execute(
@@ -35,7 +38,8 @@ async def get_menu(
             )
             .where(
                 Item.client_id == client_id,
-                Item.branch_id == branch_id
+                Item.branch_id == branch_id,
+                Item.is_active == True
             )
         )
 
@@ -44,10 +48,26 @@ async def get_menu(
         menu = {}
 
         for item in items:
-            category = item.category.name if item.category else "Others"
-            price = item.pricings[0].price if item.pricings else 0
 
-            menu.setdefault(category, []).append({
+            # ✅ Category Name
+            category_name = (
+                item.category.name
+                if item.category
+                else "Others"
+            )
+
+            # ✅ Get active pricing for this branch
+            pricing = next(
+                (
+                    p for p in item.pricings
+                    if p.branch_id == branch_id and p.is_active
+                ),
+                None
+            )
+
+            price = pricing.price if pricing else 0
+
+            menu.setdefault(category_name, []).append({
                 "id": item.id,
                 "name": item.name,
                 "price": price
@@ -56,7 +76,11 @@ async def get_menu(
         return menu
 
     except SQLAlchemyError:
-        raise HTTPException(500, "Database error while fetching menu")
+        raise HTTPException(
+            status_code=500,
+            detail="Database error while fetching menu"
+        )
+    
 
 
 # =========================
@@ -66,31 +90,44 @@ async def get_menu(
 async def get_all_orders(
     db: SessionDep,
     branch_id: int | None = None,
-    current=Depends(access_three)
+    current=Depends(access_one)
 ):
     try:
-        query = select(Order)
 
+        role = current["role"]
+        user = current["user"]
+
+        query = (
+            select(Order)
+            .options(
+                selectinload(Order.order_items)
+            )
+        )
+
+        # ✅ Branch filter
         if branch_id:
             query = query.where(Order.branch_id == branch_id)
 
+        # ✅ Tenant filtering
+        if role.name == "CLIENT":
+            query = query.where(Order.client_id == user.id)
+
+        elif role.name == "PARTNER":
+            query = query.join(
+                Client,
+                Client.id == Order.client_id
+            ).where(
+                Client.partner_id == user.id
+            )
+
+        # SUPER_ADMIN gets all orders
+
         result = await db.execute(query)
+
         orders = result.scalars().all()
 
-        if not orders:
-            return []
-
-        response = []
-
-        for order in orders:
-            await get_client_if_accessible(order.client_id, db, current)
-
-            items_result = await db.execute(
-                select(OrderItem).where(OrderItem.order_id == order.id)
-            )
-            order_items = items_result.scalars().all()
-
-            response.append({
+        return [
+            {
                 "id": order.id,
                 "client_id": order.client_id,
                 "branch_id": order.branch_id,
@@ -104,18 +141,21 @@ async def get_all_orders(
                 "created_at": order.created_at,
                 "items": [
                     {
-                        "item_id": i.item_id,
-                        "quantity": i.quantity,
-                        "price": i.price
-                    } for i in order_items
+                        "item_id": item.item_id,
+                        "quantity": item.quantity,
+                        "price": item.price
+                    }
+                    for item in order.order_items
                 ]
-            })
-
-        return response
+            }
+            for order in orders
+        ]
 
     except SQLAlchemyError:
-        raise HTTPException(500, "Database error while fetching orders")
-
+        raise HTTPException(
+            status_code=500,
+            detail="Database error while fetching orders"
+        )
 
 # =========================
 # ✅ DELETE ORDER
@@ -162,7 +202,7 @@ async def get_all_orders(
 async def cancel_order(
     order_id: int,
     db: SessionDep,
-    current=Depends(access_three)
+    current=Depends(access_one)
 ):
     try:
         # ✅ Get order
@@ -213,7 +253,7 @@ async def update_order(
     order_id: int,
     data: OrderUpdate,
     db: SessionDep,
-    current=Depends(access_three)
+    current=Depends(access_one)
 ):
     try:
         # =========================
@@ -370,7 +410,7 @@ async def update_order(
 async def create_order(
     data: OrderCreate,
     db: SessionDep,
-    current=Depends(access_three)
+    current=Depends(access_one)
 ):
     try:
         await get_client_if_accessible(data.client_id, db, current)

@@ -17,24 +17,48 @@ router = APIRouter(
 )
 
 
-@router.post("/create_cat/clients/{client_id}/categories", response_model=CategoryOut)
+@router.post(
+    "/create_cat/clients/{client_id}/categories",
+    response_model=CategoryOut
+)
 async def create_category(
     client_id: int,
     payload: CategoryCreate,
     db: SessionDep,
-    current = Depends(get_current_user)
+    current=Depends(get_current_user)
 ):
+
     if current is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # check client
-    result = await db.execute(
-        select(Client).where(Client.id == client_id)
-    )
-    client = result.scalar_one_or_none()
+    user = current["user"]
+    role = current["role"]
 
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found")
+    # ✅ CLIENT SECURITY
+    if role == UserRole.CLIENT:
+
+        # user.id = client.id
+        if user.id != client_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied"
+            )
+
+    # ✅ STAFF SECURITY
+    elif role == UserRole.STAFF:
+
+        # staff has client_id
+        if user.client_id != client_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied"
+            )
+
+        if payload.branch_id != user.branch_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid branch access"
+            )
 
     category = Category(
         name=payload.name,
@@ -51,34 +75,69 @@ async def create_category(
     return category
 
 
-@router.get("/clients/{client_id}/categories/get_cat", response_model=list[CategoryOut])
-async def get_categories(client_id: int, db: SessionDep,current = Depends(get_current_user)):
-    
-    if current is None:
-        raise HTTPException (status_code=404, detail="User not found")
+@router.get(
+    "/clients/{client_id}/categories/get_cat",
+    response_model=list[CategoryOut]
+)
+async def get_categories(
+    client_id: int,
+    db: SessionDep,
+    current=Depends(get_current_user)
+):
 
-    result = await db.execute(
-        select(Category).where(Category.client_id == client_id)
-    )
+    if current is None:
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    user = current["user"]
+    role = current["role"]
+
+    query = select(Category)
+
+    # ✅ CLIENT LOGIN
+    if role == UserRole.CLIENT:
+
+        # client can only access own data
+        if user.id != client_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied"
+            )
+
+        query = query.where(
+            Category.client_id == user.id
+        )
+
+    # ✅ STAFF LOGIN
+    elif role == UserRole.STAFF:
+
+        # staff belongs to one client
+        if user.client_id != client_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied"
+            )
+
+        query = query.where(
+            Category.client_id == user.client_id,
+            Category.branch_id == user.branch_id
+        )
+
+    # ✅ PARTNER / SUPERADMIN
+    else:
+
+        query = query.where(
+            Category.client_id == client_id
+        )
+
+    result = await db.execute(query)
+
     categories = result.scalars().all()
 
     return categories
 
-
-
-# @router.get("/categories/{category_id}", response_model=CategoryOut)
-# async def get_category(category_id: int, db: SessionDep, current = Depends(get_current_user)):
-#     if current is None:
-#         raise HTTPException (status_code=404, detail="User not found")
-#     result = await db.execute(
-#         select(Category).where(Category.id == category_id)
-#     )
-#     category = result.scalar_one_or_none()
-
-#     if not category:
-#         raise HTTPException(status_code=404, detail="Category not found")
-
-#     return category
 
 
 
@@ -87,18 +146,48 @@ async def update_category(
     category_id: int,
     payload: CategoryCreate,
     db: SessionDep,
-    current = Depends(get_current_user)
-):  
+    current=Depends(get_current_user)
+):
+
     if current is None:
-        raise HTTPException(status_code=404,detail="User not found")
-    result = await db.execute(
-        select(Category).where(Category.id == category_id)
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    user = current["user"]
+    role = current["role"]
+
+    query = select(Category).where(
+        Category.id == category_id
     )
+
+    # ✅ CLIENT
+    if role == UserRole.CLIENT:
+
+        query = query.where(
+            Category.client_id == user.id
+        )
+
+    # ✅ STAFF
+    elif role == UserRole.STAFF:
+
+        query = query.where(
+            Category.client_id == user.client_id,
+            Category.branch_id == user.branch_id
+        )
+
+    result = await db.execute(query)
+
     category = result.scalar_one_or_none()
 
     if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Category not found"
+        )
 
+    # ✅ Update allowed fields
     category.name = payload.name
     category.icon = payload.icon
 
@@ -108,23 +197,58 @@ async def update_category(
     return category
 
 
-
 @router.delete("/categories/{category_id}")
-async def delete_category(category_id: int, db: SessionDep,current= Depends(get_current_user)):
+async def delete_category(
+    category_id: int,
+    db: SessionDep,
+    current=Depends(get_current_user)
+):
 
     if current is None:
-        raise HTTPException (status_code=404, detail="User not found")
-    result = await db.execute(
-        select(Category).where(Category.id == category_id)
+        raise HTTPException(
+            status_code=404,
+            detail="User not found"
+        )
+
+    user = current["user"]
+    role = current["role"]
+
+    query = select(Category).where(
+        Category.id == category_id
     )
+
+    # ✅ CLIENT
+    if role == UserRole.CLIENT:
+
+        query = query.where(
+            Category.client_id == user.id
+        )
+
+    # ✅ STAFF
+    elif role == UserRole.STAFF:
+
+        query = query.where(
+            Category.client_id == user.client_id,
+            Category.branch_id == user.branch_id
+        )
+
+    # ✅ PARTNER / SUPER ADMIN
+    else:
+        pass
+
+    result = await db.execute(query)
+
     category = result.scalar_one_or_none()
 
     if not category:
-        raise HTTPException(status_code=404, detail="Category not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Category not found"
+        )
 
     await db.delete(category)
     await db.commit()
 
-    return {"message": "Category deleted"}
-
-
+    return {
+        "message": "Category deleted"
+    }

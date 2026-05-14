@@ -9,8 +9,8 @@ class BranchCreate(BaseModel):
     name: str
     address: Optional[str] = None
     city: Optional[str] = None
-    client_id: int              # ✅ REQUIRED
-    brand_id: Optional[int] = None  # ✅ OPTIONAL
+    client_id: int              
+    brand_id: Optional[int] = None
 
 
 
@@ -18,7 +18,7 @@ class BranchCreate(BaseModel):
 class BranchOut(BaseModel):
     id: int
     name: str
-    client_id: int   # ✅ ADD THIS
+    client_id: int   
     brand_id: Optional[int]
     address: Optional[str]
     city: Optional[str]

@@ -23,27 +23,51 @@ async def create_client(
     db: SessionDep,
     current=Depends(access_two)
 ):
-    # ✅ FIX: SuperAdmin must send partner_id in request body
+    # ✅ SUPER ADMIN
     if current["role"] == UserRole.SUPER_ADMIN.value:
-        if not hasattr(data, "partner_id") or not data.partner_id:
-            raise HTTPException(400, "partner_id required for admin")
 
-        # 🔥 check partner exists
-        partner = await db.get(Partner, data.partner_id)
+        if not data.partner_id:
+            raise HTTPException(
+                status_code=400,
+                detail="partner_id required for admin"
+            )
+
+        # ✅ check partner exists
+        partner = await db.get(
+            Partner,
+            data.partner_id
+        )
+
         if not partner:
-            raise HTTPException(404, "Partner not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Partner not found"
+            )
 
         partner_id = data.partner_id
+
+    # ✅ PARTNER
     else:
         partner_id = current["user"].id
 
-    # ✅ duplicate check
+    # ✅ duplicate email check
     result = await db.execute(
-        select(Client).where(Client.email == data.email)
+        select(Client).where(
+            Client.email == data.email
+        )
     )
-    if result.scalar_one_or_none():
-        raise HTTPException(400, "Client already exists")
 
+    existing_client = result.scalar_one_or_none()
+
+    if existing_client:
+        raise HTTPException(
+            status_code=400,
+            detail="Client already exists"
+        )
+
+    
+
+    # ✅ create client
     client = Client(
         name=data.name,
         email=data.email,
@@ -54,6 +78,7 @@ async def create_client(
     )
 
     db.add(client)
+
     await db.commit()
     await db.refresh(client)
 
@@ -109,10 +134,7 @@ async def update_client(
     if not client:
         raise HTTPException(404, "Client not found")
 
-    # 🔐 FIX: Ownership strict
-    # if current["role"] == UserRole.PARTNER.value:
-    #     if client.partner_id != current["user"].id:
-    #         raise HTTPException(403, "Not your client")
+
 
     if current["role"] == UserRole.PARTNER.value:
         result = await db.execute(

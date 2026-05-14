@@ -91,6 +91,7 @@ def require_staff(current=Depends(get_current_user)):
         )
     return current
 
+
 def require_roles(*allowed_roles: UserRole):
     def role_checker(current=Depends(get_current_user)):
         if current["role"] not in allowed_roles:
@@ -102,32 +103,38 @@ def require_roles(*allowed_roles: UserRole):
     return role_checker
 
 
-from app.accounts.client.model import Client
-
-
 async def get_client_if_accessible(client_id: int, db, current):
     client = await db.get(Client, client_id)
 
     if not client:
-        raise HTTPException(404, "Client     not found")
+        raise HTTPException(status_code=404, detail="Client not found")
 
     role = current["role"]
     user = current["user"]
 
+    # ✅ SUPER ADMIN → full access
     if role == UserRole.SUPER_ADMIN:
         return client
 
+    # ✅ PARTNER → only own clients
     if role == UserRole.PARTNER:
         if client.partner_id != user.id:
-            raise HTTPException(403, "Not allowed to access this client")
+            raise HTTPException(
+                status_code=403,
+                detail="Not allowed to access this client"
+            )
         return client
 
+    # ✅ CLIENT → only self client
     if role == UserRole.CLIENT:
         if client.id != user.id:
-            raise HTTPException(403, "Not allowed to access this client")
+            raise HTTPException(
+                status_code=403,
+                detail="Not allowed to access this client"
+            )
         return client
 
-    raise HTTPException(403, "Access denied")
+    raise HTTPException(status_code=403, detail="Access denied")
 
 
 async def client_access_dependency(
@@ -251,3 +258,34 @@ def calculate_status(stock_qty, reorder_level):
 
 
 client_access = require_roles(UserRole.PARTNER, UserRole.SUPER_ADMIN)
+
+
+
+# from sqlalchemy import select, func
+# from app.accounts.client.model import Client
+
+
+# async def generate_client_code(
+#     db,
+#     partner_id: int
+# ):
+#     """
+#     Generate unique client code per partner.
+
+#     Example:
+#     CLI001
+#     CLI002
+#     """
+
+#     result = await db.execute(
+#         select(func.count(Client.id)).where(
+#             Client.partner_id == partner_id
+#         )
+#     )
+
+#     total = result.scalar() or 0
+
+#     next_number = total + 1
+
+#     return f"CLI{next_number:03d}"
+

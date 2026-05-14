@@ -14,14 +14,14 @@ class Item(Base):
     name = Column(String, nullable=False)
 
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=False)
-    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
 
     __table_args__ = (
-        UniqueConstraint("name", "client_id", name="uq_item_name_per_client"),
+        UniqueConstraint("name", "branch_id", name="uq_item_name_per_branch"),
     )
 
     client = relationship("Client", back_populates="items")

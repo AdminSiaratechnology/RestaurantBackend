@@ -1,8 +1,10 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from app.accounts.client.model import Client
 from app.accounts.customer.model import Customer
 from app.accounts.customer.schema import CustomerCreate, CustomerOut, CustomerUpdate
 from app.db.config import SessionDep
+from app.accounts.deps import access_one, UserRole
 
 router = APIRouter(prefix="/customers", tags=["Customers"])
 
@@ -35,22 +37,59 @@ async def create_customer(payload: CustomerCreate, db: SessionDep):
 
 
 @router.get("/", response_model=list[CustomerOut])
-async def get_customers(db: SessionDep):
+async def get_customers(
+    db: SessionDep,
+    current=Depends(access_one),
+    client_id: int | None = None,
+    branch_id: int | None = None
+):
 
-    result = await db.execute(select(Customer))
+    role = current["role"]
+    user = current["user"]
+
+    query = select(Customer)
+
+    # ✅ SUPER ADMIN
+    if role == UserRole.SUPER_ADMIN:
+
+        if client_id:
+            query = query.where(Customer.client_id == client_id)
+
+    # ✅ PARTNER
+    elif role == UserRole.PARTNER:
+
+        query = query.join(
+            Client,
+            Client.id == Customer.client_id
+        ).where(
+            Client.partner_id == user.id
+        )
+
+        if client_id:
+            query = query.where(Customer.client_id == client_id)
+
+    # ✅ CLIENT
+    elif role == UserRole.CLIENT:
+
+        query = query.where(
+            Customer.client_id == user.id
+        )
+
+    else:
+        raise HTTPException(403, "Access denied")
+
+    # ✅ Optional branch filter
+    if branch_id:
+        query = query.where(
+            Customer.branch_id == branch_id
+        )
+
+    result = await db.execute(query)
+
     return result.scalars().all()
 
 
 
-@router.get("/{customer_id}", response_model=CustomerOut)
-async def get_customer(customer_id: int, db: SessionDep):
-
-    customer = await db.get(Customer, customer_id)
-
-    if not customer:
-        raise HTTPException(404, "Customer not found")
-
-    return customer
 
 
 
