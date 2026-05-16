@@ -194,43 +194,42 @@ async def update_branch(
     branch_id: int,
     data: BranchUpdate,
     db: SessionDep,
-    current=Depends(client_access_dependency)
+    current=Depends(get_current_user)
 ):
     result = await db.execute(
         select(Branch).where(Branch.id == branch_id)
     )
+
     branch = result.scalar_one_or_none()
 
     if not branch:
         raise HTTPException(404, "Branch not found")
 
-    # ✅ FIXED
     await get_client_if_accessible(
         client_id=branch.client_id,
         db=db,
         current=current
     )
 
-    # ✅ Update fields
-    if data.name:
+    if data.name is not None:
         branch.name = data.name
 
-    if data.address:
+    if data.address is not None:
         branch.address = data.address
 
-    if data.city:
+    if data.city is not None:
         branch.city = data.city
 
     if data.brand_id is not None:
-        if data.brand_id:
-            brand = await get_brand_if_accessible(
-                brand_id=data.brand_id,
-                db=db,
-                current=current
-            )
 
-            if brand.client_id != branch.client_id:
-                raise HTTPException(400, "Brand mismatch")
+        brand = await get_brand_if_accessible(
+            brand_id=data.brand_id,
+            db=db,
+            current=current
+        )
+
+        if brand.client_id != branch.client_id:
+            raise HTTPException(400, "Brand mismatch")
 
         branch.brand_id = data.brand_id
 
@@ -238,7 +237,6 @@ async def update_branch(
     await db.refresh(branch)
 
     return branch
-
 
 
 

@@ -114,29 +114,51 @@ async def create_item(
 @router.get("/get_items", response_model=list[ItemOut])
 async def get_items(
     db: SessionDep,
+    branch_id: int,
+    brand_id: int | None = None,
     current=Depends(access_four)
 ):
     role = current["role"]
     user = current["user"]
 
-    query = select(Item).options(
-        selectinload(Item.pricings)   # ✅ auto fetch pricing
+    query = (
+        select(Item)
+        .options(
+            selectinload(Item.pricings)
+        )
+        .where(Item.branch_id == branch_id)
     )
 
-    if role == "super_admin":
+    # optional brand filter
+    if brand_id is not None:
+        query = query.where(Item.brand_id == brand_id)
+
+    # SUPER ADMIN
+    if role == UserRole.SUPER_ADMIN:
         pass
 
-    elif role == "partner":
+    # PARTNER
+    elif role == UserRole.PARTNER:
         query = query.join(Item.client).where(
             Client.partner_id == user.id
         )
 
-    elif role == "client":
+    # CLIENT
+    elif role == UserRole.CLIENT:
         query = query.where(
             Item.client_id == user.id
         )
 
-    elif role == "staff":
+    # STAFF
+    elif role == UserRole.STAFF:
+
+        # IMPORTANT SECURITY
+        if user.branch_id != branch_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Not allowed to access another branch"
+            )
+
         query = query.where(
             Item.client_id == user.client_id
         )
@@ -147,8 +169,6 @@ async def get_items(
     result = await db.execute(query)
 
     return result.scalars().unique().all()
-
-
 
 
 # @router.get("/{item_id}", response_model=ItemOut)

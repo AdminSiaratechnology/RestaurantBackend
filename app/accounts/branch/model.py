@@ -12,7 +12,7 @@ class Branch(Base):
     city = Column(String, nullable=False)
 
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
-    brand_id = Column(Integer, ForeignKey("brands.id"), nullable=False)
+    brand_id = Column(Integer, ForeignKey("brands.id"), nullable=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

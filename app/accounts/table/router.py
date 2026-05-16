@@ -59,63 +59,63 @@ async def create_table(
     
     
 
-# ✅ GET ALL TABLES
-from app.accounts.branch.model import Branch
 
-
+# ✅ GET ALL TABLES (BRANCH SCOPED)
 @router.get("/see_table", response_model=list[TableOut])
 async def get_tables(
     db: SessionDep,
-    current=Depends(require_client)
+    current=Depends(access_four),
+    branch_id: int | None = None
 ):
+    role = current["role"]
     user = current["user"]
-
     query = (
         select(Table)
         .join(Branch, Branch.id == Table.branch_id)
-        .join(Client, Client.id == Branch.client_id)
-        .where(Client.id == user.id)   # ✅ FIXED
     )
+
+    # ✅ SUPER ADMIN
+    if role == UserRole.SUPER_ADMIN:
+        pass
+
+    # ✅ PARTNER
+    elif role == UserRole.PARTNER:
+        query = query.join(Client, Client.id == Branch.client_id).where(
+            Client.partner_id == user.id
+        )
+
+    # ✅ CLIENT
+    elif role == UserRole.CLIENT:
+        query = query.where(
+            Branch.client_id == user.id
+        )
+
+    # ✅ STAFF
+    elif role == UserRole.STAFF:
+        query = query.where(
+            Table.branch_id == user.branch_id
+        )
+
+    else:
+        raise HTTPException(403, "Not authorized")
+
+    # ✅ MAIN FIX → FILTER BY BRANCH
+    if branch_id:
+        query = query.where(
+            Table.branch_id == branch_id
+        )
+
+        # ✅ STAFF SECURITY
+        if role == UserRole.STAFF and branch_id != user.branch_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Not allowed to access this branch"
+            )
 
     result = await db.execute(query)
-    return result.scalars().all()
 
+    return result.scalars().unique().all()
 
-# ✅ GET SINGLE TABLE
-@router.get("/clients/{client_id}/tables/{table_id}")
-async def get_table(
-    client_id: int,
-    table_id: int,
-    db: SessionDep,
-    current=Depends(require_client)
-):
-    client = current["user"]
-
-    # ✅ Check client belongs to admin
-    client_result = await db.execute(
-        select(Client).where(
-            Client.id == client_id,
-            Client.client_id == client.id
-        )
-    )
-    client = client_result.scalar_one_or_none()
-
-    if not client:
-        raise HTTPException(403, "Not allowed")
-
-    # ✅ Get table
-    result = await db.execute(
-        select(Table).where(
-            Table.id == table_id,
-            Table.client_id == client_id
-        )
-    )
-    table = result.scalar_one_or_none()
-
-    if not table:
-        raise HTTPException(404, "Table not found")
-
-    return table
 
 # ✅ UPDATE TABLE
 @router.put("/clients/{client_id}/tables/{table_id}", response_model=TableOut)
