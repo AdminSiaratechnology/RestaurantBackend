@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from app.accounts.branch.model import Branch
 from app.accounts.client.model import Client
 from app.accounts.customer.model import Customer
 from app.accounts.customer.schema import CustomerCreate, CustomerOut, CustomerUpdate
@@ -11,29 +12,56 @@ router = APIRouter(prefix="/customers", tags=["Customers"])
 
 
 @router.post("/", response_model=CustomerOut)
-async def create_customer(payload: CustomerCreate, db: SessionDep):
+async def create_customer(
+    payload: CustomerCreate,
+    db: SessionDep
+):
 
-    # 🔍 Check duplicate (phone per client)
+    # ✅ Get branch
+    branch = await db.get(
+        Branch,
+        payload.branch_id
+    )
+
+    if not branch:
+        raise HTTPException(
+            404,
+            "Branch not found"
+        )
+
+    # ✅ Duplicate check
     result = await db.execute(
         select(Customer).where(
             Customer.phone == payload.phone,
-            Customer.client_id == payload.client_id
+            Customer.client_id == branch.client_id
         )
     )
-    existing = result.scalar_one_or_none()
 
+    existing = result.scalar_one_or_none()
 
     if existing:
         return existing
 
-    customer = Customer(**payload.dict())
+    # ✅ Create customer
+    customer = Customer(
+        name=payload.name,
+        phone=payload.phone,
+        email=payload.email,
+        address=payload.address,
+
+        # 🔥 Auto fetched
+        branch_id=branch.id,
+        branch_name=branch.name,
+        client_id=branch.client_id
+    )
 
     db.add(customer)
+
     await db.commit()
+
     await db.refresh(customer)
 
     return customer
-
 
 
 @router.get("/", response_model=list[CustomerOut])
@@ -75,6 +103,12 @@ async def get_customers(
             Customer.client_id == user.id
         )
 
+    elif role == UserRole.STAFF:
+
+        query = query.where(
+            Customer.client_id == user.id
+        )
+
     else:
         raise HTTPException(403, "Access denied")
 
@@ -94,21 +128,47 @@ async def get_customers(
 
 
 @router.put("/{customer_id}", response_model=CustomerOut)
-async def update_customer(customer_id: int, payload: CustomerUpdate, db: SessionDep):
+async def update_customer(
+    customer_id: int,
+    payload: CustomerUpdate,
+    db: SessionDep
+):
 
     customer = await db.get(Customer, customer_id)
 
     if not customer:
         raise HTTPException(404, "Customer not found")
 
-    for key, value in payload.dict(exclude_unset=True).items():
-        setattr(customer, key, value)
+    update_data = payload.dict(exclude_unset=True)
+
+    # ✅ Handle branch update
+    if "branch_id" in update_data:
+
+        branch = await db.get(
+            Branch,
+            update_data["branch_id"]
+        )
+
+        if not branch:
+            raise HTTPException(
+                404,
+                "Branch not found"
+            )
+
+        customer.branch_id = branch.id
+        customer.branch_name = branch.name
+
+    # ✅ Other fields
+    for key, value in update_data.items():
+
+        if key != "branch_id":
+            setattr(customer, key, value)
 
     await db.commit()
+
     await db.refresh(customer)
 
     return customer
-
 
 # ✅ DELETE CUSTOMER
 @router.delete("/{customer_id}")

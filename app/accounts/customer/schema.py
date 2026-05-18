@@ -8,8 +8,7 @@ class CustomerCreate(BaseModel):
     phone: str
     email: str | None = None
 
-    client_id: int
-    branch_id: int | None = None
+    branch_id: int 
     address: str | None = None
 
 
@@ -34,3 +33,4 @@ class CustomerUpdate(BaseModel):
     name: str | None = None
     email: str | None = None
     address: str | None = None
+    branch_id: int | None = None

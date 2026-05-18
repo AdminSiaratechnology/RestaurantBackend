@@ -5,7 +5,7 @@ from app.accounts.branch.model import Branch
 from app.accounts.branch.schema import BranchCreate, BranchOut, BranchUpdate
 from app.accounts.brand.model import Brand
 from app.accounts.client.model import Client
-from app.accounts.deps import access_three, UserRole, client_access_dependency, get_current_user
+from app.accounts.deps import access_one, UserRole, client_access_dependency, get_current_user
 
 from app.accounts.deps import (
     require_roles,
@@ -19,7 +19,8 @@ router = APIRouter(prefix="/branch", tags=["Branch"])
 branch_access = require_roles(
     UserRole.SUPER_ADMIN,
     UserRole.PARTNER,
-    UserRole.CLIENT
+    UserRole.CLIENT,
+    UserRole.STAFF
 )
 
 
@@ -133,14 +134,16 @@ async def create_branch(
 @router.get("/get_all_branch", response_model=list[BranchOut])
 async def get_branches(
     db: SessionDep,
-    current=Depends(get_current_user)
+    current=Depends(access_one)
 ):
     role = current["role"]
     user = current["user"]
 
+    # ✅ SUPER ADMIN
     if role == UserRole.SUPER_ADMIN:
         query = select(Branch)
 
+    # ✅ PARTNER
     elif role == UserRole.PARTNER:
         query = (
             select(Branch)
@@ -148,16 +151,27 @@ async def get_branches(
             .where(Client.partner_id == user.id)
         )
 
+    # ✅ CLIENT
     elif role == UserRole.CLIENT:
         query = (
             select(Branch)
             .where(Branch.client_id == user.id)
         )
 
+    # ✅ STAFF
+    elif role == UserRole.STAFF:
+
+        # only assigned branch
+        query = (
+            select(Branch)
+            .where(Branch.id == user.branch_id)
+        )
+
     else:
         raise HTTPException(403, "Not allowed")
 
     result = await db.execute(query)
+
     return result.scalars().all()
 
 

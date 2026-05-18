@@ -9,7 +9,11 @@ from app.accounts.partner.model import Partner
 from app.accounts.client.model import Client
 from app.accounts.staff.model import Staff
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.accounts.brand.model import Brand
 
+from app.accounts.permission.model import StaffPermission
+from sqlalchemy.orm import selectinload
+from app.accounts.staff.model import StaffRole
 
 
 security = HTTPBearer()
@@ -112,29 +116,30 @@ async def get_client_if_accessible(client_id: int, db, current):
     role = current["role"]
     user = current["user"]
 
-    # ✅ SUPER ADMIN → full access
+    # ✅ SUPER ADMIN
     if role == UserRole.SUPER_ADMIN:
         return client
 
-    # ✅ PARTNER → only own clients
+    # ✅ PARTNER
     if role == UserRole.PARTNER:
         if client.partner_id != user.id:
-            raise HTTPException(
-                status_code=403,
-                detail="Not allowed to access this client"
-            )
+            raise HTTPException(403, "Not allowed")
         return client
 
-    # ✅ CLIENT → only self client
+    # ✅ CLIENT
     if role == UserRole.CLIENT:
         if client.id != user.id:
-            raise HTTPException(
-                status_code=403,
-                detail="Not allowed to access this client"
-            )
+            raise HTTPException(403, "Not allowed")
         return client
 
-    raise HTTPException(status_code=403, detail="Access denied")
+    # ✅ STAFF
+    if role == UserRole.STAFF:
+        if client.id != user.client_id:
+            raise HTTPException(403, "Not allowed")
+        return client
+
+    raise HTTPException(403, "Access denied")
+
 
 
 async def client_access_dependency(
@@ -149,57 +154,28 @@ async def client_access_dependency(
     )
 
 
-from app.accounts.brand.model import Brand
 
 
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
-# async def get_brand_if_accessible(
-#     brand_id: int,
-#     db: SessionDep,
-#     current=Depends(get_current_user)
-# ):
-#     user = current["user"]
+def require_staff_role(*allowed_roles: StaffRole):
 
-#     result = await db.execute(
-#         select(Brand)
-#         .options(selectinload(Brand.client))  # ✅ only this
-#         .where(Brand.id == brand_id)
-#     )
+    def checker(
+        current=Depends(require_staff)
+    ):
 
-#     brand = result.scalar_one_or_none()
+        staff = current["user"]
 
-#     if not brand:
-#         raise HTTPException(404, "Brand not found")
+        if staff.role not in allowed_roles:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Allowed roles: {[r.value for r in allowed_roles]}"
+            )
 
-#     client = brand.client
+        return current
 
-#     if role == UserRole.SUPER_ADMIN:
-#         return brand
+    return checker
 
-#     if role == UserRole.PARTNER:
-#         if client.partner_id != user.id:
-#             raise HTTPException(403, "Not allowed")
-#         return brand
 
-#     if role == UserRole.CLIENT:
-#         # ✅ FIX
-#         if client.id != user.id:
-#             raise HTTPException(403, "Not allowed")
-#         return brand
-
-#     raise HTTPException(403, "Access denied")
-#     # if not brand:
-#     #     raise HTTPException(404, "Brand not found")
-
-#     # client = brand.client
-
-#     # # ✅ SAFE now (no lazy loading)
-#     # if client.client_id != user.id:
-#     #     raise HTTPException(403, "Not allowed")
-
-#     # return brand
 
 async def get_brand_if_accessible(
     brand_id: int,
@@ -234,12 +210,19 @@ async def get_brand_if_accessible(
         if client.id != user.id:
             raise HTTPException(403, "Not allowed")
         return brand
+    
+    if role == UserRole.STAFF:
+        if client.id != user.client_id:
+            raise HTTPException(403, "Not allowed")
+        return brand
 
     raise HTTPException(403, "Access denied")
 
 
-
-access_one = require_roles(UserRole.CLIENT)
+access_one = require_roles(
+    UserRole.CLIENT,
+    UserRole.STAFF
+)
 access_two = require_roles(UserRole.SUPER_ADMIN, UserRole.PARTNER)
 access_four = require_roles(UserRole.SUPER_ADMIN, UserRole.PARTNER, UserRole.CLIENT, UserRole.STAFF)
 access_three = require_roles(UserRole.SUPER_ADMIN, UserRole.PARTNER, UserRole.CLIENT)
@@ -261,31 +244,45 @@ client_access = require_roles(UserRole.PARTNER, UserRole.SUPER_ADMIN)
 
 
 
-# from sqlalchemy import select, func
-# from app.accounts.client.model import Client
 
 
-# async def generate_client_code(
-#     db,
-#     partner_id: int
-# ):
-#     """
-#     Generate unique client code per partner.
 
-#     Example:
-#     CLI001
-#     CLI002
-#     """
+def require_permission(permission_name: str):
 
-#     result = await db.execute(
-#         select(func.count(Client.id)).where(
-#             Client.partner_id == partner_id
-#         )
-#     )
+    async def checker(
+        db: SessionDep,
+        current=Depends(require_staff)
+    ):
 
-#     total = result.scalar() or 0
+        user = current["user"]
 
-#     next_number = total + 1
+        result = await db.execute(
+            select(StaffPermission).where(
+                StaffPermission.staff_id == user.id
+            )
+        )
 
-#     return f"CLI{next_number:03d}"
+        permissions = result.scalar_one_or_none()
+
+        if not permissions:
+            raise HTTPException(
+                status_code=403,
+                detail="No permissions assigned"
+            )
+
+        has_permission = getattr(
+            permissions,
+            permission_name,
+            False
+        )
+
+        if not has_permission:
+            raise HTTPException(
+                status_code=403,
+                detail=f"{permission_name} permission denied"
+            )
+
+        return current
+
+    return checker
 

@@ -1,14 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select
 from passlib.context import CryptContext
+from app.accounts.branch.model import Branch
 from app.accounts.deps import require_client
-from app.accounts.staff.model import Staff
+from app.accounts.staff.model import Staff, StaffRole
 from app.accounts.staff.schemas import (
     StaffCreate,
     StaffOut,
     StaffUpdate
 )
 from app.db.config import SessionDep
+
 
 router = APIRouter(
     prefix="/client",
@@ -19,6 +21,10 @@ pwd_context = CryptContext(
     schemes=["bcrypt"],
     deprecated="auto"
 )
+
+
+
+
 
 
 # =========================================================
@@ -32,9 +38,34 @@ async def create_staff(
 ):
     client = current["user"]
 
-    # ✅ check duplicate email
+    # =====================================================
+    # ✅ CHECK BRANCH
+    # =====================================================
+    branch = await db.get(
+        Branch,
+        data.branch_id
+    )
+
+    if not branch:
+        raise HTTPException(
+            status_code=404,
+            detail="Branch not found"
+        )
+
+    # ✅ security check
+    if branch.client_id != client.id:
+        raise HTTPException(
+            status_code=403,
+            detail="This branch does not belong to you"
+        )
+
+    # =====================================================
+    # ✅ CHECK DUPLICATE EMAIL
+    # =====================================================
     result = await db.execute(
-        select(Staff).where(Staff.email == data.email)
+        select(Staff).where(
+            Staff.email == data.email
+        )
     )
 
     existing_staff = result.scalar_one_or_none()
@@ -45,19 +76,32 @@ async def create_staff(
             detail="Staff already exists"
         )
 
-    # ✅ create staff
+    # =====================================================
+    # ✅ CREATE STAFF
+    # =====================================================
     staff = Staff(
         name=data.name,
         email=data.email,
-        password_hash=pwd_context.hash(data.password),
-        role="staff",
+
+        password_hash=pwd_context.hash(
+            data.password
+        ),
+
+        role=data.role,
+
+        # 🔥 AUTO FROM LOGIN
         client_id=client.id,
+
+        # 🔥 AUTO FROM SELECTED BRANCH
+        branch_id=branch.id,
+
         is_active=True
     )
 
     db.add(staff)
 
     await db.commit()
+
     await db.refresh(staff)
 
     return staff
@@ -73,7 +117,8 @@ async def get_all_staff(
     skip: int = 0,
     limit: int = 10,
     search: str | None = None,
-    is_active: bool | None = None
+    is_active: bool | None = None,
+    role: StaffRole | None = None
 ):
     client = current["user"]
 
@@ -85,6 +130,12 @@ async def get_all_staff(
     if is_active is not None:
         query = query.where(
             Staff.is_active == is_active
+        )
+
+    # ✅ role filter
+    if role is not None:
+        query = query.where(
+            Staff.role == role
         )
 
     # ✅ search filter
@@ -108,24 +159,24 @@ async def get_all_staff(
 # =========================================================
 # SEARCH STAFF
 # =========================================================
-@router.get("/staff/search", response_model=list[StaffOut])
-async def search_staff(
-    name: str,
-    db: SessionDep,
-    current=Depends(require_client)
-):
-    client = current["user"]
+# @router.get("/staff/search", response_model=list[StaffOut])
+# async def search_staff(
+#     name: str,
+#     db: SessionDep,
+#     current=Depends(require_client)
+# ):
+#     client = current["user"]
 
-    query = select(Staff).where(
-        Staff.client_id == client.id,
-        Staff.name.ilike(f"%{name}%")
-    )
+#     query = select(Staff).where(
+#         Staff.client_id == client.id,
+#         Staff.name.ilike(f"%{name}%")
+#     )
 
-    result = await db.execute(query)
+#     result = await db.execute(query)
 
-    staffs = result.scalars().all()
+#     staffs = result.scalars().all()
 
-    return staffs
+#     return staffs
 
 
 # =========================================================
@@ -140,7 +191,9 @@ async def update_staff(
 ):
     client = current["user"]
 
-    # ✅ get staff
+    # =====================================================
+    # ✅ GET STAFF
+    # =====================================================
     result = await db.execute(
         select(Staff).where(
             Staff.id == staff_id,
@@ -156,11 +209,15 @@ async def update_staff(
             detail="Staff not found"
         )
 
-    # ✅ update name
+    # =====================================================
+    # ✅ UPDATE NAME
+    # =====================================================
     if data.name is not None:
         staff.name = data.name
 
-    # ✅ update email
+    # =====================================================
+    # ✅ UPDATE EMAIL
+    # =====================================================
     if data.email is not None:
 
         email_check = await db.execute(
@@ -180,17 +237,57 @@ async def update_staff(
 
         staff.email = data.email
 
-    # ✅ update password
+    # =====================================================
+    # ✅ UPDATE PASSWORD
+    # =====================================================
     if data.password is not None:
         staff.password_hash = pwd_context.hash(
             data.password
         )
 
-    # ✅ update active status
+    # =====================================================
+    # ✅ UPDATE ROLE
+    # =====================================================
+    if data.role is not None:
+        staff.role = data.role
+
+    # =====================================================
+    # ✅ UPDATE BRANCH
+    # =====================================================
+    if data.branch_id is not None:
+
+        branch = await db.get(
+            Branch,
+            data.branch_id
+        )
+
+        if not branch:
+            raise HTTPException(
+                status_code=404,
+                detail="Branch not found"
+            )
+
+        # ✅ SECURITY CHECK
+        if branch.client_id != client.id:
+            raise HTTPException(
+                status_code=403,
+                detail="This branch does not belong to you"
+            )
+
+        # ✅ UPDATE BRANCH
+        staff.branch_id = branch.id
+
+    # =====================================================
+    # ✅ UPDATE ACTIVE STATUS
+    # =====================================================
     if data.is_active is not None:
         staff.is_active = data.is_active
 
+    # =====================================================
+    # ✅ SAVE
+    # =====================================================
     await db.commit()
+
     await db.refresh(staff)
 
     return staff

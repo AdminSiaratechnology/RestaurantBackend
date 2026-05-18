@@ -20,6 +20,7 @@ from app.accounts.orderstatus.routers import router as orderstatus_router
 from app.accounts.inventory.router import router as inventory_router
 from app.accounts.deshboard.router import router as deshboard_router
 from app.accounts.auditlog.router import router as auditlog_router
+from app.accounts.permission.routers import router as permission_router
 
 app = FastAPI()
 
@@ -42,18 +43,13 @@ async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-# ✅ include routers AFTER app creation
-# app.include_router(auth.router)
-# app.include_router(superadmin.router)
-# app.include_router(partner.router)
-# app.include_router(client.router)
-# app.include_router(staff.router)
 app.include_router(auth_router)
 app.include_router(superadmin_router)
 app.include_router(partner_router)
 app.include_router(client_router)
 app.include_router(category_router)
 app.include_router(brand_router)
+app.include_router(permission_router)
 app.include_router(branch_router)
 app.include_router(item_router)
 app.include_router(pricing_router)

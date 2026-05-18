@@ -2,14 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from slugify import slugify
-from app.accounts.deps import access_three,UserRole
+from app.accounts.deps import access_one,access_three,UserRole
 from app.db.config import SessionDep
 from app.accounts.brand.model import Brand
 from app.accounts.brand.schema import BrandCreate, BrandOut, BrandUpdate
 from app.accounts.client.model import Client
 
 from app.accounts.deps import (
-    get_brand_if_accessible,
     get_client_if_accessible
 )
 
@@ -61,26 +60,39 @@ async def create_brand(
 @router.get("/all_brand", response_model=list[BrandOut])
 async def get_brands(
     db: SessionDep,
-    current=Depends(access_three)
+    current=Depends(access_one)
 ):
-    role = UserRole(current["role"])
+    role = current["role"]
     user = current["user"]
 
+    # ✅ SUPER ADMIN
     if role == UserRole.SUPER_ADMIN:
+
         query = select(Brand)
 
+    # ✅ PARTNER
     elif role == UserRole.PARTNER:
-        query = (
-            select(Brand)
-            .join(Brand.client)       
-            .where(Client.partner_id == user.id)
-        )
 
-    elif role == UserRole.CLIENT:
         query = (
             select(Brand)
             .join(Brand.client)
-            .where(Client.id == user.id)
+            .where(Client.partner_id == user.id)
+        )
+
+    # ✅ CLIENT
+    elif role == UserRole.CLIENT:
+
+        query = (
+            select(Brand)
+            .where(Brand.client_id == user.id)
+        )
+
+    # ✅ STAFF
+    elif role == UserRole.STAFF:
+
+        query = (
+            select(Brand)
+            .where(Brand.client_id == user.client_id)
         )
 
     else:
@@ -88,7 +100,7 @@ async def get_brands(
 
     result = await db.execute(
         query.options(
-            selectinload(Brand.client)   # ✅ preload client            
+            selectinload(Brand.client)
         )
     )
 

@@ -1,6 +1,7 @@
+from app.accounts.client.model import Client
+
 from sqlalchemy import select
 from passlib.context import CryptContext
-from app.accounts.admin.model import Admin
 from app.accounts.partner.model import Partner
 from app.accounts.staff.model import Staff
 from app.accounts.superadmin.model import SuperAdmin
@@ -14,7 +15,7 @@ async def authenticate_user(db, email: str, password: str):
     models = [
         (SuperAdmin, UserRole.SUPER_ADMIN),
         (Partner, UserRole.PARTNER),
-        (Admin, UserRole.ADMIN),
+        (Client, UserRole.CLIENT),
         (Staff, UserRole.STAFF),
     ]
 

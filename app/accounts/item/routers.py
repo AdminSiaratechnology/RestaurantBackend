@@ -116,7 +116,7 @@ async def get_items(
     db: SessionDep,
     branch_id: int,
     brand_id: int | None = None,
-    current=Depends(access_four)
+    current=Depends(get_current_user)
 ):
     role = current["role"]
     user = current["user"]
@@ -199,7 +199,7 @@ async def update_item(
     item_id: int,
     payload: ItemUpdate,
     db: SessionDep,
-    current=Depends(access_four)
+    current=Depends(get_current_user)
 ):
 
     item = await db.get(Item, item_id)
