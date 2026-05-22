@@ -4,6 +4,7 @@ from typing import AsyncGenerator, Annotated
 import os
 
 # ✅ Use ENV variable (NEVER hardcode in production)
+
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     # "postgresql+asyncpg://postgres:1234@localhost/RestaurantManagementSystem"
