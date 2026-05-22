@@ -6,7 +6,8 @@ import os
 # ✅ Use ENV variable (NEVER hardcode in production)
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://postgres:1234@localhost/RestaurantManagementSystem"
+    # "postgresql+asyncpg://postgres:1234@localhost/RestaurantManagementSystem"
+    "postgresql+asyncpg://restaurant_user:UxE0lcJTZUtoOnsclxAqTAEB1InjFFlI@dpg-ct123abc-a.oregon-postgres.render.com/restaurant_management_system"
 )
 
 # 🔹 Create async engine (optimized)
@@ -19,6 +20,19 @@ engine = create_async_engine(
     pool_recycle=1800,     # ✅ recycle connections (avoid stale)
     future=True,
 )
+
+# engine = create_async_engine(
+#     DATABASE_URL,
+#     echo=False,
+#     pool_size=10,
+#     max_overflow=20,
+#     pool_timeout=30,
+#     pool_recycle=1800,
+#     future=True,
+#     connect_args={
+#         "ssl": True
+#     }
+# )
 
 # 🔹 Create async session maker
 async_session = async_sessionmaker(
