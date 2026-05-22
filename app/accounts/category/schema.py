@@ -5,14 +5,14 @@ from datetime import datetime
 
 class CategoryCreate(BaseModel):
     name: str
-    icon: str 
+    icon: str | None = None
     branch_id: int
 
 
 class CategoryOut(BaseModel):
     id: int
     name: str
-    icon: Optional[str] = None
+    icon: str | None = None
     branch_id: int
     created_at: datetime | None
 

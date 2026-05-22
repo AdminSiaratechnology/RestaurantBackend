@@ -78,32 +78,67 @@ async def get_staff_permissions(
     role = current["role"]
     user = current["user"]
 
-    query = (
-        select(StaffPermission)
-        .join(Staff, Staff.id == StaffPermission.staff_id)
-        .where(Staff.id == staff_id)
-    )
-
-    # ✅ CLIENT
+    # ✅ Verify staff access
+    staff_query = select(Staff).where(Staff.id == staff_id)
     if role.value == "client":
-        query = query.where(
-            Staff.client_id == user.id
-        )
-
-    # ✅ STAFF
+        staff_query = staff_query.where(Staff.client_id == user.id)
     elif role.value == "staff":
-        query = query.where(
-            Staff.id == user.id
-        )
+        staff_query = staff_query.where(Staff.id == user.id)
+    
+    staff_result = await db.execute(staff_query)
+    staff = staff_result.scalar_one_or_none()
 
-    result = await db.execute(query)
+    if not staff:
+        raise HTTPException(404, "Staff not found")
 
+    # ✅ If chef, return default kitchen & inventory permissions
+    if staff.role == StaffRole.chef:
+        return {
+            "staff_id": staff_id,
+            "manage_orders": False,
+            "manage_staff": False,
+            "manage_inventory": True,
+            "manage_customers": False,
+            "manage_reports": False,
+            "manage_branches": False,
+            "access_billing": False,
+            "edit_menu_items": False,
+            "manage_tables": False,
+            "manage_kitchen": True
+        }
+
+    # ✅ Otherwise check DB
+    result = await db.execute(
+        select(StaffPermission).where(StaffPermission.staff_id == staff_id)
+    )
     permission = result.scalar_one_or_none()
 
     if not permission:
         raise HTTPException(404, "Permission not found")
 
     return permission
+
+
+@router.get("/chef/{staff_id}", response_model=StaffPermissionOut)
+async def get_chef_default_permissions(
+    staff_id: int,
+    db: SessionDep,
+    current=Depends(access_one)
+):
+    # This is a dedicated API that returns fixed Chef permissions
+    return {
+        "staff_id": staff_id,
+        "manage_orders": False,
+        "manage_staff": False,
+        "manage_inventory": True,
+        "manage_customers": False,
+        "manage_reports": False,
+        "manage_branches": False,
+        "access_billing": False,
+        "edit_menu_items": False,
+        "manage_tables": False,
+        "manage_kitchen": True
+    }
 
 
 

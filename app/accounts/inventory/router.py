@@ -25,6 +25,13 @@ async def create_inventory_item(
     current=Depends(access_four)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            data.client_id = user.client_id
+            data.branch_id = user.branch_id
+
         await get_client_if_accessible(data.client_id, db, current)
 
         status = calculate_status(data.stock_qty, data.reorder_level)
@@ -67,12 +74,22 @@ async def create_inventory_item(
 
 @router.get("/list")
 async def get_inventory(
-    client_id: int,
-    branch_id: int,
     db: SessionDep,
+    client_id: int | None = None,
+    branch_id: int | None = None,
     current=Depends(access_four)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            client_id = user.client_id
+            branch_id = user.branch_id
+
+        if not client_id or not branch_id:
+            raise HTTPException(400, "client_id and branch_id are required")
+
         await get_client_if_accessible(client_id, db, current)
 
         result = await db.execute(
@@ -106,6 +123,8 @@ async def get_inventory(
 
         return response
 
+    except HTTPException as e:
+        raise e
     except SQLAlchemyError:
         raise HTTPException(500, "Error fetching inventory")
     
@@ -113,12 +132,22 @@ async def get_inventory(
 
 @router.get("/stats")
 async def inventory_stats(
-    client_id: int,
-    branch_id: int,
     db: SessionDep,
+    client_id: int | None = None,
+    branch_id: int | None = None,
     current=Depends(access_four)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            client_id = user.client_id
+            branch_id = user.branch_id
+
+        if not client_id or not branch_id:
+            raise HTTPException(400, "client_id and branch_id are required")
+
         await get_client_if_accessible(client_id, db, current)
 
         result = await db.execute(
@@ -142,6 +171,8 @@ async def inventory_stats(
             "out_of_stock": out_of_stock
         }
 
+    except HTTPException as e:
+        raise e
     except SQLAlchemyError:
         raise HTTPException(500, "Error fetching stats")
     
@@ -191,7 +222,13 @@ async def update_stock(
     item = await db.get(InventoryItem, item_id)
 
     if not item:
-        return {"message": "Item not found"}
+        raise HTTPException(404, "Item not found")
+
+    role = current["role"]
+    user = current["user"]
+
+    if role == UserRole.STAFF and item.branch_id != user.branch_id:
+        raise HTTPException(403, "Not allowed to update inventory of another branch")
 
     await get_client_if_accessible(item.client_id, db, current)
 

@@ -17,158 +17,124 @@ router = APIRouter(prefix="/items", tags=["Items"])
 
 
 # ✅ CREATE ITEM
-@router.post("/", response_model=ItemOut)
-async def create_item(
-    payload: ItemCreate,
+@router.get("/get_items", response_model=list[ItemOut])
+async def get_items(
     db: SessionDep,
-    current=Depends(access_four)
+    branch_id: int | None = None,
+    current=Depends(get_current_user)
 ):
+    role = current["role"]
+    user = current["user"]
 
-    # 🔐 Tenant Access
-    client = await get_client_if_accessible(
-        client_id=payload.client_id,
-        db=db,
-        current=current
-    )
+    # ✅ FINAL BRANCH
+    final_branch_id = None
 
-    # ✅ Validate Category
-    result = await db.execute(
-        select(Category).where(
-            Category.id == payload.category_id,
-            Category.client_id == client.id
+    # =========================
+    # ✅ STAFF LOGIN
+    # =========================
+    if role == "staff":
+
+        # staff must have assigned branch
+        final_branch_id = user.selected_branch_id
+
+        if not final_branch_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Staff branch not assigned"
+            )
+
+    # =========================
+    # ✅ CLIENT LOGIN
+    # =========================
+    elif role == "client":
+
+        # client sends branch_id manually
+        if not branch_id:
+            raise HTTPException(
+                status_code=400,
+                detail="branch_id is required"
+            )
+
+        final_branch_id = branch_id
+
+    # =========================
+    # ✅ INVALID ROLE
+    # =========================
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied"
         )
-    )
 
-    category = result.scalar_one_or_none()
-
-    if not category:
-        raise HTTPException(400, "Invalid category")
-
-    # ✅ Validate Branch
+    # =========================
+    # ✅ VALIDATE BRANCH
+    # =========================
     result = await db.execute(
         select(Branch).where(
-            Branch.id == payload.branch_id,
-            Branch.client_id == client.id
+            Branch.id == final_branch_id
         )
     )
 
     branch = result.scalar_one_or_none()
 
     if not branch:
-        raise HTTPException(400, "Invalid branch")
-    print(payload.name, payload.branch_id)
-    # ✅ Duplicate Check
-    result = await db.execute(
-        select(Item).where(
-            Item.name == payload.name,
-            Item.branch_id == payload.branch_id
-        )
-    )
-
-    if result.scalar_one_or_none():
         raise HTTPException(
-            400,
-            "Item already exists in this branch"
+            status_code=404,
+            detail="Branch not found"
         )
 
-    # ✅ Create Item
-    item = Item(
-        name=payload.name,
-        client_id=client.id,
-        category_id=payload.category_id,
-        branch_id=payload.branch_id
-    )
-
-    db.add(item)
-
-    # ✅ flush generates item.id BEFORE commit
-    await db.flush()
-
-    # ✅ Create Pricing Automatically
-    pricing = Pricing(
-        client_id=client.id,
-        item_id=item.id,
-        branch_id=payload.branch_id,
-        price=payload.price,
-        is_active=True
-    )
-
-    db.add(pricing)
-
-    # ✅ commit both together
-    await db.commit()
-
-    # ✅ reload with relationship
+    # =========================
+    # ✅ GET ITEMS
+    # =========================
     result = await db.execute(
         select(Item)
-        .options(selectinload(Item.pricings))
-        .where(Item.id == item.id)
+        .options(
+            selectinload(Item.pricings)
+        )
+        .where(Item.branch_id == final_branch_id)
     )
 
-    created_item = result.scalar_one()
+    items = result.scalars().all()
 
-    return created_item
+    return items
 
+
+    
 
 # ✅ GET ITEMS
 @router.get("/get_items", response_model=list[ItemOut])
 async def get_items(
     db: SessionDep,
     branch_id: int,
-    brand_id: int | None = None,
     current=Depends(get_current_user)
 ):
     role = current["role"]
     user = current["user"]
 
+    # ✅ STAFF
+    if role == "staff":
+
+        # use selected branch from staff
+        branch_id = user.selected_branch_id
+
+    # ✅ CLIENT
+    elif role == "client":
+
+        # use branch from query param
+        branch_id = branch_id
+
     query = (
         select(Item)
-        .options(
-            selectinload(Item.pricings)
-        )
+        .options(selectinload(Item.pricings))
         .where(Item.branch_id == branch_id)
     )
 
-    # optional brand filter
-    if brand_id is not None:
-        query = query.where(Item.brand_id == brand_id)
-
-    # SUPER ADMIN
-    if role == UserRole.SUPER_ADMIN:
-        pass
-
-    # PARTNER
-    elif role == UserRole.PARTNER:
-        query = query.join(Item.client).where(
-            Client.partner_id == user.id
-        )
-
-    # CLIENT
-    elif role == UserRole.CLIENT:
-        query = query.where(
-            Item.client_id == user.id
-        )
-
-    # STAFF
-    elif role == UserRole.STAFF:
-
-        # IMPORTANT SECURITY
-        if user.branch_id != branch_id:
-            raise HTTPException(
-                status_code=403,
-                detail="Not allowed to access another branch"
-            )
-
-        query = query.where(
-            Item.client_id == user.client_id
-        )
-
-    else:
-        raise HTTPException(403, "Not authorized")
-
     result = await db.execute(query)
 
-    return result.scalars().unique().all()
+    items = result.scalars().all()
+
+    return items
+
 
 
 # @router.get("/{item_id}", response_model=ItemOut)

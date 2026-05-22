@@ -52,11 +52,19 @@ async def authenticate_user(data, db, response, allowed_roles: list):
 
     access_token = create_access_token(token_data)
 
+    user_payload = {
+        "id": user.id,
+        "email": user.email
+    }
+    if role == UserRole.STAFF:
+        user_payload["client_id"] = user.client_id
+        user_payload["branch_id"] = user.branch_id
+        user_payload["role"] = user.role
+    elif role == UserRole.CLIENT:
+        user_payload["client_id"] = user.id
+
     return {
         "access_token": access_token,
         "role": role.value,
-        "user": {
-            "id": user.id,
-            "email": user.email
-        }
+        "user": user_payload
     }

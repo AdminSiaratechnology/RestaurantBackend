@@ -76,11 +76,11 @@ async def create_category(
 
 
 @router.get(
-    "/clients/{client_id}/categories/get_cat",
+    "/branches/{branch_id}/categories",
     response_model=list[CategoryOut]
 )
 async def get_categories(
-    client_id: int,
+    branch_id: int,
     db: SessionDep,
     current=Depends(get_current_user)
 ):
@@ -94,50 +94,24 @@ async def get_categories(
     user = current["user"]
     role = current["role"]
 
-    query = select(Category)
+    # STAFF SECURITY
+    if role == UserRole.STAFF:
 
-    # ✅ CLIENT LOGIN
-    if role == UserRole.CLIENT:
-
-        # client can only access own data
-        if user.id != client_id:
+        if branch_id != user.branch_id:
             raise HTTPException(
                 status_code=403,
                 detail="Access denied"
             )
 
-        query = query.where(
-            Category.client_id == user.id
-        )
-
-    # ✅ STAFF LOGIN
-    elif role == UserRole.STAFF:
-
-        # staff belongs to one client
-        if user.client_id != client_id:
-            raise HTTPException(
-                status_code=403,
-                detail="Access denied"
-            )
-
-        query = query.where(
-            Category.client_id == user.client_id,
-            Category.branch_id == user.branch_id
-        )
-
-    # ✅ PARTNER / SUPERADMIN
-    else:
-
-        query = query.where(
-            Category.client_id == client_id
-        )
+    query = select(Category).where(
+        Category.branch_id == branch_id
+    )
 
     result = await db.execute(query)
 
     categories = result.scalars().all()
 
     return categories
-
 
 
 
@@ -173,7 +147,6 @@ async def update_category(
     elif role == UserRole.STAFF:
 
         query = query.where(
-            Category.client_id == user.client_id,
             Category.branch_id == user.branch_id
         )
 
@@ -228,7 +201,6 @@ async def delete_category(
     elif role == UserRole.STAFF:
 
         query = query.where(
-            Category.client_id == user.client_id,
             Category.branch_id == user.branch_id
         )
 

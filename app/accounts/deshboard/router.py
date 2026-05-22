@@ -1,19 +1,21 @@
-from multiprocessing.dummy.connection import Client
-from app.accounts.deps import access_two
+from datetime import datetime, date, timedelta
+
+# pyrefly: ignore [missing-import]
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select, func, not_, desc
+from sqlalchemy.exc import SQLAlchemyError
+from app.accounts.client.model import Client
+from app.accounts.deps import access_two, access_three, access_four, get_client_if_accessible, require_super_admin
 from app.accounts.deshboard.schema import TopClientOut
 from app.accounts.enum import UserRole
 from app.accounts.order.model import Order, OrderItem
-from sqlalchemy.exc import SQLAlchemyError
-from datetime import datetime, date, timedelta
 from app.accounts.partner.model import Partner
-from app.db.config import SessionDep
-from app.accounts.deps import access_three, get_client_if_accessible, require_super_admin
-from sqlalchemy import select, func, not_
 from app.accounts.table.model import Table
-from sqlalchemy.exc import SQLAlchemyError
+from app.accounts.table.schema import TableStatus
 from app.accounts.branch.model import Branch
 from app.accounts.item.model import Item
+from app.db.config import SessionDep
+
 
 
 
@@ -28,12 +30,22 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
 @router.get("/today-revenue")
 async def get_today_revenue(
-    client_id: int,
-    branch_id: int,
     db: SessionDep,
-    current=Depends(access_three)
+    client_id: int | None = None,
+    branch_id: int | None = None,
+    current=Depends(access_four)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            client_id = user.client_id
+            branch_id = user.branch_id
+
+        if not client_id or not branch_id:
+            raise HTTPException(400, "client_id and branch_id are required")
+
         # ✅ Access control
         await get_client_if_accessible(client_id, db, current)
 
@@ -77,12 +89,22 @@ async def get_today_revenue(
 
 @router.get("/active-orders")
 async def get_active_orders(
-    client_id: int,
-    branch_id: int,
     db: SessionDep,
-    current=Depends(access_three)
+    client_id: int | None = None,
+    branch_id: int | None = None,
+    current=Depends(access_four)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            client_id = user.client_id
+            branch_id = user.branch_id
+
+        if not client_id or not branch_id:
+            raise HTTPException(400, "client_id and branch_id are required")
+
         # =========================
         # ✅ Access Control
         # =========================
@@ -139,71 +161,108 @@ async def get_active_orders(
 
 
 
-
-
-
 @router.get("/occupied-tables")
 async def get_occupied_tables(
     db: SessionDep,
-    current=Depends(access_three)
+    current=Depends(access_four)
 ):
     try:
         user = current["user"]
+        role = current["role"]
 
-        # ✅ Base query (same as your see_table)
-        base_query = (
-            select(Table)
-            .join(Branch, Branch.id == Table.branch_id)
-            .join(Client, Client.id == Branch.client_id)
-            .where(Client.id == user.id)
-        )
+        # ✅ Base condition
+        conditions = []
 
-        # ✅ Total tables
+        if role == UserRole.STAFF:
+            conditions.append(Table.branch_id == user.branch_id)
+
+        else:
+            branch_result = await db.execute(
+                select(Branch.id).where(Branch.client_id == user.id)
+            )
+
+            branch_ids = branch_result.scalars().all()
+
+            if not branch_ids:
+                return {
+                    "occupied_tables": 0,
+                    "total_tables": 0,
+                    "display": "0/0"
+                }
+
+            conditions.append(Table.branch_id.in_(branch_ids))
+
+        # ✅ Total tables count
         total_result = await db.execute(
-            select(func.count()).select_from(base_query.subquery())
+            select(func.count(Table.id)).where(*conditions)
         )
-        total_tables = total_result.scalar_one()
 
-        # ✅ Occupied tables
+        total_tables = total_result.scalar() or 0
+
+        # ✅ Occupied tables count
+        # occupied_result = await db.execute(
+        #     select(func.count(Table.id)).where(
+        #         *conditions,
+        #         Table.status == TableStatus.occupied
+        #     )
+        # )
+
+        # occupied_tables = occupied_result.scalar() or 0
+        # ✅ Occupied tables count
         occupied_result = await db.execute(
-            select(func.count()).select_from(base_query.subquery())
-            .where(Table.status == "occupied")   # 🔥 filter
+            select(func.count(Table.id)).where(
+                *conditions,
+                Table.status == TableStatus.occupied
+            )
         )
-        occupied_tables = occupied_result.scalar_one()
+
+        occupied_tables = occupied_result.scalar() or 0
 
         return {
             "occupied_tables": occupied_tables,
             "total_tables": total_tables,
-            "display": f"{occupied_tables}/{total_tables}"  # 👈 for UI
+            "display": f"{occupied_tables}/{total_tables}"
         }
 
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
+        print("SQLAlchemy Error:", str(e))
+
         raise HTTPException(
             status_code=500,
-            detail="Database error while fetching table status"
+            detail=str(e)
         )
 
-    except Exception:
+    except Exception as e:
+        print("Unexpected Error:", str(e))
+
         raise HTTPException(
             status_code=500,
-            detail="Unexpected error occurred"
+            detail=str(e)
         )
     
 
 
 
-from sqlalchemy import select, func
-from sqlalchemy.exc import SQLAlchemyError
-from fastapi import HTTPException, Depends
 
-@router.get("/dashboard/menu-count")
+
+@router.get("/menu-count")
 async def get_menu_count(
-    client_id: int,
-    branch_id: int,
     db: SessionDep,
-    current=Depends(access_three)
+    client_id: int | None = None,
+    branch_id: int | None = None,
+    current=Depends(access_four)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            client_id = user.client_id
+            branch_id = user.branch_id
+
+        if not client_id or not branch_id:
+            raise HTTPException(400, "client_id and branch_id are required")
+
         # Access check
         await get_client_if_accessible(client_id, db, current)
 
@@ -231,12 +290,22 @@ async def get_menu_count(
 
 @router.get("/weekly-revenue")
 async def get_weekly_revenue(
-    client_id: int,
-    branch_id: int,
     db: SessionDep,
-    current=Depends(access_three)
+    client_id: int | None = None,
+    branch_id: int | None = None,
+    current=Depends(access_four)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            client_id = user.client_id
+            branch_id = user.branch_id
+
+        if not client_id or not branch_id:
+            raise HTTPException(400, "client_id and branch_id are required")
+
         # ✅ Access control
         await get_client_if_accessible(client_id, db, current)
 
@@ -286,19 +355,24 @@ async def get_weekly_revenue(
         raise HTTPException(500, "Unexpected error occurred")
 
 
-
-from sqlalchemy import select, func, desc
-from sqlalchemy.exc import SQLAlchemyError
-from fastapi import HTTPException, Depends
-
-@router.get("/dashboard/top-items")
+@router.get("/top-items")
 async def get_top_items(
-    client_id: int,
-    branch_id: int,
     db: SessionDep,
-    current=Depends(access_three)
+    client_id: int | None = None,
+    branch_id: int | None = None,
+    current=Depends(access_four)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            client_id = user.client_id
+            branch_id = user.branch_id
+
+        if not client_id or not branch_id:
+            raise HTTPException(400, "client_id and branch_id are required")
+
         # ✅ Access control
         await get_client_if_accessible(client_id, db, current)
 
@@ -345,20 +419,27 @@ async def get_top_items(
     except Exception:
         raise HTTPException(500, "Unexpected error occurred")
 
+        
 
-from sqlalchemy import select, desc
-from sqlalchemy.exc import SQLAlchemyError
-from fastapi import HTTPException, Depends
-
-@router.get("/dashboard/recent-orders")
+@router.get("/recent-orders")
 async def get_recent_orders(
-    client_id: int,
-    branch_id: int,
+    db: SessionDep,
     limit: int = 5,   # default 5 like your UI
-    db: SessionDep = None,
-    current=Depends(access_three)
+    client_id: int | None = None,
+    branch_id: int | None = None,
+    current=Depends(access_four)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            client_id = user.client_id
+            branch_id = user.branch_id
+
+        if not client_id or not branch_id:
+            raise HTTPException(400, "client_id and branch_id are required")
+
         # ✅ Access control
         await get_client_if_accessible(client_id, db, current)
 
@@ -413,19 +494,10 @@ async def get_partners_count(
     }
 
 
-from datetime import datetime, timedelta
-from sqlalchemy import select, func
 
 
 
-from datetime import datetime, timedelta
-from sqlalchemy import select, func
-
-
-
-
-
-@router.get("/dashboard/superadmin/partners")
+@router.get("/superadmin/partners")
 async def partner_dashboard(
     db: SessionDep,
     current=Depends(require_super_admin)
@@ -562,11 +634,7 @@ async def partner_dashboard(
         "graph": graph
     }
 
-
-from sqlalchemy import select, func, desc
-from app.accounts.client.model import Client
-
-@router.get("/dashboard/superadmin/top-partners")
+@router.get("/superadmin/top-partners")
 async def top_partners_dashboard(
     db: SessionDep,
     current=Depends(require_super_admin),
@@ -759,7 +827,7 @@ async def new_partners_card(
 
 
 
-@router.get("/dashboard/superadmin/new-clients")
+@router.get("/superadmin/new-clients")
 async def new_clients_card(
     db: SessionDep,
     current=Depends(require_super_admin)

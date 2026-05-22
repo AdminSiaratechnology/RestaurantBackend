@@ -25,6 +25,8 @@ class StaffPermission(Base):
     manage_branches = Column(Boolean, default=False)
     access_billing = Column(Boolean, default=False)
     edit_menu_items = Column(Boolean, default=False)
+    manage_tables = Column(Boolean, default=False)
+    manage_kitchen = Column(Boolean, default=False)
 
 
     staff = relationship(

@@ -17,7 +17,7 @@ import enum
 # ✅ Role Enum
 class StaffRole(str, enum.Enum):
     manager = "manager"
-    waitr = "waitr"
+    waitr = "waiter"
     chef = "chef"
 
 
@@ -57,7 +57,7 @@ class Staff(Base):
     branch_id = Column(
         Integer,
         ForeignKey("branches.id"),
-        nullable=True
+        nullable=False
     )
 
     is_active = Column(

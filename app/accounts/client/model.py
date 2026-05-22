@@ -130,3 +130,8 @@ class Client(Base):
         "Staff",
         back_populates="client"
     )
+
+    tax_settings = relationship(
+        "TaxBillingSetting",
+        back_populates="client"
+    )

@@ -11,6 +11,8 @@ class StaffPermissionBase(BaseModel):
     manage_branches: bool = False
     access_billing: bool = False
     edit_menu_items: bool = False
+    manage_tables: bool = False
+    manage_kitchen: bool = False
 
 
 # ✅ CREATE schema

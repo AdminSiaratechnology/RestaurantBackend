@@ -3,8 +3,9 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from datetime import datetime
 from app.db.config import SessionDep
-from app.accounts.deps import access_three, get_client_if_accessible
+from app.accounts.deps import access_three, access_four, get_client_if_accessible
 from app.accounts.order.model import Order
+from app.accounts.enum import UserRole
 from .schema import ALLOWED_STATUS_FLOW, OrderStatusUpdate   # if you created schema
 
 
@@ -16,7 +17,7 @@ async def update_order_status(
     order_id: int,
     data: OrderStatusUpdate,
     db: SessionDep,
-    current=Depends(access_three)
+    current=Depends(access_four)
 ):
     try:
         # =========================
@@ -31,6 +32,10 @@ async def update_order_status(
             raise HTTPException(404, "Order not found")
 
         await get_client_if_accessible(order.client_id, db, current)
+
+        # ✅ Branch security check for staff
+        if current["role"] == UserRole.STAFF and order.branch_id != current["user"].branch_id:
+            raise HTTPException(403, "Not allowed to access orders of another branch")
 
         current_status = order.status.lower()
         new_status = data.status.lower()
@@ -95,7 +100,7 @@ async def update_order_status(
 async def cancel_order(
     order_id: int,
     db: SessionDep,
-    current=Depends(access_three)
+    current=Depends(access_four)
 ):
     try:
 
@@ -122,6 +127,10 @@ async def cancel_order(
             db,
             current
         )
+
+        # ✅ Branch security check for staff
+        if current["role"] == UserRole.STAFF and order.branch_id != current["user"].branch_id:
+            raise HTTPException(403, "Not allowed to access orders of another branch")
 
         # =========================
         # ✅ Only Pending Orders Can Cancel

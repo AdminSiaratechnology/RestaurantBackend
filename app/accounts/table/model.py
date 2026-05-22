@@ -1,16 +1,19 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
-from sqlalchemy.orm import relationship
+from enum import Enum
 from datetime import datetime
+
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy.dialects.postgresql import ENUM as PgEnum
+from sqlalchemy.orm import relationship
+
+from app.accounts.table.schema import TableShape, TableStatus
 from app.db.base import Base
-import enum
-from sqlalchemy import Enum as PgEnum
 
+class TableStatus(str, Enum):
+    available = "available"
+    occupied = "occupied"
+    reserved = "reserved"
+    inactive = "inactive"
 
-class TableShape(str, enum.Enum):
-    rectangular = "rectangular"
-    round = "round"
-    square = "square"
-    oval = "oval"
 
 
 class Table(Base):
@@ -18,25 +21,48 @@ class Table(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
-    brand_id = Column(Integer, ForeignKey("brands.id"), nullable=False)
-    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id"),
+        nullable=False
+    )
+
+    branch_id = Column(
+        Integer,
+        ForeignKey("branches.id"),
+        nullable=False
+    )
 
     name = Column(String, nullable=False)
+
     floor = Column(String, nullable=True)
+
     number_of_seats = Column(Integer, nullable=False)
 
-    # ✅ FIXED (inside class)
     shape = Column(
         PgEnum(TableShape, name="tableshape"),
         default=TableShape.rectangular
     )
 
-    status = Column(String, default="available")
+    status = Column(
+        PgEnum(TableStatus, name="tablestatus"),
+        default=TableStatus.available
+    )
+
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
 
-    # ✅ RELATIONSHIP
-    branch = relationship("Branch", back_populates="tables")
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow
+    )
+
+    branch = relationship(
+        "Branch",
+        back_populates="tables"
+    )

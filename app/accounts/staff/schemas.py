@@ -5,7 +5,7 @@ from enum import Enum
 
 class StaffRole(str, Enum):
     manager = "manager"
-    waitr = "waitr"
+    waitr = "waiter"
     chef = "chef"
 
 
@@ -15,7 +15,7 @@ class StaffCreate(BaseModel):
     password: str
 
     role: StaffRole
-    branch_id: int
+    branch_id: int 
 
 
 class StaffOut(BaseModel):
@@ -29,7 +29,7 @@ class StaffOut(BaseModel):
 
     client_id: int
 
-    branch_id: int
+    branch_id: int 
 
     is_active: bool
 
@@ -48,6 +48,6 @@ class StaffUpdate(BaseModel):
 
     role: StaffRole | None = None
 
-    branch_id: int | None = None
+    branch_id: int 
 
     is_active: bool | None = None

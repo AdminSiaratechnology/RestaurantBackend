@@ -12,6 +12,10 @@ class Pricing(Base):
     item_id = Column(Integer, ForeignKey("items.id"), nullable=False)
     branch_id = Column(Integer, ForeignKey("branches.id"))
     price = Column(Float, nullable=False)
+    cost_price = Column(Float, nullable=True, default=0.0)
+    discount = Column(Float, nullable=True, default=0.0)  # percentage e.g. 10 = 10%
+    tax_rate = Column(Float, nullable=True, default=5.0)   # percentage e.g. 5 = 5%
+    calories = Column(Integer, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

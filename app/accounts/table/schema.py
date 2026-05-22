@@ -3,7 +3,6 @@ from datetime import datetime
 from enum import Enum
 
 
-# ✅ Table Shape Enum
 class TableShape(str, Enum):
     rectangular = "rectangular"
     round = "round"
@@ -11,7 +10,6 @@ class TableShape(str, Enum):
     oval = "oval"
 
 
-# ✅ Table Status Enum (IMPORTANT)
 class TableStatus(str, Enum):
     available = "available"
     occupied = "occupied"
@@ -19,10 +17,8 @@ class TableStatus(str, Enum):
     inactive = "inactive"
 
 
-# ✅ Base Schema (Client-aware)
+# ✅ Base Schema
 class TableBase(BaseModel):
-    client_id: int  # 🔥 moved here (core ownership)
-    brand_id: int
     branch_id: int
 
     name: str
@@ -33,19 +29,29 @@ class TableBase(BaseModel):
     shape: TableShape = TableShape.rectangular
 
 
-# ✅ Create Schema
-class TableCreate(TableBase):
-    pass
+class TableCreate(BaseModel):
+    client_id: int
+    branch_id: int
+    name: str
+    floor: str
+    number_of_seats: int
+    shape: TableShape
 
 
-# ✅ Update Schema (partial updates only)
+# # ✅ Create Schema
+# class TableCreate(TableBase):
+#     pass
+
+
+# ✅ Update Schema
 class TableUpdate(BaseModel):
     name: str | None = None
     floor: str | None = None
 
     number_of_seats: int | None = Field(default=None, gt=0)
 
-    status: TableStatus | None = None  # 🔥 enum instead of string
+    status: TableStatus | None = None
+
     is_active: bool | None = None
 
     shape: TableShape | None = None
@@ -56,16 +62,17 @@ class TableOut(BaseModel):
     id: int
 
     client_id: int
-    brand_id: int
     branch_id: int
 
     name: str
     floor: str | None
 
     number_of_seats: int
+
     shape: TableShape
 
     status: TableStatus
+
     is_active: bool
 
     created_at: datetime

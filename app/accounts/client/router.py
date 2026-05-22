@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select
 from passlib.context import CryptContext
 from app.accounts.branch.model import Branch
-from app.accounts.deps import require_client
+from app.accounts.deps import require_client, get_current_user, UserRole
 from app.accounts.staff.model import Staff, StaffRole
 from app.accounts.staff.schemas import (
     StaffCreate,
@@ -30,8 +30,12 @@ pwd_context = CryptContext(
 # =========================================================
 # CREATE STAFF
 # =========================================================
-@router.post("/staff", response_model=StaffOut)
+@router.post(
+    "/branches/{branch_id}/staff",
+    response_model=StaffOut
+)
 async def create_staff(
+    branch_id: int,
     data: StaffCreate,
     db: SessionDep,
     current=Depends(require_client)
@@ -39,12 +43,10 @@ async def create_staff(
     client = current["user"]
 
     # =====================================================
-    # ✅ CHECK BRANCH
+    # VERIFY BRANCH
     # =====================================================
-    branch = await db.get(
-        Branch,
-        data.branch_id
-    )
+
+    branch = await db.get(Branch, branch_id)
 
     if not branch:
         raise HTTPException(
@@ -52,48 +54,43 @@ async def create_staff(
             detail="Branch not found"
         )
 
-    # ✅ security check
     if branch.client_id != client.id:
         raise HTTPException(
             status_code=403,
-            detail="This branch does not belong to you"
+            detail="Unauthorized branch"
         )
 
     # =====================================================
-    # ✅ CHECK DUPLICATE EMAIL
+    # CHECK DUPLICATE EMAIL INSIDE BRANCH
     # =====================================================
+
     result = await db.execute(
         select(Staff).where(
-            Staff.email == data.email
+            Staff.email == data.email,
+            Staff.branch_id == branch_id
         )
     )
 
-    existing_staff = result.scalar_one_or_none()
+    existing = result.scalar_one_or_none()
 
-    if existing_staff:
+    if existing:
         raise HTTPException(
             status_code=400,
-            detail="Staff already exists"
+            detail="Email already exists in this branch"
         )
 
     # =====================================================
-    # ✅ CREATE STAFF
+    # CREATE STAFF
     # =====================================================
+
     staff = Staff(
         name=data.name,
         email=data.email,
-
-        password_hash=pwd_context.hash(
-            data.password
-        ),
-
+        password_hash=pwd_context.hash(data.password),
         role=data.role,
 
-        # 🔥 AUTO FROM LOGIN
         client_id=client.id,
-
-        # 🔥 AUTO FROM SELECTED BRANCH
-        branch_id=branch.id,
+        branch_id=branch_id,
 
         is_active=True
     )
@@ -101,7 +98,6 @@ async def create_staff(
     db.add(staff)
 
     await db.commit()
-
     await db.refresh(staff)
 
     return staff
@@ -110,51 +106,62 @@ async def create_staff(
 # =========================================================
 # GET ALL STAFF
 # =========================================================
-@router.get("/staff", response_model=list[StaffOut])
-async def get_all_staff(
+@router.get(
+    "/branches/{branch_id}/staff",
+    response_model=list[StaffOut]
+)
+async def get_staff_by_branch(
+    branch_id: int,
     db: SessionDep,
-    current=Depends(require_client),
-    skip: int = 0,
-    limit: int = 10,
-    search: str | None = None,
-    is_active: bool | None = None,
-    role: StaffRole | None = None
+    current=Depends(get_current_user)
 ):
-    client = current["user"]
 
-    query = select(Staff).where(
-        Staff.client_id == client.id
+    user = current["user"]
+    role = current["role"]
+
+    # =====================================================
+    # STAFF SECURITY
+    # =====================================================
+
+    if role == UserRole.STAFF:
+
+        if user.branch_id != branch_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied"
+            )
+
+    # =====================================================
+    # CLIENT SECURITY
+    # =====================================================
+
+    elif role == UserRole.CLIENT:
+
+        branch = await db.get(Branch, branch_id)
+
+        if not branch:
+            raise HTTPException(
+                status_code=404,
+                detail="Branch not found"
+            )
+
+        if branch.client_id != user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied"
+            )
+
+    # =====================================================
+    # QUERY
+    # =====================================================
+
+    result = await db.execute(
+        select(Staff).where(
+            Staff.branch_id == branch_id
+        )
     )
 
-    # ✅ active filter
-    if is_active is not None:
-        query = query.where(
-            Staff.is_active == is_active
-        )
-
-    # ✅ role filter
-    if role is not None:
-        query = query.where(
-            Staff.role == role
-        )
-
-    # ✅ search filter
-    if search:
-        query = query.where(
-            or_(
-                Staff.name.ilike(f"%{search}%"),
-                Staff.email.ilike(f"%{search}%")
-            )
-        )
-
-    query = query.offset(skip).limit(limit)
-
-    result = await db.execute(query)
-
-    staffs = result.scalars().all()
-
-    return staffs
-
+    return result.scalars().all()
 
 # =========================================================
 # SEARCH STAFF
@@ -182,8 +189,9 @@ async def get_all_staff(
 # =========================================================
 # UPDATE STAFF
 # =========================================================
-@router.put("/staff/{staff_id}", response_model=StaffOut)
+@router.put("/branches/{branch_id}/staff/{staff_id}")
 async def update_staff(
+    branch_id: int,
     staff_id: int,
     data: StaffUpdate,
     db: SessionDep,
@@ -197,7 +205,7 @@ async def update_staff(
     result = await db.execute(
         select(Staff).where(
             Staff.id == staff_id,
-            Staff.client_id == client.id
+            Staff.branch_id == branch_id
         )
     )
 
@@ -296,8 +304,9 @@ async def update_staff(
 # =========================================================
 # DELETE STAFF
 # =========================================================
-@router.delete("/staff/{staff_id}")
+@router.delete("/branches/{branch_id}/staff/{staff_id}")
 async def delete_staff(
+    branch_id: int,
     staff_id: int,
     db: SessionDep,
     current=Depends(require_client)
@@ -307,10 +316,9 @@ async def delete_staff(
     result = await db.execute(
         select(Staff).where(
             Staff.id == staff_id,
-            Staff.client_id == client.id
+            Staff.branch_id == branch_id
         )
     )
-
     staff = result.scalar_one_or_none()
 
     if not staff:

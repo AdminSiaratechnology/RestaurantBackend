@@ -13,7 +13,25 @@ from app.accounts.order.schema import OrderCreate, OrderResponse, OrderUpdate
 from app.accounts.pricing.model import Pricing
 
 
+from app.accounts.enum import UserRole
+
+
 router = APIRouter(prefix="/order", tags=["Order"])
+
+
+def compute_total_price(pricing: Pricing) -> float:
+    """
+    Compute per-unit price after applying discount and tax.
+    Formula:
+      discounted = price - (price × discount% / 100)
+      total      = discounted + (discounted × tax_rate% / 100)
+    """
+    base = pricing.price or 0.0
+    disc = pricing.discount or 0.0
+    tax  = pricing.tax_rate or 0.0
+    discounted = base - (base * disc / 100)
+    total = discounted + (discounted * tax / 100)
+    return round(total, 2)
 
 # =========================
 # ✅ GET MENU
@@ -21,12 +39,26 @@ router = APIRouter(prefix="/order", tags=["Order"])
 
 @router.get("/menu")
 async def get_menu(
-    client_id: int,
-    branch_id: int,
     db: SessionDep,
+    client_id: int | None = None,
+    branch_id: int | None = None,
     current=Depends(access_one)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        # If logged in as staff, enforce their own client and branch to prevent any mismatch or 404
+        if role == UserRole.STAFF:
+            client_id = user.client_id
+            branch_id = user.branch_id
+        else:
+            if client_id is None or branch_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="client_id and branch_id are required parameters"
+                )
+
         # ✅ Tenant access
         await get_client_if_accessible(client_id, db, current)
 
@@ -65,20 +97,39 @@ async def get_menu(
                 None
             )
 
-            price = pricing.price if pricing else 0
+            if pricing:
+                base_price = pricing.price
+                total_price = compute_total_price(pricing)
+                discount = pricing.discount or 0.0
+                tax_rate = pricing.tax_rate or 0.0
+            else:
+                base_price = 0
+                total_price = 0
+                discount = 0
+                tax_rate = 0
 
             menu.setdefault(category_name, []).append({
                 "id": item.id,
                 "name": item.name,
-                "price": price
+                "price": base_price,
+                "discount": discount,
+                "tax_rate": tax_rate,
+                "total_price": total_price
             })
 
         return menu
 
+    except HTTPException as e:
+        raise e
     except SQLAlchemyError:
         raise HTTPException(
             status_code=500,
             detail="Database error while fetching menu"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
         )
     
 
@@ -269,6 +320,10 @@ async def update_order(
 
         await get_client_if_accessible(order.client_id, db, current)
 
+        # Enforce branch security for staff on order update
+        if current["role"] == UserRole.STAFF and order.branch_id != current["user"].branch_id:
+            raise HTTPException(403, "Not allowed to update orders of another branch")
+
         # =========================
         # ✅ Update Basic Fields
         # =========================
@@ -316,7 +371,7 @@ async def update_order(
                     )
                 )
 
-                pricing = pricing_result.scalar_one_or_none()
+                pricing = pricing_result.scalars().first()
 
                 # 🔁 fallback (optional but recommended)
                 if not pricing:
@@ -327,7 +382,7 @@ async def update_order(
                             Pricing.is_active == True
                         )
                     )
-                    pricing = pricing_result.scalar_one_or_none()
+                    pricing = pricing_result.scalars().first()
 
                 if not pricing:
                     raise HTTPException(
@@ -335,17 +390,17 @@ async def update_order(
                         f"No active pricing found for item '{db_item.name}'"
                     )
 
-                item_price = pricing.price
+                item_price = compute_total_price(pricing)
                 total += item_price * item.quantity
 
                 db.add(OrderItem(
                     order_id=order.id,
                     item_id=db_item.id,
                     quantity=item.quantity,
-                    price=item_price
+                    price=item_price   # ✅ stored as tax+discount inclusive price
                 ))
 
-            order.total_amount = total
+            order.total_amount = round(total, 2)
 
         # =========================
         # ✅ Commit
@@ -413,6 +468,14 @@ async def create_order(
     current=Depends(access_one)
 ):
     try:
+        role = current["role"]
+        user = current["user"]
+
+        # Enforce staff's client and branch to prevent client-side parameter errors
+        if role == UserRole.STAFF:
+            data.client_id = user.client_id
+            data.branch_id = user.branch_id
+
         await get_client_if_accessible(data.client_id, db, current)
 
         order = Order(
@@ -445,24 +508,37 @@ async def create_order(
                 select(Pricing).where(
                     Pricing.item_id == db_item.id,
                     Pricing.client_id == db_item.client_id,
+                    Pricing.branch_id == data.branch_id,   # 🔥 include this
                     Pricing.is_active == True
                 )
             )
-            pricing = pricing_result.scalar_one_or_none()
+            pricing = pricing_result.scalars().first()
+
+            # 🔁 fallback
+            if not pricing:
+                pricing_result = await db.execute(
+                    select(Pricing).where(
+                        Pricing.item_id == db_item.id,
+                        Pricing.client_id == db_item.client_id,
+                        Pricing.is_active == True
+                    )
+                )
+                pricing = pricing_result.scalars().first()
 
             if not pricing:
                 raise HTTPException(400, f"No pricing for {db_item.name}")
 
-            total += pricing.price * item.quantity
+            item_price = compute_total_price(pricing)
+            total += item_price * item.quantity
 
             db.add(OrderItem(
                 order_id=order.id,
                 item_id=db_item.id,
                 quantity=item.quantity,
-                price=pricing.price
+                price=item_price   # ✅ stored as tax+discount inclusive price
             ))
 
-        order.total_amount = total
+        order.total_amount = round(total, 2)
 
         await db.commit()
         await db.refresh(order)
@@ -476,9 +552,11 @@ async def create_order(
     except HTTPException as e:
         await db.rollback()
         raise e
-    except SQLAlchemyError:
+    except SQLAlchemyError as e:
         await db.rollback()
-        raise HTTPException(500, "Database error")
-    except Exception:
+        print("CREATE ORDER DB ERROR:", str(e))
+        raise HTTPException(500, f"Database error: {str(e)}")
+    except Exception as e:
         await db.rollback()
-        raise HTTPException(500, "Something went wrong")
+        print("CREATE ORDER UNEXPECTED ERROR:", str(e))
+        raise HTTPException(500, f"Something went wrong: {str(e)}")

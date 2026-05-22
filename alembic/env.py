@@ -1,12 +1,19 @@
 from logging.config import fileConfig
+
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from alembic import context
-
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# 👇 import your Base here
-from app.db.base import Base  # IMPORTANT (change path if needed)
+from alembic import context
+
+# ✅ Import Base
+from app.db.base import Base
+
+# ✅ Import ALL models here
+# VERY IMPORTANT
+from app.accounts.table.model import Table
+from app.accounts.branch.model import Branch
+from app.accounts.client.model import Client
 
 # Alembic Config
 config = context.config
@@ -15,13 +22,13 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# 👇 this enables autogenerate
+# Metadata
 target_metadata = Base.metadata
 
 
-# -------------------------------
+# ======================================================
 # OFFLINE MODE
-# -------------------------------
+# ======================================================
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
 
@@ -30,19 +37,21 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        compare_type=True,
     )
 
     with context.begin_transaction():
         context.run_migrations()
 
 
-# -------------------------------
-# ONLINE MODE (ASYNC)
-# -------------------------------
+# ======================================================
+# ONLINE MODE
+# ======================================================
 def do_run_migrations(connection: Connection) -> None:
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
+        compare_type=True,
     )
 
     with context.begin_transaction():
@@ -54,6 +63,7 @@ async def run_migrations_online() -> None:
         config.get_section(config.config_ini_section),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        future=True,
     )
 
     async with connectable.connect() as connection:
@@ -62,11 +72,12 @@ async def run_migrations_online() -> None:
     await connectable.dispose()
 
 
-# -------------------------------
-# RUN
-# -------------------------------
+# ======================================================
+# RUNNER
+# ======================================================
 if context.is_offline_mode():
     run_migrations_offline()
 else:
     import asyncio
+
     asyncio.run(run_migrations_online())

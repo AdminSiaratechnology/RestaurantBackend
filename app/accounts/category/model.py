@@ -12,7 +12,7 @@ class Category(Base):
     icon = Column(String, nullable=True)
 
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
-    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)  # ✅ ADD THIS
+    branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False)  # ✅ ADD THIS
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

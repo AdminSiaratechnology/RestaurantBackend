@@ -33,11 +33,24 @@ class OrderItem(Base):
     __tablename__ = "order_items"
 
     id = Column(Integer, primary_key=True)
+
     order_id = Column(Integer, ForeignKey("orders.id"))
     item_id = Column(Integer, ForeignKey("items.id"))
-    quantity = Column(Integer)
-    price = Column(Float)
 
-    # ✅ FIXED
+    quantity = Column(Integer, nullable=False)
+
+    # snapshot pricing
+    unit_price = Column(Float, nullable=False)
+
+    discount_percent = Column(Float, default=0)
+
+    tax_percent = Column(Float, default=0)
+
+    subtotal = Column(Float, default=0)
+
+    tax_amount = Column(Float, default=0)
+
+    total_price = Column(Float, default=0)
+
     order = relationship("Order", back_populates="order_items")
     item = relationship("Item", back_populates="order_items")
