@@ -33,6 +33,122 @@ def compute_total_price(pricing: Pricing) -> float:
     total = discounted + (discounted * tax / 100)
     return round(total, 2)
 
+
+def order_item_line_snapshot(pricing: Pricing, quantity: int) -> dict:
+    """Build OrderItem column values from a Pricing row."""
+    unit_price = pricing.price or 0.0
+    discount_percent = pricing.discount or 0.0
+    tax_percent = pricing.tax_rate or 0.0
+    discounted_unit = unit_price - (unit_price * discount_percent / 100)
+    tax_per_unit = discounted_unit * tax_percent / 100
+    final_unit = round(discounted_unit + tax_per_unit, 2)
+    return {
+        "unit_price": round(unit_price, 2),
+        "discount_percent": discount_percent,
+        "tax_percent": tax_percent,
+        "subtotal": round(discounted_unit * quantity, 2),
+        "tax_amount": round(tax_per_unit * quantity, 2),
+        "total_price": round(final_unit * quantity, 2),
+        "line_unit_final": final_unit,
+    }
+
+
+def build_order_item(
+    order_id: int,
+    item_id: int,
+    quantity: int,
+    pricing: Pricing,
+) -> OrderItem:
+    snap = order_item_line_snapshot(pricing, quantity)
+    return OrderItem(
+        order_id=order_id,
+        item_id=item_id,
+        quantity=quantity,
+        unit_price=snap["unit_price"],
+        discount_percent=snap["discount_percent"],
+        tax_percent=snap["tax_percent"],
+        subtotal=snap["subtotal"],
+        tax_amount=snap["tax_amount"],
+        total_price=snap["total_price"],
+    )
+
+
+async def resolve_pricing(
+    db: SessionDep,
+    db_item: Item,
+    client_id: int,
+    branch_id: int,
+) -> Pricing:
+    """
+    Resolve active pricing: branch-specific first, then any active row for the item.
+    If only pricing for another branch exists, clone it for this branch.
+    """
+    branch_result = await db.execute(
+        select(Pricing).where(
+            Pricing.item_id == db_item.id,
+            Pricing.client_id == client_id,
+            Pricing.branch_id == branch_id,
+            Pricing.is_active == True,
+        )
+    )
+    pricing = branch_result.scalars().first()
+    if pricing:
+        return pricing
+
+    fallback_result = await db.execute(
+        select(Pricing).where(
+            Pricing.item_id == db_item.id,
+            Pricing.client_id == client_id,
+            Pricing.is_active == True,
+        ).order_by(Pricing.id.desc())
+    )
+    pricing = fallback_result.scalars().first()
+    if pricing:
+        if pricing.branch_id == branch_id:
+            return pricing
+        cloned = Pricing(
+            client_id=client_id,
+            branch_id=branch_id,
+            item_id=db_item.id,
+            price=pricing.price,
+            cost_price=pricing.cost_price,
+            discount=pricing.discount,
+            tax_rate=pricing.tax_rate,
+            calories=pricing.calories,
+            is_active=True,
+        )
+        db.add(cloned)
+        await db.flush()
+        return cloned
+
+    template_result = await db.execute(
+        select(Pricing).where(
+            Pricing.item_id == db_item.id,
+            Pricing.client_id == client_id,
+        ).order_by(Pricing.id.desc())
+    )
+    template = template_result.scalars().first()
+    if template:
+        created = Pricing(
+            client_id=client_id,
+            branch_id=branch_id,
+            item_id=db_item.id,
+            price=template.price,
+            cost_price=template.cost_price,
+            discount=template.discount,
+            tax_rate=template.tax_rate,
+            calories=template.calories,
+            is_active=True,
+        )
+        db.add(created)
+        await db.flush()
+        return created
+
+    raise HTTPException(
+        400,
+        f"No pricing for '{db_item.name}'. Add pricing before placing an order.",
+    )
+
 # =========================
 # ✅ GET MENU
 # =========================
@@ -361,43 +477,14 @@ async def update_order(
                         f"Item {item.item_id} not found"
                     )
 
-                # ✅ FIXED PRICING LOGIC (same as create)
-                pricing_result = await db.execute(
-                    select(Pricing).where(
-                        Pricing.item_id == db_item.id,
-                        Pricing.client_id == order.client_id,
-                        Pricing.branch_id == order.branch_id,   # 🔥 include this
-                        Pricing.is_active == True
-                    )
+                pricing = await resolve_pricing(
+                    db, db_item, order.client_id, order.branch_id
                 )
+                snap = order_item_line_snapshot(pricing, item.quantity)
+                total += snap["total_price"]
 
-                pricing = pricing_result.scalars().first()
-
-                # 🔁 fallback (optional but recommended)
-                if not pricing:
-                    pricing_result = await db.execute(
-                        select(Pricing).where(
-                            Pricing.item_id == db_item.id,
-                            Pricing.client_id == order.client_id,
-                            Pricing.is_active == True
-                        )
-                    )
-                    pricing = pricing_result.scalars().first()
-
-                if not pricing:
-                    raise HTTPException(
-                        400,
-                        f"No active pricing found for item '{db_item.name}'"
-                    )
-
-                item_price = compute_total_price(pricing)
-                total += item_price * item.quantity
-
-                db.add(OrderItem(
-                    order_id=order.id,
-                    item_id=db_item.id,
-                    quantity=item.quantity,
-                    price=item_price   # ✅ stored as tax+discount inclusive price
+                db.add(build_order_item(
+                    order.id, db_item.id, item.quantity, pricing
                 ))
 
             order.total_amount = round(total, 2)
@@ -504,38 +591,14 @@ async def create_order(
             if not db_item:
                 raise HTTPException(404, f"Item {item.item_id} not found")
 
-            pricing_result = await db.execute(
-                select(Pricing).where(
-                    Pricing.item_id == db_item.id,
-                    Pricing.client_id == db_item.client_id,
-                    Pricing.branch_id == data.branch_id,   # 🔥 include this
-                    Pricing.is_active == True
-                )
+            pricing = await resolve_pricing(
+                db, db_item, data.client_id, data.branch_id
             )
-            pricing = pricing_result.scalars().first()
+            snap = order_item_line_snapshot(pricing, item.quantity)
+            total += snap["total_price"]
 
-            # 🔁 fallback
-            if not pricing:
-                pricing_result = await db.execute(
-                    select(Pricing).where(
-                        Pricing.item_id == db_item.id,
-                        Pricing.client_id == db_item.client_id,
-                        Pricing.is_active == True
-                    )
-                )
-                pricing = pricing_result.scalars().first()
-
-            if not pricing:
-                raise HTTPException(400, f"No pricing for {db_item.name}")
-
-            item_price = compute_total_price(pricing)
-            total += item_price * item.quantity
-
-            db.add(OrderItem(
-                order_id=order.id,
-                item_id=db_item.id,
-                quantity=item.quantity,
-                price=item_price   # ✅ stored as tax+discount inclusive price
+            db.add(build_order_item(
+                order.id, db_item.id, item.quantity, pricing
             ))
 
         order.total_amount = round(total, 2)

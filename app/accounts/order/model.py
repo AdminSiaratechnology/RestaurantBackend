@@ -54,3 +54,14 @@ class OrderItem(Base):
 
     order = relationship("Order", back_populates="order_items")
     item = relationship("Item", back_populates="order_items")
+
+    @property
+    def price(self) -> float:
+        """Per-unit selling price (after discount and tax) for API/bill consumers."""
+        if self.quantity:
+            return round(self.total_price / self.quantity, 2)
+        base = self.unit_price or 0.0
+        disc = self.discount_percent or 0.0
+        tax = self.tax_percent or 0.0
+        discounted = base - (base * disc / 100)
+        return round(discounted + (discounted * tax / 100), 2)

@@ -382,7 +382,7 @@ async def get_top_items(
                 Item.id,
                 Item.name,
                 func.sum(OrderItem.quantity).label("total_orders"),
-                func.avg(OrderItem.price).label("avg_price")
+                func.avg(OrderItem.total_price / OrderItem.quantity).label("avg_price")
             )
             .join(OrderItem, OrderItem.item_id == Item.id)
             .join(Order, Order.id == OrderItem.order_id)
