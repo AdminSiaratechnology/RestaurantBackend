@@ -25,14 +25,12 @@ DATABASE_URL = os.getenv(
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    pool_size=10,
-    max_overflow=20,
-    pool_timeout=30,
-    pool_recycle=1800,
+    pool_pre_ping=True,
+    pool_recycle=300,
     future=True,
     connect_args={
-        "ssl": True
-    }
+        "ssl": ssl.create_default_context()
+    } if is_render else {}
 )
 
 # 🔹 Create async session maker
