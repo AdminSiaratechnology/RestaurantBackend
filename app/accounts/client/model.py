@@ -49,15 +49,6 @@ from app.db.base import Base
 class Client(Base):
     __tablename__ = "clients"
 
-    # ✅ composite unique
-    __table_args__ = (
-        UniqueConstraint(
-            "partner_id",
-            # "code",
-            # name="uq_partner_client_code"
-        ),
-    )
-
     id = Column(Integer, primary_key=True, index=True)
 
     partner_id = Column(
