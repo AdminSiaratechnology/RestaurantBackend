@@ -12,28 +12,28 @@ DATABASE_URL = os.getenv(
 )
 
 # 🔹 Create async engine (optimized)
-engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,  # ❌ disable in production (enable only for debugging)
-    pool_size=10,          # ✅ connection pool
-    max_overflow=20,       # ✅ extra connections
-    pool_timeout=30,       # ✅ wait time before timeout
-    pool_recycle=1800,     # ✅ recycle connections (avoid stale)
-    future=True,
-)
-
 # engine = create_async_engine(
 #     DATABASE_URL,
-#     echo=False,
-#     pool_size=10,
-#     max_overflow=20,
-#     pool_timeout=30,
-#     pool_recycle=1800,
+#     echo=False,  # ❌ disable in production (enable only for debugging)
+#     pool_size=10,          # ✅ connection pool
+#     max_overflow=20,       # ✅ extra connections
+#     pool_timeout=30,       # ✅ wait time before timeout
+#     pool_recycle=1800,     # ✅ recycle connections (avoid stale)
 #     future=True,
-#     connect_args={
-#         "ssl": True
-#     }
 # )
+
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_size=10,
+    max_overflow=20,
+    pool_timeout=30,
+    pool_recycle=1800,
+    future=True,
+    connect_args={
+        "ssl": True
+    }
+)
 
 # 🔹 Create async session maker
 async_session = async_sessionmaker(
