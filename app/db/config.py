@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from fastapi import Depends
 from typing import AsyncGenerator, Annotated
 import os
+import ssl
 
 # ✅ Use ENV variable (NEVER hardcode in production)
 
