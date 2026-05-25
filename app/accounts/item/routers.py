@@ -282,3 +282,115 @@ async def delete_item(
 
     return {"message": "Item deleted"}
 
+
+@router.post("/", response_model=ItemOut)
+async def create_item(
+    payload: ItemCreate,
+    db: SessionDep,
+    current=Depends(access_four)
+):
+    try:
+        # 🔐 Tenant Access Validation
+        client = await get_client_if_accessible(
+            client_id=payload.client_id,
+            db=db,
+            current=current
+        )
+
+        # ✅ Validate Category
+        result = await db.execute(
+            select(Category).where(
+                Category.id == payload.category_id,
+                Category.client_id == client.id
+            )
+        )
+
+        category = result.scalar_one_or_none()
+
+        if not category:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid category"
+            )
+
+        # ✅ Validate Branch
+        result = await db.execute(
+            select(Branch).where(
+                Branch.id == payload.branch_id,
+                Branch.client_id == client.id
+            )
+        )
+
+        branch = result.scalar_one_or_none()
+
+        if not branch:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid branch"
+            )
+
+        # ✅ Duplicate Item Check
+        result = await db.execute(
+            select(Item).where(
+                Item.name == payload.name,
+                Item.branch_id == payload.branch_id,
+                Item.client_id == client.id
+            )
+        )
+
+        existing_item = result.scalar_one_or_none()
+
+        if existing_item:
+            raise HTTPException(
+                status_code=400,
+                detail="Item already exists in this branch"
+            )
+
+        # ✅ Create Item
+        item = Item(
+            name=payload.name,
+            client_id=client.id,
+            category_id=payload.category_id,
+            branch_id=payload.branch_id
+        )
+
+        db.add(item)
+
+        # Flush generates item.id before commit
+        await db.flush()
+
+        # ✅ Create Default Pricing
+        pricing = Pricing(
+            client_id=client.id,
+            item_id=item.id,
+            branch_id=payload.branch_id,
+            price=payload.price,
+            is_active=True
+        )
+
+        db.add(pricing)
+
+        # ✅ Commit Transaction
+        await db.commit()
+
+        # ✅ Reload Item with Pricing Relationship
+        result = await db.execute(
+            select(Item)
+            .options(selectinload(Item.pricings))
+            .where(Item.id == item.id)
+        )
+
+        created_item = result.scalar_one()
+
+        return created_item
+
+    except HTTPException:
+        await db.rollback()
+        raise
+
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )

@@ -28,5 +28,5 @@ class Item(Base):
     category = relationship("Category", back_populates="items")
     branch = relationship("Branch", back_populates="items")
 
-    pricings = relationship("Pricing", back_populates="item")
+    pricings = relationship("Pricing", back_populates="item", cascade="all, delete-orphan")
     order_items = relationship("OrderItem", back_populates="item")
