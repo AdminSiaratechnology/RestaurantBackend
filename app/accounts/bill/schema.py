@@ -2,27 +2,86 @@
 # FILE: app/accounts/bill/schema.py
 # =========================================================
 
-# pyrefly: ignore [missing-import]
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
 
-class BillItemOut(BaseModel):
+# =========================================================
+# PRICING RESPONSE
+# =========================================================
+
+class PricingOut(BaseModel):
+
+    id: int
+
+    client_id: int
+
+    branch_id: int
 
     item_id: int
 
-    item_name: str
-
-    quantity: int
-
     price: float
 
-    total: float
+    cost_price: float | None
+
+    discount: float | None
+
+    tax: float | None
+
+    calories: int | None
+
+    is_active: bool
+
+    created_at: datetime
+
+    cgst_rate: float | None
+
+    sgst_rate: float | None
+
+    discounted_price: float | None
+
+    cgst_amount: float | None
+
+    sgst_amount: float | None
+
+    total_tax_amount: float | None
+
+    total_price: float | None
 
     class Config:
         from_attributes = True
 
+
+# =========================================================
+# ITEM RESPONSE
+# =========================================================
+
+class ItemOut(BaseModel):
+
+    id: int
+
+    name: str
+
+    client_id: int
+
+    category_id: int | None
+
+    branch_id: int | None
+
+    created_at: datetime
+
+    is_active: bool
+
+    pricings: List[PricingOut] = []
+
+    class Config:
+        from_attributes = True
+
+
+# =========================================================
+# BILL RESPONSE
+# =========================================================
 
 class BillOut(BaseModel):
 
@@ -44,7 +103,7 @@ class BillOut(BaseModel):
 
     created_at: datetime
 
-    items: List[BillItemOut]
+    items: List[ItemOut]
 
     subtotal: float
 

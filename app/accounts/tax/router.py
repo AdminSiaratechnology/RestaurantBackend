@@ -39,6 +39,8 @@ async def create_tax_settings(
     if existing_res.scalar_one_or_none():
         raise HTTPException(400, "Settings already exist for this branch")
 
+    enable_service = data.enable_service_charge or (data.service_charge or 0) > 0
+
     setting = TaxBillingSetting(
         client_id=user.id,
         branch_id=data.branch_id,
@@ -47,7 +49,7 @@ async def create_tax_settings(
         sgst=data.default_tax_rate / 2,
         service_charge=data.service_charge,
         bill_footer_message=data.bill_footer_message,
-        enable_service_charge=data.enable_service_charge,
+        enable_service_charge=enable_service,
         enable_tax=data.enable_tax,
         round_off_bill=data.round_off_bill,
     )
@@ -107,6 +109,12 @@ async def update_tax_settings(
     if "default_tax_rate" in update_data:
         update_data["cgst"] = update_data["default_tax_rate"] / 2
         update_data["sgst"] = update_data["default_tax_rate"] / 2
+
+    if (
+        update_data.get("service_charge", 0) > 0
+        and "enable_service_charge" not in update_data
+    ):
+        update_data["enable_service_charge"] = True
 
     for key, value in update_data.items():
         setattr(setting, key, value)

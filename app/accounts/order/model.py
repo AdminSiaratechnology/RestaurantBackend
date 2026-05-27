@@ -28,18 +28,90 @@ class Order(Base):
 
     # ✅ ADD THIS (IMPORTANT FIX)
     order_items = relationship("OrderItem", back_populates="order") # ✅ ADD THIS
+    customer_id = Column(
+        Integer,
+        ForeignKey("customers.id"),
+        nullable=True
+    )
+    customer = relationship(
+        "Customer",
+        back_populates="orders"
+    )
+
+    order_items = relationship(
+        "OrderItem",
+        back_populates="order",
+        cascade="all, delete-orphan"
+    )
+
+# class OrderItem(Base):
+#     __tablename__ = "order_items"
+
+#     id = Column(Integer, primary_key=True)
+
+#     order_id = Column(Integer, ForeignKey("orders.id"))
+#     item_id = Column(Integer, ForeignKey("items.id"))
+#     customer_id = Column(
+#     Integer,
+#     ForeignKey("customers.id"),
+#     nullable=True
+# )
+
+
+#     quantity = Column(Integer, nullable=False)
+
+#     # snapshot pricing
+#     unit_price = Column(Float, nullable=False)
+
+#     discount_percent = Column(Float, default=0)
+
+#     tax_percent = Column(Float, default=0)
+
+#     subtotal = Column(Float, default=0)
+
+#     tax_amount = Column(Float, default=0)
+
+#     total_price = Column(Float, default=0)
+
+#     order = relationship("Order", back_populates="order_items")
+#     item = relationship("Item", back_populates="order_items")
+    
+
+#     @property
+#     def price(self) -> float:
+#         """Per-unit selling price (after discount and tax) for API/bill consumers."""
+#         if self.quantity:
+#             return round(self.total_price / self.quantity, 2)
+#         base = self.unit_price or 0.0
+#         disc = self.discount_percent or 0.0
+#         tax = self.tax_percent or 0.0
+#         discounted = base - (base * disc / 100)
+#         return round(discounted + (discounted * tax / 100), 2)
 
 class OrderItem(Base):
+
     __tablename__ = "order_items"
 
     id = Column(Integer, primary_key=True)
 
-    order_id = Column(Integer, ForeignKey("orders.id"))
-    item_id = Column(Integer, ForeignKey("items.id"))
+    order_id = Column(
+        Integer,
+        ForeignKey("orders.id")
+    )
+
+    item_id = Column(
+        Integer,
+        ForeignKey("items.id")
+    )
+
+    customer_id = Column(
+        Integer,
+        ForeignKey("customers.id"),
+        nullable=True
+    )
 
     quantity = Column(Integer, nullable=False)
 
-    # snapshot pricing
     unit_price = Column(Float, nullable=False)
 
     discount_percent = Column(Float, default=0)
@@ -52,16 +124,38 @@ class OrderItem(Base):
 
     total_price = Column(Float, default=0)
 
-    order = relationship("Order", back_populates="order_items")
-    item = relationship("Item", back_populates="order_items")
+    order = relationship(
+        "Order",
+        back_populates="order_items"
+    )
+
+    item = relationship(
+        "Item",
+        back_populates="order_items"
+    )
+
+    # ✅ ADD THIS
+    customer = relationship("Customer")
 
     @property
     def price(self) -> float:
-        """Per-unit selling price (after discount and tax) for API/bill consumers."""
         if self.quantity:
-            return round(self.total_price / self.quantity, 2)
+            return round(
+                self.total_price / self.quantity,
+                2
+            )
+
         base = self.unit_price or 0.0
         disc = self.discount_percent or 0.0
         tax = self.tax_percent or 0.0
-        discounted = base - (base * disc / 100)
-        return round(discounted + (discounted * tax / 100), 2)
+
+        discounted = base - (
+            base * disc / 100
+        )
+
+        return round(
+            discounted + (
+                discounted * tax / 100
+            ),
+            2
+        )

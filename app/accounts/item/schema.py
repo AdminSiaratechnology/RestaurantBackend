@@ -10,7 +10,8 @@ class ItemCreate(BaseModel):
     client_id: int
     category_id: int
     branch_id: int
-    price: float
+    # Optional — use POST /pricing/set_pricing for full pricing (tax, discount, etc.)
+    price: Optional[float] = None
 
 class ItemUpdate(BaseModel):
     name: Optional[str] = None

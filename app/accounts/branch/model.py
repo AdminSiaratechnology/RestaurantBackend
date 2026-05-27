@@ -26,3 +26,9 @@ class Branch(Base):
     categories = relationship("Category", back_populates="branch")
     items = relationship("Item", back_populates="branch")
     tax_settings = relationship("TaxBillingSetting", back_populates="branch", uselist=False)
+
+    legal_compliance = relationship(
+    "LegalCompliance",
+    back_populates="branch",
+    uselist=False
+)

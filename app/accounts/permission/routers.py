@@ -36,7 +36,9 @@ CHEF_PERMISSIONS = {
     "access_billing": False,
     "edit_menu_items": False,
     "manage_tables": False,
-    "manage_kitchen": True
+    "manage_kitchen": True,
+    "manage_offers": False,
+    "manage_brands": False
 }
 
 
@@ -51,7 +53,9 @@ WAITER_PERMISSIONS = {
     "access_billing": True,
     "edit_menu_items": False,
     "manage_tables": True,
-    "manage_kitchen": False
+    "manage_kitchen": False,
+    "manage_offers": False,
+    "manage_brands": False
 }
 
 

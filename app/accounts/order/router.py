@@ -24,11 +24,11 @@ def compute_total_price(pricing: Pricing) -> float:
     Compute per-unit price after applying discount and tax.
     Formula:
       discounted = price - (price × discount% / 100)
-      total      = discounted + (discounted × tax_rate% / 100)
+      total      = discounted + (discounted × tax% / 100)
     """
     base = pricing.price or 0.0
     disc = pricing.discount or 0.0
-    tax  = pricing.tax_rate or 0.0
+    tax  = pricing.tax or 0.0
     discounted = base - (base * disc / 100)
     total = discounted + (discounted * tax / 100)
     return round(total, 2)
@@ -38,7 +38,7 @@ def order_item_line_snapshot(pricing: Pricing, quantity: int) -> dict:
     """Build OrderItem column values from a Pricing row."""
     unit_price = pricing.price or 0.0
     discount_percent = pricing.discount or 0.0
-    tax_percent = pricing.tax_rate or 0.0
+    tax_percent = pricing.tax or 0.0
     discounted_unit = unit_price - (unit_price * discount_percent / 100)
     tax_per_unit = discounted_unit * tax_percent / 100
     final_unit = round(discounted_unit + tax_per_unit, 2)
@@ -113,7 +113,7 @@ async def resolve_pricing(
             price=pricing.price,
             cost_price=pricing.cost_price,
             discount=pricing.discount,
-            tax_rate=pricing.tax_rate,
+            tax=pricing.tax,
             calories=pricing.calories,
             is_active=True,
         )
@@ -136,7 +136,7 @@ async def resolve_pricing(
             price=template.price,
             cost_price=template.cost_price,
             discount=template.discount,
-            tax_rate=template.tax_rate,
+            tax=template.tax,
             calories=template.calories,
             is_active=True,
         )
@@ -217,19 +217,19 @@ async def get_menu(
                 base_price = pricing.price
                 total_price = compute_total_price(pricing)
                 discount = pricing.discount or 0.0
-                tax_rate = pricing.tax_rate or 0.0
+                tax = pricing.tax or 0.0
             else:
                 base_price = 0
                 total_price = 0
                 discount = 0
-                tax_rate = 0
+                tax = 0
 
             menu.setdefault(category_name, []).append({
                 "id": item.id,
                 "name": item.name,
                 "price": base_price,
                 "discount": discount,
-                "tax_rate": tax_rate,
+                "tax": tax,
                 "total_price": total_price
             })
 
@@ -548,6 +548,8 @@ async def update_order(
 # =========================
 # ✅ CREATE ORDER (Already Good)
 # =========================
+from app.accounts.customer.model import Customer
+
 @router.post("/create_order")
 async def create_order(
     data: OrderCreate,
@@ -558,24 +560,65 @@ async def create_order(
         role = current["role"]
         user = current["user"]
 
-        # Enforce staff's client and branch to prevent client-side parameter errors
+        # Enforce staff's client and branch
         if role == UserRole.STAFF:
             data.client_id = user.client_id
             data.branch_id = user.branch_id
 
         await get_client_if_accessible(data.client_id, db, current)
 
+        # =====================================================
+        # CUSTOMER CREATE / GET
+        # =====================================================
+
+        customer = None
+
+        if data.customer_phone:
+
+            stmt = select(Customer).where(
+                Customer.phone == data.customer_phone,
+                Customer.client_id == data.client_id
+            )
+
+            result = await db.execute(stmt)
+            customer = result.scalar_one_or_none()
+
+            # CREATE CUSTOMER IF NOT EXISTS
+            if not customer:
+
+                customer = Customer(
+                    name=data.customer_name,
+                    phone=data.customer_phone,
+                    client_id=data.client_id,
+                    branch_id=data.branch_id
+                )
+
+                db.add(customer)
+
+                # IMPORTANT
+                await db.flush()
+
+        # =====================================================
+        # CREATE ORDER
+        # =====================================================
+
         order = Order(
             client_id=data.client_id,
             branch_id=data.branch_id,
             table_id=data.table_id,
             order_type=data.order_type,
+
             customer_name=data.customer_name,
             customer_phone=data.customer_phone,
+
+            # optional if field exists
+            customer_id=customer.id if customer else None,
+
             notes=data.notes
         )
 
         db.add(order)
+
         await db.flush()
 
         if not data.items:
@@ -584,41 +627,60 @@ async def create_order(
         total = 0
 
         for item in data.items:
+
             if item.quantity <= 0:
                 raise HTTPException(400, "Invalid quantity")
 
             db_item = await db.get(Item, item.item_id)
+
             if not db_item:
                 raise HTTPException(404, f"Item {item.item_id} not found")
 
             pricing = await resolve_pricing(
-                db, db_item, data.client_id, data.branch_id
+                db,
+                db_item,
+                data.client_id,
+                data.branch_id
             )
-            snap = order_item_line_snapshot(pricing, item.quantity)
+
+            snap = order_item_line_snapshot(
+                pricing,
+                item.quantity
+            )
+
             total += snap["total_price"]
 
-            db.add(build_order_item(
-                order.id, db_item.id, item.quantity, pricing
-            ))
+            db.add(
+                build_order_item(
+                    order.id,
+                    db_item.id,
+                    item.quantity,
+                    pricing
+                )
+            )
 
         order.total_amount = round(total, 2)
 
         await db.commit()
+
         await db.refresh(order)
 
         return {
             "message": "Order created",
             "order_id": order.id,
+            "customer_id": customer.id if customer else None,
             "total": total
         }
 
     except HTTPException as e:
         await db.rollback()
         raise e
+
     except SQLAlchemyError as e:
         await db.rollback()
         print("CREATE ORDER DB ERROR:", str(e))
         raise HTTPException(500, f"Database error: {str(e)}")
+
     except Exception as e:
         await db.rollback()
         print("CREATE ORDER UNEXPECTED ERROR:", str(e))

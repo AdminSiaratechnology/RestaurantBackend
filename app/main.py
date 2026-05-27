@@ -25,6 +25,8 @@ from app.accounts.auditlog.router import router as auditlog_router
 from app.accounts.permission.routers import router as permission_router
 from app.accounts.tax.router import router as tax_router
 from app.accounts.bill.router import router as bill_router
+from app.accounts.offer.router import router as offer_router
+from app.accounts.legaldetails.router import router as legaldetails_router
 
 
 app = FastAPI()
@@ -68,5 +70,7 @@ app.include_router(orderstatus_router)
 app.include_router(inventory_router)
 app.include_router(tax_router)
 app.include_router(bill_router)
+app.include_router(offer_router)
 app.include_router(deshboard_router)
+app.include_router(legaldetails_router)
 app.include_router(auditlog_router)

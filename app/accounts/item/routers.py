@@ -1,10 +1,7 @@
-from unittest import result
 from sqlalchemy.orm import selectinload
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
-from app import db
 from app.accounts.branch.model import Branch
-from app.accounts.client.model import Client
 from app.accounts.deps import get_current_user, get_client_if_accessible
 from app.accounts.item.model import Item
 from app.accounts.item.schema import ItemCreate, ItemUpdate, ItemOut
@@ -99,44 +96,6 @@ async def get_items(
     return items
 
 
-    
-
-# ✅ GET ITEMS
-@router.get("/get_items", response_model=list[ItemOut])
-async def get_items(
-    db: SessionDep,
-    branch_id: int,
-    current=Depends(get_current_user)
-):
-    role = current["role"]
-    user = current["user"]
-
-    # ✅ STAFF
-    if role == "staff":
-
-        # use selected branch from staff
-        branch_id = user.selected_branch_id
-
-    # ✅ CLIENT
-    elif role == "client":
-
-        # use branch from query param
-        branch_id = branch_id
-
-    query = (
-        select(Item)
-        .options(selectinload(Item.pricings))
-        .where(Item.branch_id == branch_id)
-    )
-
-    result = await db.execute(query)
-
-    items = result.scalars().all()
-
-    return items
-
-
-
 # @router.get("/{item_id}", response_model=ItemOut)
 # async def get_item(
 #     item_id: int,
@@ -218,19 +177,21 @@ async def update_item(
 
         result = await db.execute(
             select(Pricing).where(
-                Pricing.item_id == item.id
+                Pricing.item_id == item.id,
+                Pricing.branch_id == item.branch_id,
             )
         )
 
         pricing = result.scalar_one_or_none()
 
-        # ✅ create pricing if missing
-        if not pricing:
+        # create pricing if missing (full details via /pricing/set_pricing)
+        if not pricing and payload.price is not None:
             pricing = Pricing(
                 item_id=item.id,
                 client_id=item.client_id,
                 branch_id=item.branch_id,
-                price=payload.price or 0
+                price=payload.price,
+                is_active=payload.pricing_is_active if payload.pricing_is_active is not None else True,
             )
 
             db.add(pricing)
@@ -356,22 +317,9 @@ async def create_item(
 
         db.add(item)
 
-        # Flush generates item.id before commit
-        await db.flush()
-
-        # ✅ Create Default Pricing
-        pricing = Pricing(
-            client_id=client.id,
-            item_id=item.id,
-            branch_id=payload.branch_id,
-            price=payload.price,
-            is_active=True
-        )
-
-        db.add(pricing)
-
-        # ✅ Commit Transaction
         await db.commit()
+
+        # Pricing is managed by POST /pricing/set_pricing (separate API).
 
         # ✅ Reload Item with Pricing Relationship
         result = await db.execute(
