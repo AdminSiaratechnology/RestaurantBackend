@@ -1,37 +1,27 @@
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from fastapi import Depends
 from typing import AsyncGenerator, Annotated
-import os
 import ssl
 
-# ✅ Use ENV variable (NEVER hardcode in production)
+from app.core.settings import settings  # ✅ Load from .env via central settings
 
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    # "postgresql+asyncpg://postgres:1234@localhost:5432/RestaurantManagementSystem"
-    "postgresql+asyncpg://restaurant_user:UxE0lcJTZUtoOnsclxAqTAEB1InjFFlI@dpg-ct123abc-a.oregon-postgres.render.com/restaurant_management_system"
-)
+DATABASE_URL = settings.DATABASE_URL
 
-# 🔹 Create async engine (optimized)
-# engine = create_async_engine(
-#     DATABASE_URL,
-#     echo=False,  # ❌ disable in production (enable only for debugging)
-#     pool_size=10,          # ✅ connection pool
-#     max_overflow=20,       # ✅ extra connections
-#     pool_timeout=30,       # ✅ wait time before timeout
-#     pool_recycle=1800,     # ✅ recycle connections (avoid stale)
-#     future=True,
-# )
-
+# 🔹 Auto-detect Render.com (needs SSL)
 is_render = "render.com" in DATABASE_URL
+
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
+
 engine = create_async_engine(
     DATABASE_URL,
-    echo=False,
+    echo=settings.DEBUG,       # ✅ Only verbose in debug/dev mode
     pool_pre_ping=True,
     pool_recycle=300,
     future=True,
     connect_args={
-        "ssl": ssl.create_default_context()
+        "ssl": True
     } if is_render else {}
 )
 
@@ -41,6 +31,7 @@ async_session = async_sessionmaker(
     expire_on_commit=False,
     class_=AsyncSession
 )
+
 
 # 🔹 Dependency for FastAPI routes
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
