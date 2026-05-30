@@ -19,7 +19,7 @@ class Brand(Base):
         UniqueConstraint("client_id", "slug", name="uq_brand_slug_per_client"),
     )
 
-    orders = relationship("Order", back_populates="brand")
+    # orders = relationship("Order", back_populates="brand")
 
     # ✅ correct
     client = relationship("Client", back_populates="brands")

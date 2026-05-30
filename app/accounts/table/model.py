@@ -12,7 +12,6 @@ class TableStatus(str, Enum):
     available = "available"
     occupied = "occupied"
     reserved = "reserved"
-    inactive = "inactive"
 
 
 

@@ -23,9 +23,14 @@ class OrderCreate(BaseModel):
 
 
 class OrderItemResponse(BaseModel):
+    id: int
     item_id: int
     quantity: int
     price: float
+    order_status: str
+
+    class Config:
+        from_attributes = True
 
 
 class OrderResponse(BaseModel):
@@ -62,3 +67,19 @@ class OrderUpdate(BaseModel):
     notes: str | None = None
     order_type: str | None = None
     items: list[OrderItemUpdate] | None = None
+
+
+
+class OrderItemStatusUpdate(BaseModel):
+    order_status: str
+
+
+class OrderItemStatusResponse(BaseModel):
+    id: int
+    order_id: int
+    item_id: int
+    quantity: int
+    order_status: str
+
+    class Config:
+        from_attributes = True

@@ -1,7 +1,3 @@
-# =========================================================
-# FILE: app/accounts/bill/model.py
-# =========================================================
-
 from sqlalchemy import (
     Column,
     Integer,
@@ -12,12 +8,13 @@ from sqlalchemy import (
     Text
 )
 
+from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.orm import relationship
 
 from datetime import datetime
 
 from app.db.base import Base
-
+from app.accounts.bill.enum import PaymentStatus
 
 class Bill(Base):
 
@@ -82,8 +79,12 @@ class Bill(Base):
     )
 
     payment_status = Column(
-        String,
-        default="pending"
+    PgEnum(
+        PaymentStatus,
+        name="paymentstatus"
+    ),
+    default=PaymentStatus.pending,
+    nullable=False
     )
 
     payment_method = Column(

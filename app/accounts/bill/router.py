@@ -16,6 +16,7 @@ from app.accounts.order.model import (
     Order,
     OrderItem
 )
+from app.accounts.bill.enum import PaymentStatus
 
 from app.accounts.tax.model import TaxBillingSetting
 
@@ -375,21 +376,7 @@ async def get_bill(
             2
         )
 
-    # =====================================================
-    # PAYMENT
-    # =====================================================
 
-    paid_amount = (
-        grand_total
-        if order.status.lower() == "paid"
-        else 0.0
-    )
-
-    due_amount = round(
-        grand_total -
-        paid_amount,
-        2
-    )
 
     # =====================================================
     # CHECK EXISTING BILL
@@ -404,6 +391,21 @@ async def get_bill(
 
     bill = (
         bill_result.scalar_one_or_none()
+    )
+
+    # =====================================================
+    # PAYMENT
+    # =====================================================
+
+    if bill and bill.payment_status == PaymentStatus.complete:
+        paid_amount = grand_total
+    else:
+        paid_amount = 0.0
+
+    due_amount = round(
+        grand_total -
+        paid_amount,
+        2
     )
 
     # =====================================================
@@ -430,7 +432,7 @@ async def get_bill(
 
             customer_phone=order.customer_phone,
 
-            payment_status=order.status,
+            payment_status=PaymentStatus.pending,
 
             payment_method=None,
 
@@ -497,9 +499,7 @@ async def get_bill(
             order.customer_phone
         )
 
-        bill.payment_status = (
-            order.status
-        )
+        bill.payment_status = PaymentStatus.pending
 
         bill.subtotal = subtotal
 
@@ -560,6 +560,7 @@ async def get_bill(
     # =====================================================
 
     return {
+        "id": bill.id,
 
         "order_id": bill.order_id,
 

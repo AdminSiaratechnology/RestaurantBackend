@@ -9,7 +9,7 @@ from app.accounts.deps import access_one, get_client_if_accessible
 
 from app.accounts.item.model import Item
 from app.accounts.order.model import Order, OrderItem
-from app.accounts.order.schema import OrderCreate, OrderResponse, OrderUpdate
+from app.accounts.order.schema import OrderCreate, OrderResponse, OrderUpdate, OrderItemStatusResponse, OrderItemStatusUpdate
 from app.accounts.pricing.model import Pricing
 
 
@@ -253,7 +253,10 @@ async def get_menu(
 # =========================
 # ✅ GET ALL ORDERS
 # =========================
-@router.get("/get_all_orders", response_model=list[OrderResponse])
+@router.get(
+    "/get_all_orders",
+    response_model=list[OrderResponse]
+)
 async def get_all_orders(
     db: SessionDep,
     branch_id: int | None = None,
@@ -264,22 +267,29 @@ async def get_all_orders(
         role = current["role"]
         user = current["user"]
 
-        query = (
-            select(Order)
-            .options(
-                selectinload(Order.order_items)
-            )
-        )
+        query = select(Order)
 
-        # ✅ Branch filter
+        # =====================================================
+        # ✅ BRANCH FILTER
+        # =====================================================
+
         if branch_id:
-            query = query.where(Order.branch_id == branch_id)
+            query = query.where(
+                Order.branch_id == branch_id
+            )
 
-        # ✅ Tenant filtering
+        # =====================================================
+        # ✅ ROLE FILTER
+        # =====================================================
+
         if role.name == "CLIENT":
-            query = query.where(Order.client_id == user.id)
+
+            query = query.where(
+                Order.client_id == user.id
+            )
 
         elif role.name == "PARTNER":
+
             query = query.join(
                 Client,
                 Client.id == Order.client_id
@@ -287,38 +297,68 @@ async def get_all_orders(
                 Client.partner_id == user.id
             )
 
-        # SUPER_ADMIN gets all orders
+        # =====================================================
+        # ✅ GET ORDERS
+        # =====================================================
 
         result = await db.execute(query)
 
         orders = result.scalars().all()
 
-        return [
-            {
+        final_orders = []
+
+        # =====================================================
+        # ✅ LOAD ITEMS FRESHLY
+        # =====================================================
+
+        for order in orders:
+
+            items_result = await db.execute(
+                select(OrderItem).where(
+                    OrderItem.order_id == order.id
+                )
+            )
+
+            order_items = items_result.scalars().all()
+
+            final_orders.append({
+
                 "id": order.id,
                 "client_id": order.client_id,
                 "branch_id": order.branch_id,
                 "table_id": order.table_id,
+
                 "order_type": order.order_type,
+
                 "customer_name": order.customer_name,
                 "customer_phone": order.customer_phone,
+
                 "notes": order.notes,
+
                 "status": order.status,
+
                 "total_amount": order.total_amount,
+
                 "created_at": order.created_at,
+
                 "items": [
                     {
+                        "id": item.id,
                         "item_id": item.item_id,
                         "quantity": item.quantity,
-                        "price": item.price
+                        "price": item.price,
+                        "order_status": item.order_status
                     }
-                    for item in order.order_items
+                    for item in order_items
                 ]
-            }
-            for order in orders
-        ]
+            })
 
-    except SQLAlchemyError:
+        return final_orders
+
+    except SQLAlchemyError as e:
+
+        print("GET ORDERS ERROR:", str(e))
+
         raise HTTPException(
             status_code=500,
             detail="Database error while fetching orders"
@@ -519,7 +559,8 @@ async def update_order(
                 {
                     "item_id": i.item_id,
                     "quantity": i.quantity,
-                    "price": i.price
+                    "price": i.price,
+                    "order_status": i.order_status
                 } for i in order_items
             ]
         }
@@ -685,3 +726,212 @@ async def create_order(
         await db.rollback()
         print("CREATE ORDER UNEXPECTED ERROR:", str(e))
         raise HTTPException(500, f"Something went wrong: {str(e)}")
+
+
+# =========================
+# ✅ UPDATE ORDER ITEM STATUS
+# =========================
+
+# =========================
+# ✅ UPDATE ORDER ITEM STATUS
+# =========================
+
+from sqlalchemy.orm import selectinload
+
+
+@router.patch(
+    "/order_item_status/{order_id}/{item_id}",
+    response_model=OrderItemStatusResponse
+)
+async def update_order_item_status(
+    order_id: int,
+    item_id: int,
+    data: OrderItemStatusUpdate,
+    db: SessionDep,
+    current=Depends(access_one)
+):
+    try:
+
+        # =====================================================
+        # ✅ VALID STATUSES
+        # =====================================================
+
+        valid_statuses = [
+            "pending",
+            "preparing",
+            "ready",
+            "served"
+        ]
+
+        new_status = data.order_status.lower().strip()
+
+        if new_status not in valid_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Allowed statuses: {valid_statuses}"
+            )
+
+        # =====================================================
+        # ✅ GET ORDER
+        # =====================================================
+
+        order_result = await db.execute(
+            select(Order).where(
+                Order.id == order_id
+            )
+        )
+
+        order = order_result.scalar_one_or_none()
+
+        if not order:
+            raise HTTPException(
+                status_code=404,
+                detail="Order not found"
+            )
+
+        # =====================================================
+        # ✅ ACCESS CHECK
+        # =====================================================
+
+        await get_client_if_accessible(
+            order.client_id,
+            db,
+            current
+        )
+
+        # =====================================================
+        # ✅ STAFF SECURITY
+        # =====================================================
+
+        if (
+            current["role"] == UserRole.STAFF
+            and
+            order.branch_id != current["user"].branch_id
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Not allowed for another branch"
+            )
+
+        # =====================================================
+        # ✅ GET ORDER ITEM ROW
+        # =====================================================
+
+        item_result = await db.execute(
+            select(OrderItem).where(
+                OrderItem.item_id == item_id,
+                OrderItem.order_id == order_id
+            )
+        )
+
+        order_item = item_result.scalar_one_or_none()
+
+        if not order_item:
+            raise HTTPException(
+                status_code=404,
+                detail="Order item not found in this order"
+            )
+
+        # =====================================================
+        # ✅ UPDATE ITEM STATUS
+        # =====================================================
+
+        order_item.order_status = new_status
+
+        await db.flush()
+
+        # =====================================================
+        # ✅ GET ALL ITEMS OF ORDER
+        # =====================================================
+
+        all_items_result = await db.execute(
+            select(OrderItem).where(
+                OrderItem.order_id == order_id
+            )
+        )
+
+        all_items = all_items_result.scalars().all()
+
+        statuses = [
+            item.order_status.lower()
+            for item in all_items
+        ]
+
+        # =====================================================
+        # ✅ AUTO UPDATE ORDER STATUS
+        # =====================================================
+
+        if all(status == "served" for status in statuses):
+
+            order.status = "served"
+
+        elif all(status in ["ready", "served"] for status in statuses):
+
+            order.status = "ready"
+
+        elif any(status == "preparing" for status in statuses):
+
+            order.status = "preparing"
+
+        else:
+
+            order.status = "pending"
+
+        # =====================================================
+        # ✅ SAVE
+        # =====================================================
+
+        await db.commit()
+
+        await db.refresh(order_item)
+
+        # =====================================================
+        # ✅ RESPONSE
+        # =====================================================
+
+        return {
+            "id": order_item.id,
+            "order_id": order_item.order_id,
+            "item_id": order_item.item_id,
+            "quantity": order_item.quantity,
+            "order_status": order_item.order_status
+        }
+
+    # =====================================================
+    # ✅ HTTP ERROR
+    # =====================================================
+
+    except HTTPException as e:
+
+        await db.rollback()
+        raise e
+
+    # =====================================================
+    # ✅ DATABASE ERROR
+    # =====================================================
+
+    except SQLAlchemyError as e:
+
+        await db.rollback()
+
+        print("ORDER ITEM STATUS ERROR:", str(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
+        )
+
+    # =====================================================
+    # ✅ UNKNOWN ERROR
+    # =====================================================
+
+    except Exception as e:
+
+        await db.rollback()
+
+        print("UNEXPECTED ERROR:", str(e))
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unexpected error: {str(e)}"
+        )
