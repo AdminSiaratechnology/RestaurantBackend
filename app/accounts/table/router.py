@@ -5,7 +5,7 @@ from app.api.routes import client
 from app.accounts.client.model import Client
 from app.db.config import SessionDep
 from app.accounts.table.model import Table
-from app.accounts.table.schema import TableCreate, TableUpdate, TableOut
+from app.accounts.table.schema import TableCreate, TableUpdate, TableOut, TableStatusUpdate, TableStatus
 from app.accounts.deps import require_client, require_roles, UserRole #, require_super_admin, require_client,
 from app.accounts.deps import access_three, UserRole, access_four
 router = APIRouter(prefix="/tables", tags=["Tables"])
@@ -410,3 +410,73 @@ async def get_table_status(
         "status": table.status,
         "is_vacant": table.status == "available"
     }
+
+
+
+@router.patch(
+    "/{table_id}/status",
+    response_model=TableOut
+)
+async def update_table_status(
+    table_id: int,
+    data: TableStatusUpdate,
+    db: SessionDep,
+    current=Depends(access_four)
+):
+    role = current["role"]
+    user = current["user"]
+
+    query = (
+        select(Table)
+        .join(Branch, Branch.id == Table.branch_id)
+        .where(Table.id == table_id)
+    )
+
+    # ✅ SUPER ADMIN
+    if role == UserRole.SUPER_ADMIN:
+        pass
+
+    # ✅ PARTNER
+    elif role == UserRole.PARTNER:
+        query = query.join(
+            Client,
+            Client.id == Branch.client_id
+        ).where(
+            Client.partner_id == user.id
+        )
+
+    # ✅ CLIENT
+    elif role == UserRole.CLIENT:
+        query = query.where(
+            Branch.client_id == user.id
+        )
+
+    # ✅ STAFF
+    elif role == UserRole.STAFF:
+        query = query.where(
+            Table.branch_id == user.branch_id
+        )
+
+    else:
+        raise HTTPException(
+            status_code=403,
+            detail="Not authorized"
+        )
+
+    result = await db.execute(query)
+
+    table = result.scalar_one_or_none()
+
+    if not table:
+        raise HTTPException(
+            status_code=404,
+            detail="Table not found"
+        )
+
+    # ✅ Update Status
+    table.status = data.status
+
+    await db.commit()
+    await db.refresh(table)
+
+    return table

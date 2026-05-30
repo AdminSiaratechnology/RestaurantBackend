@@ -2,7 +2,6 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 from enum import Enum
 
-
 class TableShape(str, Enum):
     rectangular = "rectangular"
     round = "round"
@@ -80,3 +79,6 @@ class TableOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class TableStatusUpdate(BaseModel):
+    status: TableStatus

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 
-
+from app.accounts.bill.enum import PaymentStatus
 # =========================================================
 # PRICING RESPONSE
 # =========================================================
@@ -84,6 +84,7 @@ class ItemOut(BaseModel):
 # =========================================================
 
 class BillOut(BaseModel):
+    id: int
 
     order_id: int
 
@@ -97,7 +98,7 @@ class BillOut(BaseModel):
 
     table_id: Optional[int]
 
-    payment_status: str
+    payment_status: PaymentStatus
 
     payment_method: Optional[str]
 
