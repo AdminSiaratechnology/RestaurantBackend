@@ -2,6 +2,6 @@ from enum import Enum
 
 
 class PaymentStatus(str, Enum):
-    cancel = "cancel"
+    cancel = "canceled"
     pending = "pending"
     complete = "complete"

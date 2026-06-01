@@ -3,6 +3,11 @@
 # =========================================================
 
 # pyrefly: ignore [missing-import]
+# =========================================================
+# FILE: app/accounts/bill/router.py
+# =========================================================
+
+# pyrefly: ignore [missing-import]
 
 from fastapi import APIRouter, HTTPException
 from uuid import uuid4
@@ -26,7 +31,8 @@ from app.accounts.bill.schema import BillOut
 
 from app.accounts.pricing.model import Pricing
 
-
+from app.accounts.table.model import Table
+from app.accounts.table.schema import TableStatus
 router = APIRouter(
     prefix="/bill",
     tags=["Bill"]
@@ -393,20 +399,7 @@ async def get_bill(
         bill_result.scalar_one_or_none()
     )
 
-    # =====================================================
-    # PAYMENT
-    # =====================================================
 
-    if bill and bill.payment_status == PaymentStatus.complete:
-        paid_amount = grand_total
-    else:
-        paid_amount = 0.0
-
-    due_amount = round(
-        grand_total -
-        paid_amount,
-        2
-    )
 
     # =====================================================
     # CREATE BILL
@@ -432,7 +425,7 @@ async def get_bill(
 
             customer_phone=order.customer_phone,
 
-            payment_status=PaymentStatus.pending,
+            # payment_status=PaymentStatus.pending,
 
             payment_method=None,
 
@@ -474,9 +467,9 @@ async def get_bill(
 
             grand_total=grand_total,
 
-            paid_amount=paid_amount,
+            paid_amount=0.0,
 
-            due_amount=due_amount,
+            due_amount=grand_total,
 
             footer_message=(
                 tax.bill_footer_message
@@ -499,7 +492,9 @@ async def get_bill(
             order.customer_phone
         )
 
-        bill.payment_status = PaymentStatus.pending
+        # ==========================================
+        # DO NOT RESET PAYMENT STATUS
+        # ==========================================
 
         bill.subtotal = subtotal
 
@@ -539,9 +534,24 @@ async def get_bill(
 
         bill.grand_total = grand_total
 
-        bill.paid_amount = paid_amount
+        # ==========================================
+        # UPDATE AMOUNTS BASED ON CURRENT STATUS
+        # ==========================================
 
-        bill.due_amount = due_amount
+        if bill.payment_status == PaymentStatus.complete:
+
+            bill.paid_amount = grand_total
+            bill.due_amount = 0.0
+
+        elif bill.payment_status == PaymentStatus.cancel:
+
+            bill.paid_amount = 0.0
+            bill.due_amount = grand_total
+
+        else:
+
+            bill.paid_amount = 0.0
+            bill.due_amount = grand_total
 
         bill.footer_message = (
             tax.bill_footer_message
@@ -554,7 +564,19 @@ async def get_bill(
     await db.commit()
 
     await db.refresh(bill)
+    # if order.table_id:
+    #     table = await db.get(
+    #         Table,
+    #         order.table_id
+    #     )
 
+    #     if not table:
+    #         raise HTTPException(
+    #             status_code=404,
+    #             detail="Table not found"
+    #         )
+
+    #     table.status = TableStatus.available
     # =====================================================
     # RESPONSE
     # =====================================================
@@ -644,3 +666,82 @@ async def get_bill(
             bill.footer_message or ""
         )
     }
+
+from app.accounts.bill.schema import BillStatusUpdate, BillStatusResponse
+
+@router.patch(
+    "/status/{bill_id}",
+    response_model=BillStatusResponse
+)
+async def update_bill_status(
+    bill_id: int,
+    data: BillStatusUpdate,
+    db: SessionDep
+):
+    result = await db.execute(
+        select(Bill).where(
+            Bill.id == bill_id
+        )
+    )
+
+    bill = result.scalar_one_or_none()
+
+    if not bill:
+        raise HTTPException(
+            status_code=404,
+            detail="Bill not found"
+        )
+
+    # ==========================================
+    # ALREADY UPDATED
+    # ==========================================
+
+    if bill.payment_status in [
+        PaymentStatus.complete,
+        PaymentStatus.cancel
+    ]:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Bill already marked as "
+                f"{bill.payment_status}"
+            )
+        )
+
+    # ==========================================
+    # UPDATE STATUS
+    # ==========================================
+
+    bill.payment_status = data.payment_status
+
+    order = await db.get(
+        Order,
+        bill.order_id
+    )
+
+    if order and order.table_id:
+
+        table = await db.get(
+            Table,
+            order.table_id
+        )
+
+        if data.payment_status == PaymentStatus.complete:
+            table.status = TableStatus.available
+        else:
+            table.status = TableStatus.occupied
+
+    if data.payment_status == PaymentStatus.complete:
+
+        bill.paid_amount = bill.grand_total
+        bill.due_amount = 0.0
+
+    elif data.payment_status == PaymentStatus.cancel:
+
+        bill.paid_amount = 0.0
+        bill.due_amount = bill.grand_total
+
+    await db.commit()
+    await db.refresh(bill)
+
+    return bill
