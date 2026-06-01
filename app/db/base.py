@@ -23,3 +23,8 @@ from app.accounts.customer.model import Customer
 from app.accounts.permission.model import StaffPermission
 from app.accounts.inventory.model import InventoryItem
 from app.accounts.auditlog.model import AuditLog
+from app.accounts.bill.model import Bill
+from app.accounts.payment.model import Payment
+from app.accounts.offer.model import Offer
+from app.accounts.tax.model import TaxBillingSetting
+from app.accounts.legaldetails.model import LegalCompliance
