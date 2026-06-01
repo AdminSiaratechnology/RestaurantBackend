@@ -36,13 +36,8 @@ def upgrade() -> None:
 
 
 def upgrade():
-    op.drop_constraint(
-        'tables_brand_id_fkey',
-        'tables',
-        type_='foreignkey'
-    )
-
-    op.drop_column('tables', 'brand_id')
+    pass
+    # op.drop_column('tables', 'brand_id')
 
 
 def downgrade():
