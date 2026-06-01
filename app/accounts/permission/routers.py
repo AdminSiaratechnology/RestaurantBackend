@@ -187,6 +187,43 @@ async def update_staff_permissions(
 # GET STAFF PERMISSIONS
 # =========================================================
 
+
+
+
+# ✅ STATIC ROUTES FIRST
+
+@router.get("/orders")
+async def orders(
+    current=Depends(
+        require_staff_role(StaffRole.waitr)
+    )
+):
+    return {
+        "message": "Waiter Access"
+    }
+
+
+@router.get("/kitchen")
+async def kitchen(
+    current=Depends(
+        require_staff_role(StaffRole.chef)
+    )
+):
+    return {
+        "message": "Chef Access"
+    }
+
+
+@router.get("/reports")
+async def reports(
+    current=Depends(
+        require_staff_role(StaffRole.manager)
+    )
+):
+    return {
+        "message": "Manager Access"
+    }
+
 @router.get("/{staff_id}", response_model=StaffPermissionOut)
 async def get_staff_permissions(
     staff_id: int,
@@ -264,47 +301,13 @@ async def get_staff_permissions(
     return permission
 
 
-# ✅ STATIC ROUTES FIRST
+# # ✅ DYNAMIC ROUTES AFTER STATIC ROUTES
 
-@router.get("/orders")
-async def orders(
-    current=Depends(
-        require_staff_role(StaffRole.waitr)
-    )
-):
-    return {
-        "message": "Waiter Access"
-    }
+# @router.get("/{staff_id}", response_model=StaffPermissionOut)
+# async def get_staff_permissions(
+#     staff_id: int,
+#     db: SessionDep,
+#     current=Depends(access_one)
+# ):
+#     ...
 
-
-@router.get("/kitchen")
-async def kitchen(
-    current=Depends(
-        require_staff_role(StaffRole.chef)
-    )
-):
-    return {
-        "message": "Chef Access"
-    }
-
-
-@router.get("/reports")
-async def reports(
-    current=Depends(
-        require_staff_role(StaffRole.manager)
-    )
-):
-    return {
-        "message": "Manager Access"
-    }
-
-
-# ✅ DYNAMIC ROUTES AFTER STATIC ROUTES
-
-@router.get("/{staff_id}", response_model=StaffPermissionOut)
-async def get_staff_permissions(
-    staff_id: int,
-    db: SessionDep,
-    current=Depends(access_one)
-):
-    ...

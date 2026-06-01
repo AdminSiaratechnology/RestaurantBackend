@@ -61,7 +61,8 @@ async def create_table(
 async def get_tables(
     db: SessionDep,
     current=Depends(access_four),
-    branch_id: int | None = None
+    branch_id: int | None = None,
+    filter_status: TableStatus | None = None
 ):
     role = current["role"]
     user = current["user"]
@@ -117,7 +118,13 @@ async def get_tables(
 
     result = await db.execute(query)
 
-    return result.scalars().unique().all()
+    tables = result.scalars().unique().all()
+
+    # ✅ Optional Status Filter
+    if filter_status is not None:
+        tables = [table for table in tables if table.status == filter_status]
+
+    return tables
 
 
 

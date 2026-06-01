@@ -136,3 +136,16 @@ class BillOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class BillStatusUpdate(BaseModel):
+    payment_status: PaymentStatus
+
+
+class BillStatusResponse(BaseModel):
+    id: int
+    payment_status: PaymentStatus
+    paid_amount: float
+    due_amount: float
+
+    class Config:
+        from_attributes = True

@@ -52,7 +52,8 @@ async def update_order_status(
         # =========================
         # ✅ Validate Transition
         # =========================
-        if new_status not in ALLOWED_STATUS_FLOW[current_status]:
+        # if new_status not in ALLOWED_STATUS_FLOW[current_status]:
+        if (new_status != current_status and new_status not in ALLOWED_STATUS_FLOW[current_status]):
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid status transition from '{current_status}' to '{new_status}'"

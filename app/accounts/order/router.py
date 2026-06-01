@@ -11,6 +11,8 @@ from app.accounts.item.model import Item
 from app.accounts.order.model import Order, OrderItem
 from app.accounts.order.schema import OrderCreate, OrderResponse, OrderUpdate, OrderItemStatusResponse, OrderItemStatusUpdate
 from app.accounts.pricing.model import Pricing
+from app.accounts.table.model import Table
+from app.accounts.table.schema import TableStatus
 
 
 from app.accounts.enum import UserRole
@@ -661,7 +663,21 @@ async def create_order(
         db.add(order)
 
         await db.flush()
+        # update table status
+        
+        if order.table_id:
+            table = await db.get(
+                Table,
+                order.table_id
+            )
 
+        if not table:
+            raise HTTPException(
+                status_code=404,
+                detail="Table not found"
+            )
+
+        table.status = TableStatus.occupied
         if not data.items:
             raise HTTPException(400, "Order must contain at least one item")
 
