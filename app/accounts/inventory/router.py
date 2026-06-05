@@ -158,7 +158,7 @@ async def create_inventory_item(
         stock_qty=stock_qty,
         reorder_level=reorder_level,
 
-        cost_per_unit=data.cost_per_unit,
+        cost_per_unit=data.cost_per_unit / factor,
 
         vendor_name=data.vendor_name,
         vendor_phone=data.vendor_phone,
@@ -211,17 +211,14 @@ async def get_inventory(
         response = []
 
         for item in items:
-            normalize_inventory_item_unit(item)
+            factor = item.conversion_factor or 1
 
-            stock = display_unit(
-                item,
-                item.stock_qty
-            )
+            display_stock_qty = item.stock_qty / factor
+            display_reorder_level = item.reorder_level / factor
 
-            reorder = display_unit(
-                item,
-                item.reorder_level
-            )
+            display_cost_per_unit = item.cost_per_unit * factor
+
+            total_value = display_stock_qty * display_cost_per_unit
 
             response.append({
                 "id": item.id,
@@ -229,16 +226,16 @@ async def get_inventory(
                 "godown_id": item.godown_id,
                 "row_category": item.row_category,
 
-                "unit": stock["display_unit"],
-                "display_unit": stock["display_unit"],
+                "unit": item.display_unit,
+                "display_unit": item.display_unit,
                 "base_unit": item.unit,
-                "conversion_factor": item.conversion_factor or 1,
+                "conversion_factor": factor,
 
-                "stock_qty": stock["display_qty"],
-                "reorder_level": reorder["display_qty"],
+                "stock_qty": display_stock_qty,
+                "reorder_level": display_reorder_level,
 
-                "cost_per_unit": item.cost_per_unit,
-                "total_value": item.stock_qty * item.cost_per_unit,
+                "cost_per_unit": display_cost_per_unit,
+                "total_value": total_value,
 
                 "status": item.status,
 
@@ -307,6 +304,61 @@ async def inventory_stats(
 
     except SQLAlchemyError:
         raise HTTPException(500, "Error fetching stats")
+
+
+
+@router.put("/{item_id}")
+async def update_inventory_item(
+    item_id: int,
+    data: InventoryCreate,
+    db: SessionDep,
+    current=Depends(access_one)
+):
+    item = await db.get(InventoryItem, item_id)
+
+    if not item:
+        raise HTTPException(
+            status_code=404,
+            detail="Item not found"
+        )
+
+    unit, stock_qty, factor = convert_to_base_unit(
+        data.unit,
+        data.stock_qty
+    )
+
+    _, reorder_level, _ = convert_to_base_unit(
+        data.unit,
+        data.reorder_level
+    )
+
+    item.name = data.name
+    item.row_category = data.row_category
+
+    item.unit = unit
+    item.display_unit = data.unit
+    item.conversion_factor = factor
+
+    item.stock_qty = stock_qty
+    item.reorder_level = reorder_level
+
+    # IMPORTANT
+    item.cost_per_unit = data.cost_per_unit / factor
+
+    item.vendor_name = data.vendor_name
+    item.vendor_phone = data.vendor_phone
+
+    item.status = calculate_status(
+        stock_qty,
+        reorder_level
+    )
+
+    await db.commit()
+    await db.refresh(item)
+
+    return {
+        "message": "Inventory updated successfully"
+    }
 
 
 @router.patch("/update_stock/{item_id}")

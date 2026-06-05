@@ -98,21 +98,7 @@ class GodownOut(BaseModel):
 
 
 
-# class StockUpdate(BaseModel):
-#     stock_qty: float
-#     unit: str
 
-#     @field_validator("unit")
-#     @classmethod
-#     def validate_unit(cls, value):
-#         value = value.lower()
-
-#         if value not in VALID_UNITS:
-#             raise ValueError(
-#                 f"Unit must be one of {VALID_UNITS}"
-#             )
-
-#         return value
 
 
 

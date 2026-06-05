@@ -14,7 +14,9 @@ from app.accounts.pricing.model import Pricing
 from app.accounts.table.model import Table
 from app.accounts.table.schema import TableStatus
 
-
+from app.accounts.inventory.service import (
+    consume_inventory_for_item
+)
 from app.accounts.enum import UserRole
 
 
@@ -671,13 +673,13 @@ async def create_order(
                 order.table_id
             )
 
-        if not table:
-            raise HTTPException(
-                status_code=404,
-                detail="Table not found"
-            )
+            if not table:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Table not found"
+                )
 
-        table.status = TableStatus.occupied
+            table.status = TableStatus.occupied
         if not data.items:
             raise HTTPException(400, "Order must contain at least one item")
 
@@ -851,6 +853,18 @@ async def update_order_item_status(
         # =====================================================
         # ✅ UPDATE ITEM STATUS
         # =====================================================
+        old_status = order_item.order_status
+
+        if (
+            old_status == "pending"
+            and
+            new_status == "preparing"
+        ):
+            await consume_inventory_for_item(
+                db=db,
+                item_id=order_item.item_id,
+                quantity=order_item.quantity
+            )
 
         order_item.order_status = new_status
 

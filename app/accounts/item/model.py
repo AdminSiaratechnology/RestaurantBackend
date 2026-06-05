@@ -16,7 +16,7 @@ class Item(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)
-
+    image = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
 

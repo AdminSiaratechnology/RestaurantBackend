@@ -30,6 +30,7 @@ from app.accounts.legaldetails.router import router as legaldetails_router
 from app.accounts.payment.router import router as payment_router
 from app.accounts.ingredient.router import router as ingredient_router
 # from app.accounts.bom.router import router as bom_router
+from fastapi.staticfiles import StaticFiles
 
 
 app = FastAPI()
@@ -54,6 +55,15 @@ app.add_middleware(
 async def startup():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+
+
+
+app.mount(
+    "/uploads",
+    StaticFiles(directory="uploads"),
+    name="uploads",
+)
 
 app.include_router(auth_router)
 app.include_router(superadmin_router)

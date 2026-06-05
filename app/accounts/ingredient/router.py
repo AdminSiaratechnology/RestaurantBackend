@@ -162,7 +162,9 @@ async def get_recipe_by_item(
             "ingredient_id": recipe.id,
             "inventory_item_id": inventory.id,
             "inventory_name": inventory.name,
-            "unit": inventory.unit,
+            # "unit": inventory.unit,
+            "unit": inventory.display_unit,
+            "quantity_required":recipe.quantity_required /(inventory.conversion_factor or 1),
             "godown_id": godown.id,
             "godown_name": godown.name,
             "quantity_required": recipe.quantity_required
