@@ -28,6 +28,8 @@ from app.accounts.bill.router import router as bill_router
 from app.accounts.offer.router import router as offer_router
 from app.accounts.legaldetails.router import router as legaldetails_router
 from app.accounts.payment.router import router as payment_router
+from app.accounts.ingredient.router import router as ingredient_router
+# from app.accounts.bom.router import router as bom_router
 
 
 app = FastAPI()
@@ -77,3 +79,5 @@ app.include_router(deshboard_router)
 app.include_router(legaldetails_router)
 app.include_router(auditlog_router)
 app.include_router(payment_router)
+app.include_router(ingredient_router)
+# app.include_router(bom_router)

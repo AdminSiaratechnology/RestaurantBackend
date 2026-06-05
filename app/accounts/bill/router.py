@@ -564,22 +564,6 @@ async def get_bill(
     await db.commit()
 
     await db.refresh(bill)
-    # if order.table_id:
-    #     table = await db.get(
-    #         Table,
-    #         order.table_id
-    #     )
-
-    #     if not table:
-    #         raise HTTPException(
-    #             status_code=404,
-    #             detail="Table not found"
-    #         )
-
-    #     table.status = TableStatus.available
-    # =====================================================
-    # RESPONSE
-    # =====================================================
 
     return {
         "id": bill.id,

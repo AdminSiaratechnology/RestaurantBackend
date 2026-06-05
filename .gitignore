@@ -36,3 +36,5 @@ venv/
 
 # Alembic
 alembic/versions/*.pyc
+alembic/versions
+alembic_backup

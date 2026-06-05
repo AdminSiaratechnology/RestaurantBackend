@@ -30,3 +30,10 @@ class Item(Base):
 
     pricings = relationship("Pricing", back_populates="item", cascade="all, delete-orphan")
     order_items = relationship("OrderItem", back_populates="item")
+
+
+    ingredients = relationship(
+        "ItemIngredient",
+        back_populates="item",
+        cascade="all, delete-orphan"
+    )
