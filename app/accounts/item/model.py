@@ -16,7 +16,7 @@ class Item(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)
-
+    image = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
 
@@ -30,3 +30,10 @@ class Item(Base):
 
     pricings = relationship("Pricing", back_populates="item", cascade="all, delete-orphan")
     order_items = relationship("OrderItem", back_populates="item")
+
+
+    ingredients = relationship(
+        "ItemIngredient",
+        back_populates="item",
+        cascade="all, delete-orphan"
+    )

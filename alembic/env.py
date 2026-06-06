@@ -18,6 +18,13 @@ from app.accounts.client.model import Client
 # Alembic Config
 config = context.config
 
+from app.core.settings import settings
+
+config.set_main_option(
+    "sqlalchemy.url",
+    settings.DATABASE_URL
+)
+
 # Logging
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

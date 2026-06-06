@@ -9,6 +9,10 @@ from app.accounts.category.model import Category
 from app.accounts.pricing.model import Pricing
 from app.db.config import SessionDep
 from app.accounts.deps import access_four, UserRole
+import os
+from uuid import uuid4
+from pathlib import Path
+from fastapi import UploadFile, File, HTTPException
 
 router = APIRouter(prefix="/items", tags=["Items"])
 
@@ -310,6 +314,7 @@ async def create_item(
         # ✅ Create Item
         item = Item(
             name=payload.name,
+            # image=payload.image,
             client_id=client.id,
             category_id=payload.category_id,
             branch_id=payload.branch_id
@@ -342,3 +347,52 @@ async def create_item(
             status_code=500,
             detail=str(e)
         )
+
+
+
+
+@router.post("/{item_id}/upload-image")
+async def upload_image(
+    item_id: int,
+    db: SessionDep,
+    image: UploadFile = File(...)
+    
+):
+    item = await db.get(Item, item_id)
+
+    if not item:
+        raise HTTPException(404, "Item not found")
+
+    # preserve extension
+    ext = Path(image.filename).suffix.lower()
+
+    filename = f"{uuid4()}{ext}"
+
+    upload_dir = (
+        Path("uploads")
+        / "items"
+        / f"branch_{item.branch_id}"
+        / f"item_{item.id}"
+    )
+
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = upload_dir / filename
+
+    with open(file_path, "wb") as buffer:
+        buffer.write(await image.read())
+
+    image_url = (
+        f"/uploads/items/"
+        f"branch_{item.branch_id}/"
+        f"item_{item.id}/"
+        f"{filename}"
+    )
+
+    item.image = image_url
+
+    await db.commit()
+
+    return {
+        "image_url": image_url
+    }
