@@ -396,3 +396,59 @@ async def upload_image(
     return {
         "image_url": image_url
     }
+
+
+
+
+@router.put("/{item_id}/update-image")
+async def update_image(
+    item_id: int,
+    db: SessionDep,
+    image: UploadFile = File(...)
+):
+    item = await db.get(Item, item_id)
+
+    if not item:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    # Delete old image if exists
+    if item.image:
+        old_image_path = Path(item.image.lstrip("/"))
+
+        if old_image_path.exists():
+            old_image_path.unlink()
+
+    # Create new filename
+    ext = Path(image.filename).suffix.lower()
+    filename = f"{uuid4()}{ext}"
+
+    upload_dir = (
+        Path("uploads")
+        / "items"
+        / f"branch_{item.branch_id}"
+        / f"item_{item.id}"
+    )
+
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = upload_dir / filename
+
+    with open(file_path, "wb") as buffer:
+        buffer.write(await image.read())
+
+    image_url = (
+        f"/uploads/items/"
+        f"branch_{item.branch_id}/"
+        f"item_{item.id}/"
+        f"{filename}"
+    )
+
+    item.image = image_url
+
+    await db.commit()
+    await db.refresh(item)
+
+    return {
+        "message": "Image updated successfully",
+        "image_url": image_url
+    }
