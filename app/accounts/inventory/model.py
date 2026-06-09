@@ -19,7 +19,7 @@ class InventoryItem(Base):
     godown_id = Column(
         Integer,
         ForeignKey("godowns.id"),
-        nullable=False
+        nullable=True
     )
 
     name = Column(String, nullable=False)

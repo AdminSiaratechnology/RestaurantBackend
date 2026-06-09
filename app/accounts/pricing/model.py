@@ -123,4 +123,48 @@ class Pricing(Base):
         "Branch",
         back_populates="pricings"
     )
+
+    tax_history = relationship(
+    "PricingTaxHistory",
+    back_populates="pricing"
+)
     
+
+
+
+class PricingTaxHistory(Base):
+    __tablename__ = "pricing_tax_history"
+
+    id = Column(Integer, primary_key=True)
+
+    pricing_id = Column(
+        Integer,
+        ForeignKey("pricings.id"),
+        nullable=False
+    )
+
+    item_id = Column(
+        Integer,
+        ForeignKey("items.id"),
+        nullable=False
+    )
+
+    old_tax = Column(
+        Float,
+        nullable=False
+    )
+
+    new_tax = Column(
+        Float,
+        nullable=False
+    )
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+    pricing = relationship(
+        "Pricing",
+        back_populates="tax_history"
+    )
