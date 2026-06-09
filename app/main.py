@@ -29,9 +29,11 @@ from app.accounts.offer.router import router as offer_router
 from app.accounts.legaldetails.router import router as legaldetails_router
 from app.accounts.payment.router import router as payment_router
 from app.accounts.ingredient.router import router as ingredient_router
-# from app.accounts.bom.router import router as bom_router
 from fastapi.staticfiles import StaticFiles
-
+from app.accounts.rep_financial.router import router as rep_financial_router
+from app.accounts.rep_sales.router import router as rep_sales_router
+from app.accounts.rep_menu.router import router as rep_menu_router
+from app.accounts.rep_inventory.router import router as rep_inventory_router
 
 app = FastAPI()
 
@@ -90,4 +92,7 @@ app.include_router(legaldetails_router)
 app.include_router(auditlog_router)
 app.include_router(payment_router)
 app.include_router(ingredient_router)
-# app.include_router(bom_router)
+app.include_router(rep_financial_router)
+app.include_router(rep_sales_router)
+app.include_router(rep_menu_router)
+app.include_router(rep_inventory_router)

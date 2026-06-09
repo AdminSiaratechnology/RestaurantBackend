@@ -21,7 +21,7 @@ VALID_UNITS = list(UNIT_MAPPING.keys())
 
 class InventoryCreate(BaseModel):
     branch_id: int
-    godown_id: int
+    godown_id: Optional[int] = None
 
     name: str
 
@@ -53,7 +53,7 @@ class InventoryCreate(BaseModel):
 class InventoryResponse(BaseModel):
     id: int
     name: str
-    godown_id: int
+    godown_id: Optional[int] = None
     row_category: str
     unit: str
     display_unit: str

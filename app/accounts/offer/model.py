@@ -19,7 +19,7 @@ from app.db.base import Base
 class OfferType(str, enum.Enum):
     PERCENTAGE_OFF = "Percentage off"
     FLAT_DISCOUNT = "Flat discount"
-    BUY_ONE_GET_ONE = "Buy 1 get 1 free"
+    BUY_ONE_GET_ONE = "Buy 1 get 1"
     FREE_ITEM = "Free Item"
 
 

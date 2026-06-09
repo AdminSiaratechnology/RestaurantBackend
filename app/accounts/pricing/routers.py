@@ -13,6 +13,8 @@ from app.accounts.pricing.schema import (
     PricingUpdate,
     PricingOut
 )
+from app.accounts.pricing.model import PricingTaxHistory
+from app.accounts.pricing.schema import TaxHistoryOut
 
 from app.accounts.deps import (
     access_four,
@@ -217,12 +219,18 @@ async def update_pricing(
     if data.discount is not None:
         pricing.discount = data.discount
 
-    if data.tax is not None:
+    if data.tax is not None and data.tax != pricing.tax:
+        # Save old tax value before updating
+        history = PricingTaxHistory(
+            pricing_id=pricing.id,
+            item_id=pricing.item_id,
+            old_tax=pricing.tax,
+            new_tax=data.tax
+        )
+        db.add(history)
 
         pricing.tax = data.tax
-
         pricing.cgst_rate = data.tax / 2
-
         pricing.sgst_rate = data.tax / 2
 
     if data.calories is not None:
@@ -232,7 +240,6 @@ async def update_pricing(
         pricing.is_active = data.is_active
 
     await db.commit()
-
     await db.refresh(pricing)
 
     return pricing
@@ -276,3 +283,58 @@ async def delete_pricing(
     return {
         "message": "Pricing deleted successfully"
     }
+
+
+@router.get(
+    "/item/{item_id}/tax-history",
+    response_model=list[TaxHistoryOut]
+)
+async def get_item_tax_history(
+    item_id: int,
+    db: SessionDep,
+    current=Depends(access_four)
+):
+    
+    role = current["role"]
+    user = current["user"]
+
+    if role == UserRole.CLIENT:
+        client_id = user.id
+
+    elif role == UserRole.STAFF:
+        client_id = user.client_id
+
+    else:
+        raise HTTPException(
+            403,
+            "Access denied"
+        )
+
+    pricing_result = await db.execute(
+        select(Pricing).where(
+            Pricing.item_id == item_id,
+            Pricing.client_id == client_id
+        )
+    )
+
+    pricing = pricing_result.scalar_one_or_none()
+
+    if not pricing:
+        raise HTTPException(
+            404,
+            "Pricing not found"
+        )
+
+    result = await db.execute(
+        select(PricingTaxHistory)
+        .where(
+            PricingTaxHistory.pricing_id == pricing.id
+        )
+        .order_by(
+            PricingTaxHistory.created_at.desc()
+        )
+    )
+
+
+    return result.scalars().all()
+
