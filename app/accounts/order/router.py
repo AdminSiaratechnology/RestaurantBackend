@@ -89,6 +89,7 @@ async def resolve_pricing(
     """
     branch_result = await db.execute(
         select(Pricing).where(
+
             Pricing.item_id == db_item.id,
             Pricing.client_id == client_id,
             Pricing.branch_id == branch_id,
@@ -561,6 +562,7 @@ async def update_order(
             "created_at": order.created_at,
             "items": [
                 {
+                    "id": i.id,
                     "item_id": i.item_id,
                     "quantity": i.quantity,
                     "price": i.price,

@@ -29,3 +29,4 @@ from app.accounts.offer.model import Offer
 from app.accounts.tax.model import TaxBillingSetting
 from app.accounts.legaldetails.model import LegalCompliance
 from app.accounts.ingredient.model import ItemIngredient
+from app.accounts.forget_password.model import PasswordResetOTP
