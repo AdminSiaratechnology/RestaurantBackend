@@ -34,6 +34,9 @@ from app.accounts.rep_financial.router import router as rep_financial_router
 from app.accounts.rep_sales.router import router as rep_sales_router
 from app.accounts.rep_menu.router import router as rep_menu_router
 from app.accounts.rep_inventory.router import router as rep_inventory_router
+from app.accounts.forget_password.router import router as forget_password_router
+from app.accounts.change_password.router import router as change_password_router
+
 
 app = FastAPI()
 
@@ -53,11 +56,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# @app.on_event("startup")
+# async def startup():
+#     async with engine.begin() as conn:
+#         await conn.run_sync(Base.metadata.create_all)
+
 @app.on_event("startup")
 async def startup():
+    print("STARTUP BEGIN")
+
     async with engine.begin() as conn:
+        print("DB CONNECTED")
+
         await conn.run_sync(Base.metadata.create_all)
 
+        print("TABLES CREATED")
+
+    print("STARTUP END")
 
 
 
@@ -96,3 +111,5 @@ app.include_router(rep_financial_router)
 app.include_router(rep_sales_router)
 app.include_router(rep_menu_router)
 app.include_router(rep_inventory_router)
+app.include_router(forget_password_router)
+app.include_router(change_password_router)
