@@ -19,6 +19,12 @@ class PaymentCreate(BaseModel):
 
     payment_reference: Optional[str] = None
 
+    offer_id: Optional[int] = None
+
+    offer_discount: Optional[float] = 0.0
+
+    final_amount: Optional[float] = None
+
 
 class PaymentOut(BaseModel):
 
@@ -45,6 +51,10 @@ class PaymentOut(BaseModel):
     notes: Optional[str]
 
     payment_date: datetime
+
+    offer_id: Optional[int] = None
+
+    offer_discount: Optional[float] = 0.0
 
     class Config:
         from_attributes = True

@@ -76,6 +76,18 @@ class Payment(Base):
         nullable=True
     )
 
+    # Offer information
+    offer_id = Column(
+        Integer,
+        ForeignKey("offers.id"),
+        nullable=True
+    )
+
+    offer_discount = Column(
+        Float,
+        default=0
+    )
+
     payment_date = Column(
         DateTime,
         default=datetime.utcnow

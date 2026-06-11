@@ -162,6 +162,26 @@ class Bill(Base):
     )
 
     # =====================================================
+    # OFFER & FINAL AMOUNT FIELDS
+    # =====================================================
+
+    offer_id = Column(
+        Integer,
+        ForeignKey("offers.id"),
+        nullable=True
+    )
+
+    offer_discount = Column(
+        Float,
+        default=0
+    )
+
+    final_amount = Column(
+        Float,
+        default=0
+    )
+
+    # =====================================================
     # EXTRA
     # =====================================================
 
@@ -209,5 +229,9 @@ class Bill(Base):
 
     branch = relationship(
         "Branch"
+    )
+
+    offer = relationship(
+        "Offer"
     )
     
