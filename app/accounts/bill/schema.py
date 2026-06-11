@@ -7,6 +7,18 @@ from typing import List, Optional
 from datetime import datetime
 
 from app.accounts.bill.enum import PaymentStatus
+
+
+class OfferPreviewRequest(BaseModel):
+    bill_id: int
+    offer_id: Optional[int] = None
+
+
+class OfferPreviewResponse(BaseModel):
+    original_amount: float
+    offer_discount: Optional[float] = 0.0
+    final_amount: float
+    message: Optional[str] = None
 # =========================================================
 # PRICING RESPONSE
 # =========================================================
@@ -134,6 +146,12 @@ class BillOut(BaseModel):
 
     footer_message: str
 
+    offer_id: Optional[int] = None
+
+    offer_discount: Optional[float] = 0.0
+
+    final_amount: Optional[float] = None
+
     class Config:
         from_attributes = True
 
@@ -146,6 +164,9 @@ class BillStatusResponse(BaseModel):
     payment_status: PaymentStatus
     paid_amount: float
     due_amount: float
+    final_amount: Optional[float] = None
+
+    offer_discount: Optional[float] = 0.0
 
     class Config:
         from_attributes = True

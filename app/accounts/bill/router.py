@@ -26,8 +26,8 @@ from app.accounts.bill.enum import PaymentStatus
 from app.accounts.tax.model import TaxBillingSetting
 
 from app.accounts.bill.model import Bill
-
-from app.accounts.bill.schema import BillOut
+from app.accounts.offer.model import Offer, OfferType
+from app.accounts.bill.schema import BillOut, OfferPreviewRequest, OfferPreviewResponse
 
 from app.accounts.pricing.model import Pricing
 
@@ -402,8 +402,83 @@ async def get_bill(
 
 
     # =====================================================
-    # CREATE BILL
+    # CREATE BILL IF NOT EXISTS
     # =====================================================
+
+    # if not bill:
+
+    #     bill = Bill(
+
+    #         order_id=order.id,
+
+    #         client_id=order.client_id,
+
+    #         branch_id=order.branch_id,
+
+    #         invoice_no=(
+    #             f"INV-{uuid4().hex[:8].upper()}"
+    #         ),
+
+    #         order_type=order.order_type,
+
+    #         customer_name=order.customer_name,
+
+    #         customer_phone=order.customer_phone,
+
+    #         payment_method=None,
+
+    #         subtotal=subtotal,
+
+    #         cgst_percent=(
+    #             tax.cgst
+    #             if tax.enable_tax
+    #             else 0.0
+    #         ),
+
+    #         cgst_amount=cgst_amount,
+
+    #         sgst_percent=(
+    #             tax.sgst
+    #             if tax.enable_tax
+    #             else 0.0
+    #         ),
+
+    #         sgst_amount=sgst_amount,
+
+    #         service_charge_percent=(
+    #             service_charge_percent
+    #         ),
+
+    #         service_charge_amount=(
+    #             service_charge_amount
+    #         ),
+
+    #         tax_total=tax_total,
+
+    #         discount_amount=(
+    #             discount_amount
+    #         ),
+
+    #         round_off_amount=(
+    #             round_off_amount
+    #         ),
+
+    #         grand_total=grand_total,
+
+    #         final_amount=grand_total,
+
+    #         paid_amount=0.0,
+
+    #         due_amount=grand_total,
+
+    #         footer_message=(
+    #             tax.bill_footer_message
+    #         )
+    #     )
+
+    #     db.add(bill)
+    #     await db.commit()
+    #     await db.refresh(bill)
 
     if not bill:
 
@@ -415,17 +490,13 @@ async def get_bill(
 
             branch_id=order.branch_id,
 
-            invoice_no=(
-                f"INV-{uuid4().hex[:8].upper()}"
-            ),
+            invoice_no=f"INV-{uuid4().hex[:8].upper()}",
 
             order_type=order.order_type,
 
             customer_name=order.customer_name,
 
             customer_phone=order.customer_phone,
-
-            # payment_status=PaymentStatus.pending,
 
             payment_method=None,
 
@@ -447,123 +518,65 @@ async def get_bill(
 
             sgst_amount=sgst_amount,
 
-            service_charge_percent=(
-                service_charge_percent
-            ),
+            service_charge_percent=service_charge_percent,
 
-            service_charge_amount=(
-                service_charge_amount
-            ),
+            service_charge_amount=service_charge_amount,
 
             tax_total=tax_total,
 
-            discount_amount=(
-                discount_amount
-            ),
+            discount_amount=0.0,
 
-            round_off_amount=(
-                round_off_amount
-            ),
+            round_off_amount=round_off_amount,
 
             grand_total=grand_total,
+
+            # ==========================
+            # OFFER DEFAULT VALUES
+            # ==========================
+            offer_id=None,
+            offer_discount=0.0,
+
+            # Amount customer has to pay
+            final_amount=grand_total,
 
             paid_amount=0.0,
 
             due_amount=grand_total,
 
-            footer_message=(
-                tax.bill_footer_message
-            )
+            footer_message=tax.bill_footer_message
         )
 
         db.add(bill)
+        await db.commit()
+        await db.refresh(bill)
+    
 
-    # =====================================================
-    # UPDATE BILL
-    # =====================================================
 
     else:
 
-        bill.customer_name = (
-            order.customer_name
-        )
+        updated = False
 
-        bill.customer_phone = (
-            order.customer_phone
-        )
+        if bill.final_amount is None:
+            bill.final_amount = bill.grand_total
+            updated = True
 
-        # ==========================================
-        # DO NOT RESET PAYMENT STATUS
-        # ==========================================
+        if bill.offer_discount is None:
+            bill.offer_discount = 0.0
+            updated = True
 
-        bill.subtotal = subtotal
+        if bill.due_amount is None:
+            bill.due_amount = bill.final_amount
+            updated = True
 
-        bill.cgst_percent = (
-            tax.cgst
-            if tax.enable_tax
-            else 0.0
-        )
-
-        bill.cgst_amount = cgst_amount
-
-        bill.sgst_percent = (
-            tax.sgst
-            if tax.enable_tax
-            else 0.0
-        )
-
-        bill.sgst_amount = sgst_amount
-
-        bill.service_charge_percent = (
-            service_charge_percent
-        )
-
-        bill.service_charge_amount = (
-            service_charge_amount
-        )
-
-        bill.tax_total = tax_total
-
-        bill.discount_amount = (
-            discount_amount
-        )
-
-        bill.round_off_amount = (
-            round_off_amount
-        )
-
-        bill.grand_total = grand_total
-
-        # ==========================================
-        # UPDATE AMOUNTS BASED ON CURRENT STATUS
-        # ==========================================
-
-        if bill.payment_status == PaymentStatus.complete:
-
-            bill.paid_amount = grand_total
-            bill.due_amount = 0.0
-
-        elif bill.payment_status == PaymentStatus.cancel:
-
-            bill.paid_amount = 0.0
-            bill.due_amount = grand_total
-
-        else:
-
-            bill.paid_amount = 0.0
-            bill.due_amount = grand_total
-
-        bill.footer_message = (
-            tax.bill_footer_message
-        )
+        if updated:
+            await db.commit()
+            await db.refresh(bill)
 
     # =====================================================
-    # SAVE
+    # RETURN RESPONSE - SHOW ORIGINAL VALUES UNLESS PAID
     # =====================================================
-
-    await db.commit()
-
-    await db.refresh(bill)
+    
+    is_payment_complete = bill.payment_status == PaymentStatus.complete
 
     return {
         "id": bill.id,
@@ -634,21 +647,21 @@ async def get_bill(
             bill.round_off_amount
         ),
 
-        "grand_total": (
-            bill.grand_total
-        ),
+        "grand_total": bill.grand_total,
 
-        "paid_amount": (
-            bill.paid_amount
-        ),
+        "paid_amount": bill.paid_amount,
 
-        "due_amount": (
-            bill.due_amount
-        ),
+        # Only show due amount as final if payment is complete
+        "due_amount": bill.due_amount if is_payment_complete else bill.grand_total,
 
         "footer_message": (
             bill.footer_message or ""
-        )
+        ),
+
+        # Only show offer data if payment is complete
+        "offer_id": bill.offer_id if is_payment_complete else None,
+        "offer_discount": bill.offer_discount if is_payment_complete else 0.0,
+        "final_amount": bill.final_amount if is_payment_complete else bill.grand_total
     }
 
 from app.accounts.bill.schema import BillStatusUpdate, BillStatusResponse
@@ -716,16 +729,133 @@ async def update_bill_status(
             table.status = TableStatus.occupied
 
     if data.payment_status == PaymentStatus.complete:
-
-        bill.paid_amount = bill.grand_total
+        # If final_amount was set (via payment with offer), use it
+        # Otherwise fall back to grand_total
+        bill.paid_amount = bill.final_amount if bill.final_amount > 0 else bill.grand_total
         bill.due_amount = 0.0
 
     elif data.payment_status == PaymentStatus.cancel:
 
         bill.paid_amount = 0.0
-        bill.due_amount = bill.grand_total
+        bill.due_amount = bill.final_amount if bill.final_amount > 0 else bill.grand_total
 
     await db.commit()
     await db.refresh(bill)
 
     return bill
+
+
+# =====================================================
+# OFFER PREVIEW ENDPOINT - NO DB UPDATES!
+# =====================================================
+
+@router.post(
+    "/offer-preview",
+    response_model=OfferPreviewResponse
+)
+async def preview_offer_application(
+    data: OfferPreviewRequest,
+    db: SessionDep
+):
+    # =====================================================
+    # GET BILL
+    # =====================================================
+    bill_result = await db.execute(
+        select(Bill)
+        .where(Bill.id == data.bill_id)
+    )
+    bill = bill_result.scalar_one_or_none()
+    
+    if not bill:
+        raise HTTPException(
+            status_code=404,
+            detail="Bill not found"
+        )
+    
+    # Original amount is always grand_total
+    original_amount = bill.grand_total
+    
+    # If no offer, return original
+    if not data.offer_id:
+        return OfferPreviewResponse(
+            original_amount=original_amount,
+            offer_discount=0.0,
+            final_amount=original_amount,
+            message="No offer applied"
+        )
+    
+    # =====================================================
+    # GET OFFER
+    # =====================================================
+    offer_result = await db.execute(
+        select(Offer)
+        .where(Offer.id == data.offer_id)
+    )
+    offer = offer_result.scalar_one_or_none()
+    
+    if not offer:
+        raise HTTPException(
+            status_code=404,
+            detail="Offer not found"
+        )
+    
+    # Check if offer is active
+    if not offer.is_active:
+        return OfferPreviewResponse(
+            original_amount=original_amount,
+            offer_discount=0.0,
+            final_amount=original_amount,
+            message="Offer is not active"
+        )
+    
+    # Check if offer is valid for current time
+    now = datetime.utcnow()
+    if not (offer.valid_from <= now <= offer.valid_to):
+        return OfferPreviewResponse(
+            original_amount=original_amount,
+            offer_discount=0.0,
+            final_amount=original_amount,
+            message="Offer is not valid at this time"
+        )
+    
+    # Check minimum order amount
+    if original_amount < offer.min_order_amount:
+        return OfferPreviewResponse(
+            original_amount=original_amount,
+            offer_discount=0.0,
+            final_amount=original_amount,
+            message=f"Minimum order amount of {offer.min_order_amount} required for this offer"
+        )
+    
+    # =====================================================
+    # CALCULATE DISCOUNT
+    # =====================================================
+    discount = 0.0
+    
+    if offer.offer_type == OfferType.FLAT_DISCOUNT:
+        # Flat discount: subtract discount_value from total
+        discount = min(offer.discount_value or 0, original_amount)
+    
+    elif offer.offer_type == OfferType.PERCENTAGE_OFF:
+        # Percentage discount: calculate % of total
+        discount = round(original_amount * (offer.discount_value / 100), 2)
+    
+    # For BUY_ONE_GET_ONE and FREE_ITEM, we'd need more order details,
+    # but for now we'll treat them as no discount since we don't have item breakdown in bill
+    else:
+        return OfferPreviewResponse(
+            original_amount=original_amount,
+            offer_discount=0.0,
+            final_amount=original_amount,
+            message="Offer type requires more order details"
+        )
+    
+    # Calculate final amount
+    final_amount = max(0, original_amount - discount)
+    
+    return OfferPreviewResponse(
+        original_amount=original_amount,
+        offer_discount=discount,
+        final_amount=final_amount,
+        message=f"Offer applied: {offer.offer_name}"
+    )
