@@ -596,3 +596,93 @@ async def delete_godown(
     }
 
 
+
+
+@router.get("/dashboard-graph")
+async def inventory_dashboard_graph(
+    db: SessionDep,
+    branch_id: int | None = None,
+    current=Depends(access_one)
+):
+    role = current["role"]
+    user = current["user"]
+
+    if role == UserRole.STAFF:
+        branch_id = user.branch_id
+
+    if not branch_id:
+        raise HTTPException(
+            status_code=400,
+            detail="branch_id is required"
+        )
+
+    result = await db.execute(
+        select(InventoryItem).where(
+            InventoryItem.branch_id == branch_id
+        )
+    )
+
+    items = result.scalars().all()
+
+    total_items = len(items)
+
+    in_stock = sum(
+        1 for item in items
+        if item.status == "in_stock"
+    )
+
+    low_stock = sum(
+        1 for item in items
+        if item.status == "low_stock"
+    )
+
+    out_of_stock = sum(
+        1 for item in items
+        if item.status == "out_of_stock"
+    )
+
+    return {
+        "total_items": total_items,
+        "in_stock": in_stock,
+        "low_stock": low_stock,
+        "out_of_stock": out_of_stock
+    }
+
+
+
+@router.get("/dashboard-category-graph")
+async def inventory_category_graph(
+    db: SessionDep,
+    branch_id: int | None = None,
+    current=Depends(access_one)
+):
+    role = current["role"]
+    user = current["user"]
+
+    if role == UserRole.STAFF:
+        branch_id = user.branch_id
+
+    if not branch_id:
+        raise HTTPException(
+            status_code=400,
+            detail="branch_id is required"
+        )
+
+    result = await db.execute(
+        select(InventoryItem).where(
+            InventoryItem.branch_id == branch_id
+        )
+    )
+
+    items = result.scalars().all()
+
+    categories = {}
+
+    for item in items:
+        category = item.row_category or "other"
+
+        categories[category] = (
+            categories.get(category, 0) + 1
+        )
+
+    return categories

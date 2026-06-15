@@ -78,14 +78,15 @@ async def make_payment(
     # VALIDATION
     # =====================================
 
-    if data.receive_amount < amount_to_pay:
+    total_received = sum(
+        item.payment_amount
+        for item in data.payments
+    )
 
+    if total_received < amount_to_pay:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"Amount should be at least "
-                f"{amount_to_pay}"
-            )
+            detail=f"Amount should be at least {amount_to_pay}"
         )
 
     # =====================================
@@ -93,41 +94,48 @@ async def make_payment(
     # =====================================
 
     change_amount = round(
-        data.receive_amount -
-        amount_to_pay,
+        total_received - amount_to_pay,
         2
     )
+
+    payment_breakdown = [
+        {
+            "payment_method": item.payment_method.value,
+            "payment_amount": item.payment_amount
+        }
+        for item in data.payments
+    ]
 
     # =====================================
     # PAYMENT ENTRY
     # =====================================
 
     payment = Payment(
-
         bill_id=bill.id,
-
         order_id=bill.order_id,
-
         branch_id=bill.branch_id,
+        payment_method=(
+            "split"
+        if len(data.payments) > 1
+        else data.payments[0].payment_method.value
+        ),
 
-        payment_method=data.payment_method,
+        payment_breakdown=payment_breakdown,
 
-        bill_amount=bill.grand_total,  # Always store original bill amount
+        bill_amount=bill.grand_total,
 
-        receive_amount=data.receive_amount,
+        receive_amount=total_received,
 
-        paid_amount=amount_to_pay,  # This is what the customer actually paid
+        paid_amount=amount_to_pay,
 
         change_amount=change_amount,
 
-        payment_reference=(
-            data.payment_reference
-        ),
+        payment_reference=data.payment_reference,
 
         notes=data.notes,
-        
-        # Store offer information on payment
+
         offer_id=data.offer_id,
+
         offer_discount=data.offer_discount or 0
     )
 
@@ -138,14 +146,14 @@ async def make_payment(
     # =====================================
 
     # Update bill fields with offer info if provided
-    if data.offer_id is not None:
+    if data.offer_id and data.offer_id > 0:
         bill.offer_id = data.offer_id
         bill.offer_discount = data.offer_discount or 0
-        bill.final_amount = amount_to_pay
-
-    # If no offer, set final_amount to grand_total
     else:
-        bill.final_amount = amount_to_pay
+        bill.offer_id = None
+        bill.offer_discount = 0
+
+    bill.final_amount = amount_to_pay
 
     # Update payment status and other fields
     bill.paid_amount = amount_to_pay
@@ -157,7 +165,9 @@ async def make_payment(
     )
 
     bill.payment_method = (
-        data.payment_method
+        "split"
+        if len(data.payments) > 1
+        else data.payments[0].payment_method.value
     )
 
     await db.commit()

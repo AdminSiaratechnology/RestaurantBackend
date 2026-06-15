@@ -8,6 +8,7 @@ from app.accounts.client.model import Client
 from app.accounts.deps import access_two, access_three, access_four, get_client_if_accessible, require_super_admin
 from app.accounts.deshboard.schema import TopClientOut
 from app.accounts.enum import UserRole
+from app.accounts.staff.model import StaffRole
 from app.accounts.order.model import Order, OrderItem
 from app.accounts.partner.model import Partner
 from app.accounts.table.model import Table
@@ -39,7 +40,13 @@ async def get_today_revenue(
         role = current["role"]
         user = current["user"]
 
+        # Check if staff is chef or waiter
         if role == UserRole.STAFF:
+            if user.role in [StaffRole.chef, StaffRole.waiter]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You are not authorized to access revenue data."
+                )
             client_id = user.client_id
             branch_id = user.branch_id
 
@@ -299,7 +306,13 @@ async def get_weekly_revenue(
         role = current["role"]
         user = current["user"]
 
+        # Check if staff is chef or waiter
         if role == UserRole.STAFF:
+            if user.role in [StaffRole.chef, StaffRole.waiter]:
+                raise HTTPException(
+                    status_code=403,
+                    detail="You are not authorized to access revenue data."
+                )
             client_id = user.client_id
             branch_id = user.branch_id
 

@@ -5,7 +5,8 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
-    Enum
+    Enum,
+    Float
 )
 
 from sqlalchemy.orm import relationship
@@ -13,11 +14,9 @@ from datetime import datetime
 from app.db.base import Base
 import enum
 
-
-# ✅ Role Enum
 class StaffRole(str, enum.Enum):
     manager = "manager"
-    waitr = "waiter"
+    waiter = "waiter"
     chef = "chef"
 
 
@@ -39,10 +38,14 @@ class Staff(Base):
         nullable=False
     )
 
+    gender = Column(String, nullable=True)
+
+    phone_number = Column(String, nullable=True)
+
     # ✅ Staff Role
     role = Column(
         Enum(StaffRole, name="staff_role_enum"),
-        default=StaffRole.waitr,
+        default=StaffRole.waiter,
         nullable=False
     )
 
@@ -70,6 +73,15 @@ class Staff(Base):
         default=datetime.utcnow
     )
 
+# =========================
+# ADDRESS FIELDS
+# =========================
+
+    street_address = Column(String, nullable=True)
+    city = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    pincode = Column(String, nullable=True)
+
     # ✅ Relationships
     client = relationship(
         "Client",
@@ -83,4 +95,51 @@ class Staff(Base):
         "app.accounts.permission.model.StaffPermission",
         back_populates="staff",
         uselist=False
+    )
+
+ # =====================================
+# Salary
+# =====================================
+
+    monthly_salary = Column(
+        Float,
+        nullable=True
+    )
+
+    hourly_rate = Column(
+        Float,
+        nullable=True
+    )
+
+# =====================================
+# Government IDs
+# =====================================
+
+    aadhaar_number = Column(
+        String(20),
+        nullable=True
+    )
+
+    pan_number = Column(
+        String(20),
+        nullable=True
+    )
+
+# =====================================
+# Banking
+# =====================================
+
+    bank_account = Column(
+        String(50),
+        nullable=True
+    )
+
+    ifsc_code = Column(
+        String(20),
+        nullable=True
+)
+
+    bank_name = Column(
+        String(100),
+        nullable=True
     )

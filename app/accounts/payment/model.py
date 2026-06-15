@@ -9,6 +9,7 @@ from sqlalchemy import (
 )
 
 from datetime import datetime
+from sqlalchemy import JSON
 
 from app.db.base import Base
 
@@ -27,6 +28,17 @@ class Payment(Base):
         Integer,
         ForeignKey("bills.id"),
         nullable=False
+    )
+
+    payment_method = Column(
+        String,
+        nullable=False
+    )
+
+
+    payment_breakdown = Column(
+        JSON,
+        nullable=True
     )
 
     order_id = Column(

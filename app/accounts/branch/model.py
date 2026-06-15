@@ -1,6 +1,19 @@
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    func
+)
 from sqlalchemy.orm import relationship
 from app.db.base import Base
+from enum import Enum
+
+class statusEnum(str, Enum):
+    active = "active"
+    inactive = "inactive"
+
 
 
 class Branch(Base):
@@ -10,7 +23,7 @@ class Branch(Base):
     name = Column(String, nullable=False)
     address = Column(String, nullable=False)
     city = Column(String, nullable=False)
-
+    status = Column(String, nullable=False, default=statusEnum.active.value)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     brand_id = Column(Integer, ForeignKey("brands.id"), nullable=True)
 

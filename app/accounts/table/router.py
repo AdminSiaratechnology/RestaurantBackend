@@ -5,9 +5,14 @@ from app.api.routes import client
 from app.accounts.client.model import Client
 from app.db.config import SessionDep
 from app.accounts.table.model import Table
-from app.accounts.table.schema import TableCreate, TableUpdate, TableOut, TableStatusUpdate, TableStatus
+from app.accounts.table.schema import TableCreate, TableUpdate, TableOut, TableStatusUpdate, TableStatus, TableShape, TableDetailsOut, TableOrderOut, TableOrderItemOut
 from app.accounts.deps import require_client, require_roles, UserRole #, require_super_admin, require_client,
 from app.accounts.deps import access_three, UserRole, access_four
+from app.accounts.order.model import Order, OrderItem
+from app.accounts.item.model import Item
+from sqlalchemy.orm import selectinload
+
+
 router = APIRouter(prefix="/tables", tags=["Tables"])
 
 
@@ -487,3 +492,87 @@ async def update_table_status(
     await db.refresh(table)
 
     return table
+
+
+@router.get("/{table_id}/orders")
+async def get_table_orders(
+    table_id: int,
+    db: SessionDep,
+    current=Depends(access_four)
+):
+    role = current["role"]
+    user = current["user"]
+
+    query = (
+        select(Table)
+        .where(Table.id == table_id)
+    )
+
+    if role == UserRole.CLIENT:
+        query = query.where(
+            Table.client_id == user.id
+        )
+
+    elif role == UserRole.STAFF:
+        query = query.where(
+            Table.branch_id == user.branch_id
+        )
+
+    result = await db.execute(query)
+
+    table = result.scalar_one_or_none()
+
+    if not table:
+        raise HTTPException(
+            status_code=404,
+            detail="Table not found"
+        )
+
+    order_result = await db.execute(
+        select(Order)
+        .options(
+            selectinload(Order.order_items)
+            .selectinload(OrderItem.item)
+        )
+        .where(
+            Order.table_id == table_id,
+            Order.status.notin_(
+                ["completed", "paid", "cancelled"]
+            )
+        )
+        .order_by(Order.created_at.desc())
+    )
+
+    order = order_result.scalars().first()
+
+    if not order:
+        return {
+            "table_id": table.id,
+            "table_name": table.name,
+            "status": table.status,
+            "order": None
+        }
+
+    items = []
+
+    for order_item in order.order_items:
+        items.append({
+            "item_id": order_item.item.id,
+            "item_name": order_item.item.name,
+            "quantity": order_item.quantity,
+            "price": order_item.price,
+            "order_status": order_item.order_status
+        })
+
+    return {
+        "table_id": table.id,
+        "table_name": table.name,
+        "status": table.status,
+        "order": {
+            "order_id": order.id,
+            "customer_name": order.customer_name,
+            "status": order.status,
+            "total_amount": order.total_amount,
+            "items": items
+        }
+    }
