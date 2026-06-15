@@ -31,7 +31,7 @@ async def waiter_dashboard(
     # =====================================================
     # ONLY WAITER
     # =====================================================
-    if user.role != StaffRole.waitr:
+    if user.role != StaffRole.waiter:
         raise HTTPException(
             status_code=403,
             detail="Waiter access only"
@@ -68,7 +68,7 @@ async def waiter_menu(
 
     user = current["user"]
 
-    if user.role != StaffRole.waitr:
+    if user.role != StaffRole.waiter:
         raise HTTPException(
             status_code=403,
             detail="Waiter access only"
@@ -86,7 +86,7 @@ async def order_status(
 
     user = current["user"]
 
-    if user.role != StaffRole.waitr:
+    if user.role != StaffRole.waiter:
         raise HTTPException(
             status_code=403,
             detail="Waiter access only"
@@ -104,7 +104,7 @@ async def waiter_tables(
 
     user = current["user"]
 
-    if user.role != StaffRole.waitr:
+    if user.role != StaffRole.waiter:
         raise HTTPException(
             status_code=403,
             detail="Waiter access only"
@@ -122,7 +122,7 @@ async def place_order(
 
     user = current["user"]
 
-    if user.role != StaffRole.waitr:
+    if user.role != StaffRole.waiter:
         raise HTTPException(
             status_code=403,
             detail="Waiter access only"

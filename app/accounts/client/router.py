@@ -7,7 +7,9 @@ from app.accounts.staff.model import Staff, StaffRole
 from app.accounts.staff.schemas import (
     StaffCreate,
     StaffOut,
-    StaffUpdate
+    StaffUpdate,
+    StaffSalaryBankUpdate
+
 )
 from app.db.config import SessionDep
 
@@ -42,57 +44,56 @@ async def create_staff(
 ):
     client = current["user"]
 
-    # =====================================================
-    # VERIFY BRANCH
-    # =====================================================
-
     branch = await db.get(Branch, branch_id)
 
     if not branch:
-        raise HTTPException(
-            status_code=404,
-            detail="Branch not found"
-        )
+        raise HTTPException(404, "Branch not found")
 
     if branch.client_id != client.id:
-        raise HTTPException(
-            status_code=403,
-            detail="Unauthorized branch"
-        )
+        raise HTTPException(403, "Unauthorized branch")
 
-    # =====================================================
-    # CHECK DUPLICATE EMAIL INSIDE BRANCH
-    # =====================================================
-
+    # Global email check
     result = await db.execute(
         select(Staff).where(
-            Staff.email == data.email,
-            Staff.branch_id == branch_id
+            Staff.email == data.email
         )
     )
 
-    existing = result.scalar_one_or_none()
-
-    if existing:
+    if result.scalar_one_or_none():
         raise HTTPException(
-            status_code=400,
-            detail="Email already exists in this branch"
+            400,
+            "Email already exists"
         )
 
-    # =====================================================
-    # CREATE STAFF
-    # =====================================================
+    print("CREATE STAFF:", data.model_dump())
 
     staff = Staff(
         name=data.name,
         email=data.email,
         password_hash=pwd_context.hash(data.password),
+
         role=data.role,
+        gender=data.gender,
+        phone_number=data.phone_number,
 
         client_id=client.id,
         branch_id=branch_id,
+        is_active=True,
 
-        is_active=True
+        street_address=data.street_address,
+        city=data.city,
+        state=data.state,
+        pincode=data.pincode,
+
+        monthly_salary=data.monthly_salary,
+        hourly_rate=data.hourly_rate,
+
+        aadhaar_number=data.aadhaar_number,
+        pan_number=data.pan_number,
+
+        bank_account=data.bank_account,
+        ifsc_code=data.ifsc_code,
+        bank_name=data.bank_name
     )
 
     db.add(staff)
@@ -189,7 +190,10 @@ async def get_staff_by_branch(
 # =========================================================
 # UPDATE STAFF
 # =========================================================
-@router.put("/branches/{branch_id}/staff/{staff_id}")
+@router.put(
+    "/branches/{branch_id}/staff/{staff_id}",
+    response_model=StaffOut
+)
 async def update_staff(
     branch_id: int,
     staff_id: int,
@@ -199,9 +203,14 @@ async def update_staff(
 ):
     client = current["user"]
 
-    # =====================================================
-    # ✅ GET STAFF
-    # =====================================================
+    branch = await db.get(Branch, branch_id)
+
+    if not branch:
+        raise HTTPException(404, "Branch not found")
+
+    if branch.client_id != client.id:
+        raise HTTPException(403, "Unauthorized")
+
     result = await db.execute(
         select(Staff).where(
             Staff.id == staff_id,
@@ -212,20 +221,11 @@ async def update_staff(
     staff = result.scalar_one_or_none()
 
     if not staff:
-        raise HTTPException(
-            status_code=404,
-            detail="Staff not found"
-        )
+        raise HTTPException(404, "Staff not found")
 
-    # =====================================================
-    # ✅ UPDATE NAME
-    # =====================================================
     if data.name is not None:
         staff.name = data.name
 
-    # =====================================================
-    # ✅ UPDATE EMAIL
-    # =====================================================
     if data.email is not None:
 
         email_check = await db.execute(
@@ -235,67 +235,44 @@ async def update_staff(
             )
         )
 
-        existing_email = email_check.scalar_one_or_none()
-
-        if existing_email:
+        if email_check.scalar_one_or_none():
             raise HTTPException(
-                status_code=400,
-                detail="Email already exists"
+                400,
+                "Email already exists"
             )
 
         staff.email = data.email
 
-    # =====================================================
-    # ✅ UPDATE PASSWORD
-    # =====================================================
     if data.password is not None:
         staff.password_hash = pwd_context.hash(
             data.password
         )
 
-    # =====================================================
-    # ✅ UPDATE ROLE
-    # =====================================================
     if data.role is not None:
         staff.role = data.role
 
-    # =====================================================
-    # ✅ UPDATE BRANCH
-    # =====================================================
-    if data.branch_id is not None:
+    if data.gender is not None:
+        staff.gender = data.gender
 
-        branch = await db.get(
-            Branch,
-            data.branch_id
-        )
+    if data.phone_number is not None:
+        staff.phone_number = data.phone_number
 
-        if not branch:
-            raise HTTPException(
-                status_code=404,
-                detail="Branch not found"
-            )
-
-        # ✅ SECURITY CHECK
-        if branch.client_id != client.id:
-            raise HTTPException(
-                status_code=403,
-                detail="This branch does not belong to you"
-            )
-
-        # ✅ UPDATE BRANCH
-        staff.branch_id = branch.id
-
-    # =====================================================
-    # ✅ UPDATE ACTIVE STATUS
-    # =====================================================
     if data.is_active is not None:
         staff.is_active = data.is_active
 
-    # =====================================================
-    # ✅ SAVE
-    # =====================================================
-    await db.commit()
+    if data.street_address is not None:
+        staff.street_address = data.street_address
 
+    if data.city is not None:
+        staff.city = data.city
+
+    if data.state is not None:
+        staff.state = data.state
+
+    if data.pincode is not None:
+        staff.pincode = data.pincode
+
+    await db.commit()
     await db.refresh(staff)
 
     return staff
@@ -313,12 +290,68 @@ async def delete_staff(
 ):
     client = current["user"]
 
+    branch = await db.get(Branch, branch_id)
+
+    if not branch:
+        raise HTTPException(404, "Branch not found")
+
+    if branch.client_id != client.id:
+        raise HTTPException(403, "Unauthorized")
+
     result = await db.execute(
         select(Staff).where(
             Staff.id == staff_id,
             Staff.branch_id == branch_id
         )
     )
+
+    staff = result.scalar_one_or_none()
+
+    if not staff:
+        raise HTTPException(404, "Staff not found")
+
+    await db.delete(staff)
+    await db.commit()
+
+    return {
+        "message": "Staff deleted successfully"
+    }
+
+
+@router.put(
+    "/branches/{branch_id}/staff/{staff_id}/salary-bank",
+    response_model=StaffOut
+)
+async def update_staff_salary_bank(
+    branch_id: int,
+    staff_id: int,
+    data: StaffSalaryBankUpdate,
+    db: SessionDep,
+    current=Depends(require_client)
+):
+    client = current["user"]
+
+    branch = await db.get(Branch, branch_id)
+
+    if not branch:
+        raise HTTPException(
+            status_code=404,
+            detail="Branch not found"
+        )
+
+    if branch.client_id != client.id:
+        raise HTTPException(
+            status_code=403,
+            detail="Unauthorized"
+        )
+
+    result = await db.execute(
+        select(Staff).where(
+            Staff.id == staff_id,
+            Staff.branch_id == branch_id
+        )
+    )
+
     staff = result.scalar_one_or_none()
 
     if not staff:
@@ -327,10 +360,12 @@ async def delete_staff(
             detail="Staff not found"
         )
 
-    await db.delete(staff)
+    update_data = data.model_dump(exclude_unset=True)
+
+    for field, value in update_data.items():
+        setattr(staff, field, value)
 
     await db.commit()
+    await db.refresh(staff)
 
-    return {
-        "message": "Staff deleted successfully"
-    }
+    return staff

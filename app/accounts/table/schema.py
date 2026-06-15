@@ -82,3 +82,27 @@ class TableOut(BaseModel):
 
 class TableStatusUpdate(BaseModel):
     status: TableStatus
+
+
+
+class TableOrderItemOut(BaseModel):
+    item_id: int
+    item_name: str
+    quantity: int
+    price: float
+    order_status: str
+
+
+class TableOrderOut(BaseModel):
+    order_id: int
+    customer_name: str | None
+    status: str
+    total_amount: float
+    items: list[TableOrderItemOut]
+
+
+class TableDetailsOut(BaseModel):
+    table_id: int
+    table_name: str
+    status: str
+    orders: list[TableOrderOut]

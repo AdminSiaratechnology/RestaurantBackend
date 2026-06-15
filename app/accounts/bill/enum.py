@@ -5,3 +5,4 @@ class PaymentStatus(str, Enum):
     cancel = "canceled"
     pending = "pending"
     complete = "complete"
+    edited = "edited"

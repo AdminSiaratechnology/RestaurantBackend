@@ -195,7 +195,7 @@ async def update_staff_permissions(
 @router.get("/orders")
 async def orders(
     current=Depends(
-        require_staff_role(StaffRole.waitr)
+        require_staff_role(StaffRole.waiter)
     )
 ):
     return {
@@ -273,7 +273,7 @@ async def get_staff_permissions(
     # WAITER DEFAULT PERMISSIONS
     # =====================================================
 
-    if staff.role == StaffRole.waitr:
+    if staff.role == StaffRole.waiter:
 
         permissions = WAITER_PERMISSIONS.copy()
         permissions["staff_id"] = staff.id
@@ -301,13 +301,4 @@ async def get_staff_permissions(
     return permission
 
 
-# # ✅ DYNAMIC ROUTES AFTER STATIC ROUTES
-
-# @router.get("/{staff_id}", response_model=StaffPermissionOut)
-# async def get_staff_permissions(
-#     staff_id: int,
-#     db: SessionDep,
-#     current=Depends(access_one)
-# ):
-#     ...
 

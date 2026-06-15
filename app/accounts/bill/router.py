@@ -11,7 +11,7 @@
 
 from fastapi import APIRouter, HTTPException
 from uuid import uuid4
-
+from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -27,7 +27,7 @@ from app.accounts.tax.model import TaxBillingSetting
 
 from app.accounts.bill.model import Bill
 from app.accounts.offer.model import Offer, OfferType
-from app.accounts.bill.schema import BillOut, OfferPreviewRequest, OfferPreviewResponse
+from app.accounts.bill.schema import BillOut, OfferPreviewRequest, OfferPreviewResponse, BillStatusUpdate, BillStatusResponse
 
 from app.accounts.pricing.model import Pricing
 
@@ -405,80 +405,7 @@ async def get_bill(
     # CREATE BILL IF NOT EXISTS
     # =====================================================
 
-    # if not bill:
 
-    #     bill = Bill(
-
-    #         order_id=order.id,
-
-    #         client_id=order.client_id,
-
-    #         branch_id=order.branch_id,
-
-    #         invoice_no=(
-    #             f"INV-{uuid4().hex[:8].upper()}"
-    #         ),
-
-    #         order_type=order.order_type,
-
-    #         customer_name=order.customer_name,
-
-    #         customer_phone=order.customer_phone,
-
-    #         payment_method=None,
-
-    #         subtotal=subtotal,
-
-    #         cgst_percent=(
-    #             tax.cgst
-    #             if tax.enable_tax
-    #             else 0.0
-    #         ),
-
-    #         cgst_amount=cgst_amount,
-
-    #         sgst_percent=(
-    #             tax.sgst
-    #             if tax.enable_tax
-    #             else 0.0
-    #         ),
-
-    #         sgst_amount=sgst_amount,
-
-    #         service_charge_percent=(
-    #             service_charge_percent
-    #         ),
-
-    #         service_charge_amount=(
-    #             service_charge_amount
-    #         ),
-
-    #         tax_total=tax_total,
-
-    #         discount_amount=(
-    #             discount_amount
-    #         ),
-
-    #         round_off_amount=(
-    #             round_off_amount
-    #         ),
-
-    #         grand_total=grand_total,
-
-    #         final_amount=grand_total,
-
-    #         paid_amount=0.0,
-
-    #         due_amount=grand_total,
-
-    #         footer_message=(
-    #             tax.bill_footer_message
-    #         )
-    #     )
-
-    #     db.add(bill)
-    #     await db.commit()
-    #     await db.refresh(bill)
 
     if not bill:
 
@@ -495,6 +422,8 @@ async def get_bill(
             order_type=order.order_type,
 
             customer_name=order.customer_name,
+
+            payment_status=PaymentStatus.pending,
 
             customer_phone=order.customer_phone,
 
@@ -576,7 +505,10 @@ async def get_bill(
     # RETURN RESPONSE - SHOW ORIGINAL VALUES UNLESS PAID
     # =====================================================
     
-    is_payment_complete = bill.payment_status == PaymentStatus.complete
+    is_bill_finalized = bill.payment_status in (
+        PaymentStatus.complete,
+        PaymentStatus.edited
+    )
 
     return {
         "id": bill.id,
@@ -652,19 +584,18 @@ async def get_bill(
         "paid_amount": bill.paid_amount,
 
         # Only show due amount as final if payment is complete
-        "due_amount": bill.due_amount if is_payment_complete else bill.grand_total,
+        "due_amount": (bill.due_amount if is_bill_finalized else bill.grand_total),
 
         "footer_message": (
             bill.footer_message or ""
         ),
 
         # Only show offer data if payment is complete
-        "offer_id": bill.offer_id if is_payment_complete else None,
-        "offer_discount": bill.offer_discount if is_payment_complete else 0.0,
-        "final_amount": bill.final_amount if is_payment_complete else bill.grand_total
+        "offer_id": (bill.offer_id if is_bill_finalized else None),
+        "offer_discount": (bill.offer_discount if is_bill_finalized else 0.0),
+        "final_amount": (bill.final_amount if is_bill_finalized else bill.grand_total)
     }
 
-from app.accounts.bill.schema import BillStatusUpdate, BillStatusResponse
 
 @router.patch(
     "/status/{bill_id}",
@@ -725,25 +656,51 @@ async def update_bill_status(
 
         if data.payment_status == PaymentStatus.complete:
             table.status = TableStatus.available
-        else:
+
+        elif data.payment_status in [
+            PaymentStatus.pending,
+            PaymentStatus.edited,
+        ]:
             table.status = TableStatus.occupied
 
+        elif data.payment_status == PaymentStatus.cancel:
+            table.status = TableStatus.occupied
+
+    # FIXED: This block was incorrectly indented
     if data.payment_status == PaymentStatus.complete:
-        # If final_amount was set (via payment with offer), use it
-        # Otherwise fall back to grand_total
-        bill.paid_amount = bill.final_amount if bill.final_amount > 0 else bill.grand_total
+        bill.paid_amount = (
+            bill.final_amount
+            if bill.final_amount > 0
+            else bill.grand_total
+        )
+
         bill.due_amount = 0.0
 
     elif data.payment_status == PaymentStatus.cancel:
 
         bill.paid_amount = 0.0
-        bill.due_amount = bill.final_amount if bill.final_amount > 0 else bill.grand_total
+
+        bill.due_amount = (
+            bill.final_amount
+            if bill.final_amount > 0
+            else bill.grand_total
+        )
+
+    elif data.payment_status == PaymentStatus.edited:
+
+        # Bill modified but not paid yet
+        bill.paid_amount = 0.0
+
+        bill.due_amount = (
+            bill.final_amount
+            if bill.final_amount > 0
+            else bill.grand_total
+        )
 
     await db.commit()
     await db.refresh(bill)
 
     return bill
-
 
 # =====================================================
 # OFFER PREVIEW ENDPOINT - NO DB UPDATES!
@@ -777,13 +734,27 @@ async def preview_offer_application(
     
     # If no offer, return original
     if not data.offer_id:
+
+        bill.offer_id = None
+
+        bill.offer_discount = 0.0
+
+        bill.final_amount = bill.grand_total
+
+        bill.due_amount = bill.grand_total
+
+        bill.payment_status = PaymentStatus.pending
+
+        await db.commit()
+
+        await db.refresh(bill)
+
         return OfferPreviewResponse(
             original_amount=original_amount,
             offer_discount=0.0,
             final_amount=original_amount,
-            message="No offer applied"
+            message="Offer removed"
         )
-    
     # =====================================================
     # GET OFFER
     # =====================================================
@@ -851,8 +822,30 @@ async def preview_offer_application(
         )
     
     # Calculate final amount
-    final_amount = max(0, original_amount - discount)
-    
+    # Calculate final amount
+    final_amount = max(
+        0,
+        original_amount - discount
+    )
+
+# ==========================================
+# SAVE OFFER ON BILL
+# ==========================================
+
+    bill.offer_id = offer.id
+
+    bill.offer_discount = discount
+
+    bill.final_amount = final_amount
+
+    bill.due_amount = final_amount
+
+    bill.payment_status = PaymentStatus.edited
+
+    await db.commit()
+
+    await db.refresh(bill)
+
     return OfferPreviewResponse(
         original_amount=original_amount,
         offer_discount=discount,
