@@ -22,6 +22,10 @@ router = APIRouter(prefix="/items", tags=["Items"])
 async def get_items(
     db: SessionDep,
     branch_id: int | None = None,
+    limit: int | None = None,
+    cursor: int | None = None,
+    search: str | None = None,
+    category_id: int | None = None,
     current=Depends(get_current_user)
 ):
     role = current["role"]
@@ -85,9 +89,9 @@ async def get_items(
         )
 
     # =========================
-    # ✅ GET ITEMS
+    # ✅ GET ITEMS WITH PAGINATION & OPTIMIZED FILTERS
     # =========================
-    result = await db.execute(
+    query = (
         select(Item)
         .options(
             selectinload(Item.pricings)
@@ -95,6 +99,21 @@ async def get_items(
         .where(Item.branch_id == final_branch_id)
     )
 
+    if category_id is not None:
+        query = query.where(Item.category_id == category_id)
+
+    if search:
+        query = query.where(Item.name.ilike(f"%{search}%"))
+
+    if cursor is not None:
+        query = query.where(Item.id > cursor)
+
+    query = query.order_by(Item.id.asc())
+
+    if limit is not None:
+        query = query.limit(limit)
+
+    result = await db.execute(query)
     items = result.scalars().all()
 
     return items
