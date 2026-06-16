@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select, delete
+from fastapi import APIRouter, Depends, HTTPException, status, Query
+from sqlalchemy import select, delete, func, or_
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import selectinload
 
@@ -9,7 +9,7 @@ from app.accounts.deps import access_one, get_client_if_accessible
 
 from app.accounts.item.model import Item
 from app.accounts.order.model import Order, OrderItem
-from app.accounts.order.schema import OrderCreate, OrderResponse, OrderUpdate, OrderItemStatusResponse, OrderItemStatusUpdate
+from app.accounts.order.schema import OrderCreate, OrderResponse, OrderUpdate, OrderItemStatusResponse, OrderItemStatusUpdate, CursorPaginatedResponse
 from app.accounts.pricing.model import Pricing
 from app.accounts.table.model import Table
 from app.accounts.table.schema import TableStatus
@@ -368,6 +368,158 @@ async def get_all_orders(
             status_code=500,
             detail="Database error while fetching orders"
         )
+
+
+# =========================
+# ✅ GET ORDERS PAGINATED (CURSOR-BASED)
+# =========================
+@router.get(
+    "/orders_paginated",
+    response_model=CursorPaginatedResponse[OrderResponse]
+)
+async def get_orders_paginated(
+    db: SessionDep,
+    branch_id: int | None = None,
+    cursor: int | None = None,
+    limit: int = Query(20, ge=1, le=100),
+    status: str | None = None,
+    search: str | None = None,
+    current=Depends(access_one)
+):
+    try:
+        role = current["role"]
+        user = current["user"]
+
+        # Base query
+        query = select(Order)
+
+        # Branch filter
+        if branch_id:
+            query = query.where(Order.branch_id == branch_id)
+
+        # Role filter
+        if role.name == "CLIENT":
+            query = query.where(Order.client_id == user.id)
+        elif role.name == "PARTNER":
+            query = query.join(Client, Client.id == Order.client_id).where(Client.partner_id == user.id)
+
+        # Status filter
+        if status:
+            query = query.where(Order.status == status)
+
+        # Search filter
+        if search:
+            search_term = f"%{search}%"
+            query = query.where(
+                or_(
+                    Order.customer_name.ilike(search_term),
+                    Order.customer_phone.ilike(search_term),
+                    Order.notes.ilike(search_term)
+                )
+            )
+
+        # Order by id descending (newest first) for cursor
+        query = query.order_by(Order.id.desc())
+
+        # Apply cursor if provided
+        if cursor:
+            query = query.where(Order.id < cursor)
+
+        # Get total count
+        count_query = select(func.count(Order.id)).select_from(Order)
+        # Reapply filters to count query
+        if branch_id:
+            count_query = count_query.where(Order.branch_id == branch_id)
+        if role.name == "CLIENT":
+            count_query = count_query.where(Order.client_id == user.id)
+        elif role.name == "PARTNER":
+            count_query = count_query.join(Client, Client.id == Order.client_id).where(Client.partner_id == user.id)
+        if status:
+            count_query = count_query.where(Order.status == status)
+        if search:
+            search_term = f"%{search}%"
+            count_query = count_query.where(
+                or_(
+                    Order.customer_name.ilike(search_term),
+                    Order.customer_phone.ilike(search_term),
+                    Order.notes.ilike(search_term)
+                )
+            )
+        count_result = await db.execute(count_query)
+        total_count = count_result.scalar_one()
+
+        # Get items with limit + 1 to check for has_more
+        query = query.limit(limit + 1)
+        # Eager load order items to avoid N+1
+        query = query.options(selectinload(Order.order_items))
+        result = await db.execute(query)
+        orders = result.scalars().all()
+
+        # Check if there are more items
+        has_more = len(orders) > limit
+        # If there are more, we take only limit items, else take all
+        items = orders[:limit]
+
+        next_cursor = None
+        if has_more and items:
+            next_cursor = items[-1].id
+
+        # Enrich orders with table info and order items
+        final_orders = []
+        # Fetch tables once
+        tables = {}
+        if branch_id:
+            tables_query = select(Table).where(Table.branch_id == branch_id)
+            tables_result = await db.execute(tables_query)
+            tables_list = tables_result.scalars().all()
+            tables = {t.id: t for t in tables_list}
+        else:
+            tables_query = select(Table)
+            tables_result = await db.execute(tables_query)
+            tables_list = tables_result.scalars().all()
+            tables = {t.id: t for t in tables_list}
+
+        for order in items:
+            table_name = None
+            if order.table_id and order.table_id in tables:
+                table = tables[order.table_id]
+                table_name = f"{table.name}{f' ({table.floor})' if table.floor else ''}"
+            # Enrich items
+            enriched_items = []
+            for item in order.order_items:
+                enriched_items.append({
+                    "id": item.id,
+                    "item_id": item.item_id,
+                    "quantity": item.quantity,
+                    "price": item.price,
+                    "order_status": item.order_status
+                })
+            final_orders.append({
+                "id": order.id,
+                "client_id": order.client_id,
+                "branch_id": order.branch_id,
+                "table_id": order.table_id,
+                "order_type": order.order_type,
+                "customer_name": order.customer_name,
+                "customer_phone": order.customer_phone,
+                "notes": order.notes,
+                "status": order.status,
+                "total_amount": order.total_amount,
+                "created_at": order.created_at,
+                "items": enriched_items,
+                "table_number": table_name
+            })
+
+        return {
+            "items": final_orders,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+            "total_count": total_count
+        }
+
+    except SQLAlchemyError as e:
+        print("PAGINATED ORDERS ERROR:", str(e))
+        raise HTTPException(status_code=500, detail="Database error while fetching orders")
 
 # =========================
 # ✅ DELETE ORDER

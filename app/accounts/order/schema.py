@@ -1,6 +1,14 @@
-from typing import List, Optional
+from typing import List, Optional, Generic, TypeVar
 from pydantic import BaseModel
 from datetime import datetime
+
+T = TypeVar('T')
+
+class CursorPaginatedResponse(BaseModel, Generic[T]):
+    items: List[T]
+    next_cursor: Optional[int]
+    has_more: bool
+    total_count: int
 
 
 class OrderItemCreate(BaseModel):
@@ -39,6 +47,7 @@ class OrderResponse(BaseModel):
     client_id: int
     branch_id: int
     table_id: Optional[int]
+    table_number: Optional[str] = None
 
     order_type: str
 

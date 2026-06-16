@@ -1,5 +1,6 @@
 # app/accounts/offer/router.py
 
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -123,6 +124,88 @@ async def get_all_offers(
             "success": True,
             "count": len(offers),
             "data": offers
+        }
+
+    except HTTPException as e:
+        raise e
+
+    except SQLAlchemyError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database error: {str(e)}"
+        )
+
+
+# =========================================
+# GET PAGINATED OFFERS
+# =========================================
+
+@router.get("/paginated")
+async def get_offers_paginated(
+    db: SessionDep,
+    branch_id: int | None = None,
+    status: str | None = None,   # "active" | "scheduled" | "expired" | "all"
+    search: str | None = None,
+    cursor: int | None = None,
+    limit: int = 50,
+    current=Depends(access_four)
+):
+    try:
+        role = current["role"]
+        user = current["user"]
+
+        # STAFF restriction
+        if role == UserRole.STAFF:
+            branch_id = user.branch_id
+
+        if not branch_id:
+            raise HTTPException(
+                status_code=400,
+                detail="branch_id is required"
+            )
+
+        query = select(Offer).where(
+            Offer.branch_id == branch_id
+        )
+
+        if status and status != "all" and status != "festival":
+            now = datetime.utcnow()
+            if status == "active":
+                query = query.where(
+                    Offer.is_active == True,
+                    Offer.valid_from <= now,
+                    Offer.valid_to >= now
+                )
+            elif status == "scheduled":
+                query = query.where(
+                    Offer.is_active == True,
+                    Offer.valid_from > now
+                )
+            elif status == "expired":
+                query = query.where(
+                    (Offer.valid_to < now) | (Offer.is_active == False)
+                )
+
+        if search:
+            query = query.where(
+                Offer.offer_name.ilike(f"%{search}%")
+            )
+
+        if cursor is not None:
+            query = query.where(Offer.id > cursor)
+
+        query = query.order_by(Offer.id.asc()).limit(limit)
+
+        result = await db.execute(query)
+        offers = result.scalars().all()
+
+        next_cursor = offers[-1].id if offers else None
+        has_more = len(offers) == limit
+
+        return {
+            "offers": offers,
+            "next_cursor": next_cursor,
+            "has_more": has_more
         }
 
     except HTTPException as e:

@@ -61,6 +61,8 @@ app.add_middleware(
 #     async with engine.begin() as conn:
 #         await conn.run_sync(Base.metadata.create_all)
 
+from app.db.create_indexes import create_db_indexes
+
 @app.on_event("startup")
 async def startup():
     print("STARTUP BEGIN")
@@ -71,6 +73,8 @@ async def startup():
         await conn.run_sync(Base.metadata.create_all)
 
         print("TABLES CREATED")
+
+    await create_db_indexes()
 
     print("STARTUP END")
 

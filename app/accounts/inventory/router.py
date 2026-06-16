@@ -252,7 +252,108 @@ async def get_inventory(
             status_code=500,
             detail=str(e)
         )
-    
+
+
+@router.get("/paginated")
+async def get_inventory_paginated(
+    db: SessionDep,
+    branch_id: int | None = None,
+    godown_id: int | None = None,
+    status: str | None = None,
+    search: str | None = None,
+    cursor: int | None = None,
+    limit: int = 50,
+    current=Depends(access_one)
+):
+    """
+    Cursor-paginated inventory listing.
+    Returns items with id > cursor, ordered by id asc.
+    Supports filtering by godown_id, status, and full-text name search.
+    """
+    try:
+        role = current["role"]
+        user = current["user"]
+
+        if role == UserRole.STAFF:
+            branch_id = user.branch_id
+
+        if not branch_id:
+            raise HTTPException(
+                status_code=400,
+                detail="branch_id is required"
+            )
+
+        query = select(InventoryItem).where(
+            InventoryItem.branch_id == branch_id
+        )
+
+        if godown_id:
+            query = query.where(InventoryItem.godown_id == godown_id)
+
+        if status and status != "all":
+            query = query.where(InventoryItem.status == status)
+
+        if search:
+            query = query.where(
+                InventoryItem.name.ilike(f"%{search}%")
+            )
+
+        if cursor is not None:
+            query = query.where(InventoryItem.id > cursor)
+
+        query = query.order_by(InventoryItem.id.asc()).limit(limit)
+
+        result = await db.execute(query)
+        items = result.scalars().all()
+
+        response = []
+        for item in items:
+            factor = item.conversion_factor or 1
+            display_stock_qty = item.stock_qty / factor
+            display_reorder_level = item.reorder_level / factor
+            display_cost_per_unit = item.cost_per_unit * factor
+            total_value = display_stock_qty * display_cost_per_unit
+
+            response.append({
+                "id": item.id,
+                "name": item.name,
+                "godown_id": item.godown_id,
+                "row_category": item.row_category,
+
+                "unit": item.display_unit,
+                "display_unit": item.display_unit,
+                "base_unit": item.unit,
+                "conversion_factor": factor,
+
+                "stock_qty": display_stock_qty,
+                "reorder_level": display_reorder_level,
+
+                "cost_per_unit": display_cost_per_unit,
+                "total_value": total_value,
+
+                "status": item.status,
+
+                "vendor_name": item.vendor_name,
+                "vendor_phone": item.vendor_phone,
+
+                "last_restocked": item.last_restocked,
+            })
+
+        # Return next cursor (last item id) so client can fetch next page
+        next_cursor = items[-1].id if items else None
+        has_more = len(items) == limit
+
+        return {
+            "items": response,
+            "next_cursor": next_cursor,
+            "has_more": has_more,
+        }
+
+    except SQLAlchemyError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
 
 
 @router.get("/stats")
