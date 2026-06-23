@@ -5,7 +5,8 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     DateTime,
-    Text
+    Text,
+    Boolean
 )
 
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
@@ -213,6 +214,12 @@ class Bill(Base):
         DateTime,
         default=datetime.utcnow,
         onupdate=datetime.utcnow
+    )
+
+    is_edited = Column(
+        Boolean,
+        default=False,
+        nullable=False
     )
 
     # =====================================================

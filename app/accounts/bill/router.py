@@ -27,7 +27,7 @@ from app.accounts.tax.model import TaxBillingSetting
 
 from app.accounts.bill.model import Bill
 from app.accounts.offer.model import Offer, OfferType
-from app.accounts.bill.schema import BillOut, OfferPreviewRequest, OfferPreviewResponse, BillStatusUpdate, BillStatusResponse
+from app.accounts.bill.schema import BillOut, EditBillItemsRequest, EditBillResponse, OfferPreviewRequest, OfferPreviewResponse, BillStatusUpdate, BillStatusResponse
 
 from app.accounts.pricing.model import Pricing
 
@@ -505,10 +505,10 @@ async def get_bill(
     # RETURN RESPONSE - SHOW ORIGINAL VALUES UNLESS PAID
     # =====================================================
     
-    is_bill_finalized = bill.payment_status in (
-        PaymentStatus.complete,
-        PaymentStatus.edited
-    )
+    # is_bill_finalized = bill.payment_status in (
+    #     PaymentStatus.complete,
+    #     PaymentStatus.edited
+    # )
 
     return {
         "id": bill.id,
@@ -584,16 +584,25 @@ async def get_bill(
         "paid_amount": bill.paid_amount,
 
         # Only show due amount as final if payment is complete
-        "due_amount": (bill.due_amount if is_bill_finalized else bill.grand_total),
+        # "due_amount": (bill.due_amount if is_bill_finalized else bill.grand_total),
 
         "footer_message": (
             bill.footer_message or ""
         ),
+        "due_amount": bill.due_amount,
+
+        "offer_id": bill.offer_id,
+
+        "offer_discount": bill.offer_discount,
+
+        "final_amount": bill.final_amount,
+
+        "is_edited": bill.is_edited
 
         # Only show offer data if payment is complete
-        "offer_id": (bill.offer_id if is_bill_finalized else None),
-        "offer_discount": (bill.offer_discount if is_bill_finalized else 0.0),
-        "final_amount": (bill.final_amount if is_bill_finalized else bill.grand_total)
+        # "offer_id": (bill.offer_id if is_bill_finalized else None),
+        # "offer_discount": (bill.offer_discount if is_bill_finalized else 0.0),
+        # "final_amount": (bill.final_amount if is_bill_finalized else bill.grand_total)
     }
 
 
@@ -668,6 +677,7 @@ async def update_bill_status(
 
     # FIXED: This block was incorrectly indented
     if data.payment_status == PaymentStatus.complete:
+        bill.payment_status = PaymentStatus.complete
         bill.paid_amount = (
             bill.final_amount
             if bill.final_amount > 0
@@ -743,7 +753,7 @@ async def preview_offer_application(
 
         bill.due_amount = bill.grand_total
 
-        bill.payment_status = PaymentStatus.pending
+        # bill.payment_status = PaymentStatus.pending
 
         await db.commit()
 
@@ -840,7 +850,7 @@ async def preview_offer_application(
 
     bill.due_amount = final_amount
 
-    bill.payment_status = PaymentStatus.edited
+    # bill.payment_status = PaymentStatus.edited
 
     await db.commit()
 
@@ -852,3 +862,346 @@ async def preview_offer_application(
         final_amount=final_amount,
         message=f"Offer applied: {offer.offer_name}"
     )
+
+
+@router.patch(
+    "/edit/{bill_id}",
+    response_model=EditBillResponse
+)
+async def edit_bill(
+    bill_id: int,
+    db: SessionDep
+):
+    bill = await db.get(
+        Bill,
+        bill_id
+    )
+
+    if not bill:
+        raise HTTPException(
+            status_code=404,
+            detail="Bill not found"
+        )
+
+    if bill.payment_status != PaymentStatus.cancel:
+        raise HTTPException(
+            status_code=400,
+            detail="Only canceled bills can be edited"
+        )
+
+    bill.is_edited = True
+
+    await db.commit()
+    await db.refresh(bill)
+
+    return bill
+
+from sqlalchemy import select
+
+from app.accounts.order.model import Order, OrderItem
+
+from app.accounts.item.model import Item
+from app.accounts.pricing.model import Pricing
+
+from app.accounts.offer.model import Offer, OfferType
+
+from app.accounts.bill.enum import PaymentStatus
+
+
+@router.patch(
+    "/{bill_id}/order-items",
+    response_model=EditBillResponse
+)
+async def edit_bill_items(
+    bill_id: int,
+    data: EditBillItemsRequest,
+    db: SessionDep
+):
+    # =====================================================
+    # BILL
+    # =====================================================
+
+    bill = await db.get(
+        Bill,
+        bill_id
+    )
+
+    if not bill:
+        raise HTTPException(
+            status_code=404,
+            detail="Bill not found"
+        )
+
+    # =====================================================
+    # ONLY CANCELED BILL CAN BE EDITED
+    # =====================================================
+
+    if bill.payment_status != PaymentStatus.cancel:
+        raise HTTPException(
+            status_code=400,
+            detail="Only canceled bills can be edited"
+        )
+
+    # =====================================================
+    # ORDER
+    # =====================================================
+
+    order = await db.get(
+        Order,
+        bill.order_id
+    )
+
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    # =====================================================
+    # ADD / UPDATE / DELETE ITEMS
+    # =====================================================
+
+    for item_data in data.items:
+
+        result = await db.execute(
+            select(OrderItem).where(
+                OrderItem.order_id == order.id,
+                OrderItem.item_id == item_data.item_id
+            )
+        )
+
+        order_item = result.scalar_one_or_none()
+
+        # ================================================
+        # DELETE ITEM
+        # ================================================
+
+        if item_data.quantity <= 0:
+
+            if order_item:
+                await db.delete(order_item)
+
+            continue
+
+        # ================================================
+        # UPDATE EXISTING ITEM
+        # ================================================
+
+        if order_item:
+
+            order_item.quantity = item_data.quantity
+
+            order_item.total_price = round(
+                float(order_item.price or 0)
+                * item_data.quantity,
+                2
+            )
+
+            continue
+
+        # ================================================
+        # ADD NEW ITEM
+        # ================================================
+
+        menu_item = await db.get(
+            Item,
+            item_data.item_id
+        )
+
+        if not menu_item:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Item {item_data.item_id} not found"
+            )
+
+        pricing_result = await db.execute(
+            select(Pricing).where(
+                Pricing.item_id == menu_item.id
+            )
+        )
+
+        pricing = pricing_result.scalar_one_or_none()
+
+        if not pricing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Pricing not found for item {menu_item.id}"
+            )
+
+        new_order_item = OrderItem(
+            order_id=order.id,
+            item_id=menu_item.id,
+            quantity=item_data.quantity,
+            price=pricing.total_price,
+            total_price=round(
+                float(pricing.total_price or 0)
+                * item_data.quantity,
+                2
+            )
+        )
+
+        db.add(new_order_item)
+
+    await db.flush()
+
+    # =====================================================
+    # RELOAD ITEMS
+    # =====================================================
+
+    result = await db.execute(
+        select(OrderItem).where(
+            OrderItem.order_id == order.id
+        )
+    )
+
+    order_items = result.scalars().all()
+
+    if not order_items:
+        raise HTTPException(
+            status_code=400,
+            detail="Order must contain at least one item"
+        )
+
+    # =====================================================
+    # SUBTOTAL
+    # =====================================================
+
+    subtotal = round(
+        sum(
+            float(i.total_price or 0)
+            for i in order_items
+        ),
+        2
+    )
+
+    # =====================================================
+    # TAX
+    # =====================================================
+
+    cgst_amount = round(
+        subtotal *
+        (bill.cgst_percent / 100),
+        2
+    )
+
+    sgst_amount = round(
+        subtotal *
+        (bill.sgst_percent / 100),
+        2
+    )
+
+    tax_total = round(
+        cgst_amount +
+        sgst_amount,
+        2
+    )
+
+    # =====================================================
+    # SERVICE CHARGE
+    # =====================================================
+
+    service_charge_amount = round(
+        subtotal *
+        (
+            bill.service_charge_percent / 100
+        ),
+        2
+    )
+
+    # =====================================================
+    # GRAND TOTAL
+    # =====================================================
+
+    grand_total = round(
+        subtotal +
+        tax_total +
+        service_charge_amount,
+        2
+    )
+
+    # =====================================================
+    # OFFER
+    # =====================================================
+
+    final_amount = grand_total
+    bill.offer_discount = 0
+
+    if bill.offer_id:
+
+        offer = await db.get(
+            Offer,
+            bill.offer_id
+        )
+
+        if offer:
+
+            discount = 0
+
+            if (
+                offer.offer_type ==
+                OfferType.FLAT_DISCOUNT
+            ):
+                discount = min(
+                    float(
+                        offer.discount_value or 0
+                    ),
+                    grand_total
+                )
+
+            elif (
+                offer.offer_type ==
+                OfferType.PERCENTAGE_OFF
+            ):
+                discount = round(
+                    grand_total *
+                    (
+                        offer.discount_value / 100
+                    ),
+                    2
+                )
+
+            bill.offer_discount = discount
+
+            final_amount = round(
+                grand_total -
+                discount,
+                2
+            )
+
+    # =====================================================
+    # UPDATE BILL
+    # =====================================================
+
+    bill.subtotal = subtotal
+
+    bill.cgst_amount = cgst_amount
+
+    bill.sgst_amount = sgst_amount
+
+    bill.tax_total = tax_total
+
+    bill.service_charge_amount = (
+        service_charge_amount
+    )
+
+    bill.grand_total = grand_total
+
+    bill.final_amount = final_amount
+
+    bill.due_amount = final_amount
+
+    bill.payment_status = (
+        PaymentStatus.edited
+    )
+
+    bill.is_edited = True
+
+    # =====================================================
+    # SAVE
+    # =====================================================
+
+    await db.commit()
+
+    await db.refresh(bill)
+
+    return bill

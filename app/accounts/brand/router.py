@@ -1,195 +1,79 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from slugify import slugify
-from app.accounts.deps import access_one,access_three,UserRole
-from app.db.config import SessionDep
-from app.accounts.brand.model import Brand
-from app.accounts.brand.schema import BrandCreate, BrandOut, BrandUpdate
-from app.accounts.client.model import Client
+from fastapi import APIRouter, Depends
 
+from app.accounts.brand.schema import (
+    BrandCreate,
+    BrandOut,
+    BrandUpdate
+)
+from app.accounts.brand.service import BrandService
 from app.accounts.deps import (
-    get_client_if_accessible
+    access_one,
+    access_three
+)
+from app.db.config import SessionDep
+
+router = APIRouter(
+    prefix="/brand",
+    tags=["Brand"]
 )
 
-router = APIRouter(prefix="/brand", tags=["Brand"])
 
-
-# ✅ CREATE BRAND
-@router.post("/post", response_model=BrandOut)
+@router.post(
+    "/post",
+    response_model=BrandOut
+)
 async def create_brand(
     data: BrandCreate,
     db: SessionDep,
     current=Depends(access_three)
 ):
-    role = UserRole(current["role"])
-    user = current["user"]
-
-    client = await get_client_if_accessible(
-        client_id=data.client_id,
+    return await BrandService.create_brand(
+        data=data,
         db=db,
         current=current
     )
 
-    slug = slugify(data.slug)
 
-    # ✅ No lazy load issue here
-    result = await db.execute(
-        select(Brand).where(
-            Brand.slug == slug,
-            Brand.client_id == client.id
-        )
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(400, "Brand slug already exists in this client")
-
-    brand = Brand(
-        name=data.name,
-        slug=slug,
-        client_id=client.id
-    )
-
-    db.add(brand)
-    await db.commit()
-    await db.refresh(brand)
-
-    return brand
-
-
-# ✅ GET ALL BRANDS (FIXED)
-@router.get("/all_brand", response_model=list[BrandOut])
+@router.get(
+    "/all_brand",
+    response_model=list[BrandOut]
+)
 async def get_brands(
     db: SessionDep,
     current=Depends(access_one)
 ):
-    role = current["role"]
-    user = current["user"]
-
-    # ✅ SUPER ADMIN
-    if role == UserRole.SUPER_ADMIN:
-
-        query = select(Brand)
-
-    # ✅ PARTNER
-    elif role == UserRole.PARTNER:
-
-        query = (
-            select(Brand)
-            .join(Brand.client)
-            .where(Client.partner_id == user.id)
-        )
-
-    # ✅ CLIENT
-    elif role == UserRole.CLIENT:
-
-        query = (
-            select(Brand)
-            .where(Brand.client_id == user.id)
-        )
-
-    # ✅ STAFF
-    elif role == UserRole.STAFF:
-
-        query = (
-            select(Brand)
-            .where(Brand.client_id == user.client_id)
-        )
-
-    else:
-        raise HTTPException(403, "Not allowed")
-
-    result = await db.execute(
-        query.options(
-            selectinload(Brand.client)
-        )
+    return await BrandService.get_brands(
+        db=db,
+        current=current
     )
 
-    return result.scalars().all()
 
-
-# # ✅ GET SINGLE BRAND (already safe if dependency fixed)
-# @router.get("/{brand_id}", response_model=BrandOut)
-# async def get_brand(
-#     brand: Brand = Depends(get_brand_if_accessible),
-#     current=Depends(access_three)
-# ):
-#     return brand
-
-
-# ✅ UPDATE BRAND (FIXED)
-@router.put("/update/{brand_id}", response_model=BrandOut)
+@router.put(
+    "/update/{brand_id}",
+    response_model=BrandOut
+)
 async def update_brand(
     brand_id: int,
     data: BrandUpdate,
     db: SessionDep,
     current=Depends(access_three)
 ):
-    role = UserRole(current["role"])
-    user = current["user"]
-
-    result = await db.execute(
-        select(Brand)
-        .options(selectinload(Brand.client))  # ✅ preload client
-        .where(Brand.id == brand_id)
-    )
-    brand = result.scalar_one_or_none()
-
-    if not brand:
-        raise HTTPException(404, "Brand not found")
-
-    await get_client_if_accessible(
-        db, brand.client_id, role, user
+    return await BrandService.update_brand(
+        brand_id=brand_id,
+        data=data,
+        db=db,
+        current=current
     )
 
-    if data.name:
-        brand.name = data.name
 
-    if data.slug:
-        slug = slugify(data.slug)
-
-        result = await db.execute(
-            select(Brand).where(
-                Brand.slug == slug,
-                Brand.client_id == brand.client_id,
-                Brand.id != brand_id
-            )
-        )
-        if result.scalar_one_or_none():
-            raise HTTPException(400, "Slug already exists")
-
-        brand.slug = slug
-
-    await db.commit()
-    await db.refresh(brand)
-
-    return brand
-
-
-# ✅ DELETE BRAND (FIXED)
 @router.delete("/delete/{brand_id}")
 async def delete_brand(
     brand_id: int,
     db: SessionDep,
     current=Depends(access_three)
 ):
-    role = UserRole(current["role"])
-    user = current["user"]
-
-    result = await db.execute(
-        select(Brand)
-        .options(selectinload(Brand.client))  # ✅ preload client
-        .where(Brand.id == brand_id)
+    return await BrandService.delete_brand(
+        brand_id=brand_id,
+        db=db,
+        current=current
     )
-    brand = result.scalar_one_or_none()
-
-    if not brand:
-        raise HTTPException(404, "Brand not found")
-
-    await get_client_if_accessible(
-        db, brand.client_id, role, user
-    )
-
-    await db.delete(brand)
-    await db.commit()
-
-    return {"message": "Brand deleted"}

@@ -1,7 +1,7 @@
 from pydantic import BaseModel, EmailStr
 from typing import Optional
 
-
+from app.accounts.client.service import get_staff_all_branches
 class ClientCreate(BaseModel):
     name: str
     email: EmailStr

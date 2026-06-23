@@ -1,268 +1,112 @@
+# app/accounts/table/routers.py
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
-from app.api.routes import client
-from app.accounts.client.model import Client
-from app.db.config import SessionDep
-from app.accounts.table.model import Table
-from app.accounts.table.schema import TableCreate, TableUpdate, TableOut, TableStatusUpdate, TableStatus, TableShape, TableDetailsOut, TableOrderOut, TableOrderItemOut
-from app.accounts.deps import require_client, require_roles, UserRole #, require_super_admin, require_client,
-from app.accounts.deps import access_three, UserRole, access_four
-from app.accounts.order.model import Order, OrderItem
-from app.accounts.item.model import Item
-from sqlalchemy.orm import selectinload
+from sqlalchemy import select, func
 
-
-router = APIRouter(prefix="/tables", tags=["Tables"])
-
-
-
-
-# ✅ CREATE TABLE
 from app.accounts.branch.model import Branch
+from app.accounts.table.model import Table, TableStatus
 
-@router.post("/create_table", response_model=TableOut)
+
+from fastapi import APIRouter, Depends
+
+from app.db.config import SessionDep
+from app.accounts.deps import (
+    require_client,
+    access_three,
+    access_four
+)
+
+from app.accounts.table.schema import (
+    TableCreate,
+    TableUpdate,
+    TableOut,
+    TableStatus,
+    TableStatusUpdate
+)
+
+from app.accounts.table.service import TableService
+
+router = APIRouter(
+    prefix="/tables",
+    tags=["Tables"]
+)
+
+
+@router.post(
+    "/create_table",
+    response_model=TableOut
+)
 async def create_table(
     data: TableCreate,
     db: SessionDep,
     current=Depends(require_client)
 ):
-    user = current["user"]
-
-    # ✅ Get Branch
-    result = await db.execute(
-        select(Branch).where(
-            Branch.id == data.branch_id
-        )
+    return await TableService.create_table(
+        db,
+        data,
+        current["user"]
     )
 
-    branch = result.scalar_one_or_none()
 
-    if not branch:
-        raise HTTPException(404, "Branch not found")
-
-    # ✅ Ownership Check
-    if branch.client_id != user.id:
-        raise HTTPException(403, "Not allowed")
-
-    table = Table(
-        client_id=branch.client_id,
-        branch_id=branch.id,
-        name=data.name,
-        floor=data.floor,
-        number_of_seats=data.number_of_seats,
-        shape=data.shape
-    )
-
-    db.add(table)
-    await db.commit()
-    await db.refresh(table)
-    return table
-
-
-
-# ✅ GET ALL TABLES (BRANCH SCOPED)
-@router.get("/see_table", response_model=list[TableOut])
+@router.get(
+    "/see_table",
+    response_model=list[TableOut]
+)
 async def get_tables(
     db: SessionDep,
     current=Depends(access_four),
     branch_id: int | None = None,
     filter_status: TableStatus | None = None
 ):
-    role = current["role"]
-    user = current["user"]
-
-    query = select(Table).join(
-        Branch,
-        Branch.id == Table.branch_id
+    return await TableService.get_tables(
+        db,
+        current["role"],
+        current["user"],
+        branch_id,
+        filter_status
     )
 
-    # ✅ SUPER ADMIN
-    if role == UserRole.SUPER_ADMIN:
-        pass
 
-    # ✅ PARTNER
-    elif role == UserRole.PARTNER:
-        query = query.join(
-            Client,
-            Client.id == Branch.client_id
-        ).where(
-            Client.partner_id == user.id
-        )
-
-    # ✅ CLIENT
-    elif role == UserRole.CLIENT:
-        query = query.where(
-            Branch.client_id == user.id
-        )
-
-    # ✅ STAFF
-    elif role == UserRole.STAFF:
-        query = query.where(
-            Table.branch_id == user.branch_id
-        )
-
-    else:
-        raise HTTPException(403, "Not authorized")
-
-    # ✅ Optional Branch Filter
-    if branch_id:
-        query = query.where(
-            Table.branch_id == branch_id
-        )
-
-        # ✅ Staff Security
-        if (
-            role == UserRole.STAFF
-            and branch_id != user.branch_id
-        ):
-            raise HTTPException(
-                403,
-                "Not allowed to access this branch"
-            )
-
-    result = await db.execute(query)
-
-    tables = result.scalars().unique().all()
-
-    # ✅ Optional Status Filter
-    if filter_status is not None:
-        tables = [table for table in tables if table.status == filter_status]
-
-    return tables
-
-
-
-
-
-# ✅ UPDATE TABLE
-@router.put("/{table_id}", response_model=TableOut)
+@router.put(
+    "/{table_id}",
+    response_model=TableOut
+)
 async def update_table(
     table_id: int,
     data: TableUpdate,
     db: SessionDep,
     current=Depends(access_four)
 ):
-    role = current["role"]
-    user = current["user"]
+    table = await TableService.get_table_by_id(
+        db,
+        table_id,
+        current["role"],
+        current["user"]
+    )
 
-    query = select(Table).join(
-        Branch,
-        Branch.id == Table.branch_id
-    ).where(Table.id == table_id)
-
-    # ✅ SUPER ADMIN
-    if role == UserRole.SUPER_ADMIN:
-        pass
-
-    # ✅ PARTNER
-    elif role == UserRole.PARTNER:
-        query = query.join(
-            Client,
-            Client.id == Branch.client_id
-        ).where(
-            Client.partner_id == user.id
-        )
-
-    # ✅ CLIENT
-    elif role == UserRole.CLIENT:
-        query = query.where(
-            Branch.client_id == user.id
-        )
-
-    # ✅ STAFF
-    elif role == UserRole.STAFF:
-        query = query.where(
-            Table.branch_id == user.branch_id
-        )
-
-    else:
-        raise HTTPException(403, "Not authorized")
-
-    result = await db.execute(query)
-    table = result.scalar_one_or_none()
-
-    if not table:
-        raise HTTPException(
-            status_code=404,
-            detail="Table not found"
-        )
-
-    try:
-        update_data = data.model_dump(exclude_unset=True)
-
-        for key, value in update_data.items():
-            setattr(table, key, value)
-
-        await db.commit()
-        await db.refresh(table)
-
-        return table
-
-    except Exception as e:
-        await db.rollback()
-        print("UPDATE ERROR:", str(e))
-
-        raise HTTPException(
-            status_code=500,
-            detail=str(e)
-        )
+    return await TableService.update_table(
+        db,
+        table,
+        data
+    )
 
 
-
-
-# ✅ DELETE TABLE (SOFT DELETE)
 @router.delete("/{table_id}")
 async def delete_table(
     table_id: int,
     db: SessionDep,
     current=Depends(access_three)
 ):
-    role = current["role"]
-    user = current["user"]
+    table = await TableService.get_table_by_id(
+        db,
+        table_id,
+        current["role"],
+        current["user"]
+    )
 
-    query = select(Table).join(
-        Branch,
-        Branch.id == Table.branch_id
-    ).where(Table.id == table_id)
-
-    # ✅ SUPER ADMIN
-    if role == UserRole.SUPER_ADMIN:
-        pass
-
-    # ✅ PARTNER
-    elif role == UserRole.PARTNER:
-        query = query.join(
-            Client,
-            Client.id == Branch.client_id
-        ).where(
-            Client.partner_id == user.id
-        )
-
-    # ✅ CLIENT
-    elif role == UserRole.CLIENT:
-        query = query.where(
-            Branch.client_id == user.id
-        )
-
-    else:
-        raise HTTPException(403, "Not authorized")
-
-    result = await db.execute(query)
-    table = result.scalar_one_or_none()
-
-    if not table:
-        raise HTTPException(404, "Table not found")
-
-    await db.delete(table)
-
-    await db.commit()
-
-    return {
-        "success": True,
-        "message": "Table deleted successfully"
-    }
-
+    return await TableService.delete_table(
+        db,
+        table
+    )
 
 
 @router.post("/{table_id}/seat")
@@ -271,59 +115,17 @@ async def seat_table(
     db: SessionDep,
     current=Depends(access_four)
 ):
-    role = current["role"]
-    user = current["user"]
+    table = await TableService.get_table_by_id(
+        db,
+        table_id,
+        current["role"],
+        current["user"]
+    )
 
-    query = select(Table).join(
-        Branch,
-        Branch.id == Table.branch_id
-    ).where(Table.id == table_id)
-
-    # ✅ SUPER ADMIN
-    if role == UserRole.SUPER_ADMIN:
-        pass
-
-    # ✅ PARTNER
-    elif role == UserRole.PARTNER:
-        query = query.join(
-            Client,
-            Client.id == Branch.client_id
-        ).where(
-            Client.partner_id == user.id
-        )
-
-    # ✅ CLIENT
-    elif role == UserRole.CLIENT:
-        query = query.where(
-            Branch.client_id == user.id
-        )
-
-    # ✅ STAFF
-    elif role == UserRole.STAFF:
-        query = query.where(
-            Table.branch_id == user.branch_id
-        )
-
-    else:
-        raise HTTPException(403, "Not authorized")
-
-    result = await db.execute(query)
-    table = result.scalar_one_or_none()
-
-    if not table:
-        raise HTTPException(404, "Table not found")
-
-    if table.status != "available":
-        raise HTTPException(400, "Table not available")
-
-    table.status = "occupied"
-
-    await db.commit()
-
-    return {
-        "message": "Customer seated"
-    }
-
+    return await TableService.seat_table(
+        db,
+        table
+    )
 
 
 @router.post("/{table_id}/vacate")
@@ -332,97 +134,17 @@ async def vacate_table(
     db: SessionDep,
     current=Depends(access_four)
 ):
-    role = current["role"]
-    user = current["user"]
-
-    query = select(Table).join(
-        Branch,
-        Branch.id == Table.branch_id
-    ).where(Table.id == table_id)
-
-    # ✅ SUPER ADMIN
-    if role == UserRole.SUPER_ADMIN:
-        pass
-
-    # ✅ PARTNER
-    elif role == UserRole.PARTNER:
-        query = query.join(
-            Client,
-            Client.id == Branch.client_id
-        ).where(
-            Client.partner_id == user.id
-        )
-
-    # ✅ CLIENT
-    elif role == UserRole.CLIENT:
-        query = query.where(
-            Branch.client_id == user.id
-        )
-
-    # ✅ STAFF
-    elif role == UserRole.STAFF:
-        query = query.where(
-            Table.branch_id == user.branch_id
-        )
-
-    else:
-        raise HTTPException(403, "Not authorized")
-
-    result = await db.execute(query)
-    table = result.scalar_one_or_none()
-
-    if not table:
-        raise HTTPException(404, "Table not found")
-
-    table.status = "available"
-
-    await db.commit()
-
-    return {
-        "message": "Table vacated"
-    }
-
-
-
-@router.get("/{table_id}/status")
-async def get_table_status(
-    table_id: int,
-    db: SessionDep,
-    current=Depends(access_four)
-):
-    role = current["role"]
-    user = current["user"]
-
-    query = (
-        select(Table)
-        .join(Branch, Branch.id == Table.branch_id)
-        .where(Table.id == table_id)
+    table = await TableService.get_table_by_id(
+        db,
+        table_id,
+        current["role"],
+        current["user"]
     )
 
-    if role == UserRole.CLIENT:
-        query = query.where(
-            Branch.client_id == user.id
-        )
-
-    elif role == UserRole.STAFF:
-        query = query.where(
-            Table.branch_id == user.branch_id
-        )
-
-    result = await db.execute(query)
-
-    table = result.scalar_one_or_none()
-
-    if not table:
-        raise HTTPException(404, "Table not found")
-
-    return {
-        "table_id": table.id,
-        "branch_id": table.branch_id,
-        "status": table.status,
-        "is_vacant": table.status == "available"
-    }
-
+    return await TableService.vacate_table(
+        db,
+        table
+    )
 
 
 @router.patch(
@@ -435,144 +157,41 @@ async def update_table_status(
     db: SessionDep,
     current=Depends(access_four)
 ):
-    role = current["role"]
-    user = current["user"]
-
-    query = (
-        select(Table)
-        .join(Branch, Branch.id == Table.branch_id)
-        .where(Table.id == table_id)
+    table = await TableService.get_table_by_id(
+        db,
+        table_id,
+        current["role"],
+        current["user"]
     )
 
-    # ✅ SUPER ADMIN
-    if role == UserRole.SUPER_ADMIN:
-        pass
-
-    # ✅ PARTNER
-    elif role == UserRole.PARTNER:
-        query = query.join(
-            Client,
-            Client.id == Branch.client_id
-        ).where(
-            Client.partner_id == user.id
-        )
-
-    # ✅ CLIENT
-    elif role == UserRole.CLIENT:
-        query = query.where(
-            Branch.client_id == user.id
-        )
-
-    # ✅ STAFF
-    elif role == UserRole.STAFF:
-        query = query.where(
-            Table.branch_id == user.branch_id
-        )
-
-    else:
-        raise HTTPException(
-            status_code=403,
-            detail="Not authorized"
-        )
-
-    result = await db.execute(query)
-
-    table = result.scalar_one_or_none()
-
-    if not table:
-        raise HTTPException(
-            status_code=404,
-            detail="Table not found"
-        )
-
-    # ✅ Update Status
-    table.status = data.status
-
-    await db.commit()
-    await db.refresh(table)
-
-    return table
+    return await TableService.update_status(
+        db,
+        table,
+        data.status
+    )
 
 
-@router.get("/{table_id}/orders")
-async def get_table_orders(
-    table_id: int,
+# app/accounts/table/routers.py
+
+@router.get("/dashboard/all-branches")
+async def table_dashboard_all_branches(
+    db: SessionDep,
+    current=Depends(require_client)
+):
+    return await TableService.table_dashboard_all_branches(
+        db=db,
+        client_id=current["user"].id
+    )
+
+@router.get(
+    "/all-branches",
+    operation_id="table_dashboard_all_branches_v1"
+)
+async def table_dashboard_all_branches(
     db: SessionDep,
     current=Depends(access_four)
 ):
-    role = current["role"]
-    user = current["user"]
-
-    query = (
-        select(Table)
-        .where(Table.id == table_id)
+    return await TableService.table_dashboard_all_branches(
+        db=db,
+        client_id=current["user"].id
     )
-
-    if role == UserRole.CLIENT:
-        query = query.where(
-            Table.client_id == user.id
-        )
-
-    elif role == UserRole.STAFF:
-        query = query.where(
-            Table.branch_id == user.branch_id
-        )
-
-    result = await db.execute(query)
-
-    table = result.scalar_one_or_none()
-
-    if not table:
-        raise HTTPException(
-            status_code=404,
-            detail="Table not found"
-        )
-
-    order_result = await db.execute(
-        select(Order)
-        .options(
-            selectinload(Order.order_items)
-            .selectinload(OrderItem.item)
-        )
-        .where(
-            Order.table_id == table_id,
-            Order.status.notin_(
-                ["completed", "paid", "cancelled"]
-            )
-        )
-        .order_by(Order.created_at.desc())
-    )
-
-    order = order_result.scalars().first()
-
-    if not order:
-        return {
-            "table_id": table.id,
-            "table_name": table.name,
-            "status": table.status,
-            "order": None
-        }
-
-    items = []
-
-    for order_item in order.order_items:
-        items.append({
-            "item_id": order_item.item.id,
-            "item_name": order_item.item.name,
-            "quantity": order_item.quantity,
-            "price": order_item.price,
-            "order_status": order_item.order_status
-        })
-
-    return {
-        "table_id": table.id,
-        "table_name": table.name,
-        "status": table.status,
-        "order": {
-            "order_id": order.id,
-            "customer_name": order.customer_name,
-            "status": order.status,
-            "total_amount": order.total_amount,
-            "items": items
-        }
-    }

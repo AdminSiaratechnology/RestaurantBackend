@@ -1,7 +1,7 @@
 
 from datetime import datetime
 import traceback
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, APIRouter
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from app.accounts.deps import calculate_status
@@ -10,7 +10,7 @@ from app.accounts.inventory.model import InventoryItem, Godown
 from app.accounts.inventory.schema import InventoryCreate, InventoryResponse, StockUpdate, GodownCreate, GodownOut, GodownUpdate
 from app.db.config import SessionDep
 from app.accounts.deps import access_one, UserRole
-from fastapi import APIRouter
+
 
 router = APIRouter(
     prefix="/inventory",
@@ -787,3 +787,196 @@ async def inventory_category_graph(
         )
 
     return categories
+
+
+from app.accounts.branch.model import Branch
+
+@router.get("/all-branches/list")
+async def get_all_branch_inventory(
+    db: SessionDep,
+    current=Depends(access_one),
+    godown_id: int | None = None
+):
+    role = current["role"]
+    user = current["user"]
+
+    query = (
+        select(InventoryItem, Branch.name.label("branch_name"))
+        .join(
+            Branch,
+            Branch.id == InventoryItem.branch_id
+        )
+    )
+
+    if role == UserRole.CLIENT:
+        query = query.where(
+            Branch.client_id == user.id
+        )
+
+    elif role == UserRole.STAFF:
+        query = query.where(
+            InventoryItem.branch_id == user.branch_id
+        )
+
+    result = await db.execute(query)
+
+    rows = result.all()
+
+    response = []
+
+    for item, branch_name in rows:
+        factor = item.conversion_factor or 1
+
+        response.append({
+            "id": item.id,
+            "branch_id": item.branch_id,
+            "branch_name": branch_name,
+            "godown_id": item.godown_id,
+            "name": item.name,
+            "stock_qty": item.stock_qty / factor,
+            "unit": item.display_unit,
+            "status": item.status
+        })
+
+    return response
+
+
+@router.get("/all-branches/stats")
+async def inventory_stats_all_branches(
+    db: SessionDep,
+    current=Depends(access_one)
+):
+    role = current["role"]
+    user = current["user"]
+
+    query = (
+        select(InventoryItem)
+        .join(
+            Branch,
+            Branch.id == InventoryItem.branch_id
+        )
+    )
+
+    if role == UserRole.CLIENT:
+        query = query.where(
+            Branch.client_id == user.id
+        )
+
+    elif role == UserRole.STAFF:
+        query = query.where(
+            InventoryItem.branch_id == user.branch_id
+        )
+
+    result = await db.execute(query)
+
+    items = result.scalars().all()
+
+    return {
+        "total_items": len(items),
+
+        "stock_value": sum(
+            i.stock_qty * i.cost_per_unit
+            for i in items
+        ),
+
+        "low_stock": sum(
+            1 for i in items
+            if i.status == "low_stock"
+        ),
+
+        "out_of_stock": sum(
+            1 for i in items
+            if i.status == "out_of_stock"
+        )
+    }
+
+
+@router.get("/all-branches/dashboard-graph")
+async def inventory_dashboard_graph_all(
+    db: SessionDep,
+    current=Depends(access_one)
+):
+    role = current["role"]
+    user = current["user"]
+
+    query = (
+        select(InventoryItem)
+        .join(
+            Branch,
+            Branch.id == InventoryItem.branch_id
+        )
+    )
+
+    if role == UserRole.CLIENT:
+        query = query.where(
+            Branch.client_id == user.id
+        )
+
+    result = await db.execute(query)
+
+    items = result.scalars().all()
+
+    return {
+        "total_items": len(items),
+        "in_stock": sum(
+            1 for i in items
+            if i.status == "in_stock"
+        ),
+        "low_stock": sum(
+            1 for i in items
+            if i.status == "low_stock"
+        ),
+        "out_of_stock": sum(
+            1 for i in items
+            if i.status == "out_of_stock"
+        )
+    }
+
+# @router.get("/stats")
+# async def inventory_stats(
+#     db: SessionDep,
+#     branch_id: str | None = None,
+#     current=Depends(access_one)
+# ):
+#     try:
+#         role = current["role"]
+#         user = current["user"]
+
+#         # STAFF restriction
+#         if role == UserRole.STAFF:
+#             branch_id = user.branch_id
+
+#         if not branch_id:
+#             raise HTTPException(status_code=400, detail="branch_id is required")
+
+#         result = await db.execute(
+#             select(InventoryItem).where(
+#                 InventoryItem.branch_id == branch_id
+#             )
+#         )
+
+#         items = result.scalars().all()
+
+#         total_items = len(items)
+
+#         stock_value = sum(
+#             item.stock_qty * item.cost_per_unit for item in items
+#         )
+
+#         low_stock = sum(
+#             1 for item in items if item.status == "low_stock"
+#         )
+
+#         out_of_stock = sum(
+#             1 for item in items if item.status == "out_of_stock"
+#         )
+
+#         return {
+#             "total_items": total_items,
+#             "stock_value": stock_value,
+#             "low_stock": low_stock,
+#             "out_of_stock": out_of_stock
+#         }
+
+#     except SQLAlchemyError:
+#         raise HTTPException(status_code=500, detail="Error fetching stats")

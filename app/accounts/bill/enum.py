@@ -2,7 +2,7 @@ from enum import Enum
 
 
 class PaymentStatus(str, Enum):
-    cancel = "canceled"
+    cancel = "cancel"
     pending = "pending"
     complete = "complete"
     edited = "edited"

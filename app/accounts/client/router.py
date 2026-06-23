@@ -1,3 +1,4 @@
+from app.accounts.client.service import get_staff_all_branches
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select
 from passlib.context import CryptContext
@@ -369,3 +370,24 @@ async def update_staff_salary_bank(
     await db.refresh(staff)
 
     return staff
+
+
+
+
+@router.get("/branches/staff/dashboard")
+async def staff_all_branches(
+    db: SessionDep,
+    current=Depends(get_current_user)
+):
+    user = current["user"]
+    role = current["role"]
+
+    if role.name not in ["CLIENT", "PARTNER"]:
+        raise HTTPException(403, "Not allowed")
+
+    client_id = user.id  # adjust if partner logic differs
+
+    return await get_staff_all_branches(
+        db=db,
+        client_id=client_id
+    )
