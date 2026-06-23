@@ -152,6 +152,8 @@ class BillOut(BaseModel):
 
     final_amount: Optional[float] = None
 
+    is_edited: bool = False
+
     class Config:
         from_attributes = True
 
@@ -165,8 +167,25 @@ class BillStatusResponse(BaseModel):
     paid_amount: float
     due_amount: float
     final_amount: Optional[float] = None
-
+    is_edited: bool
     offer_discount: Optional[float] = 0.0
 
     class Config:
         from_attributes = True
+
+
+class EditBillResponse(BaseModel):
+    id: int
+    payment_status: PaymentStatus
+    is_edited: bool
+
+    class Config:
+        from_attributes = True
+
+
+class BillItemUpdate(BaseModel):
+    item_id: int
+    quantity: int
+
+class EditBillItemsRequest(BaseModel):
+    items: List[BillItemUpdate]

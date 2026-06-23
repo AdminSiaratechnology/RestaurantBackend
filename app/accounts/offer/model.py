@@ -75,3 +75,9 @@ class Offer(Base):
         DateTime,
         default=datetime.utcnow
     )
+
+    no_used = Column(
+        Integer,
+        default=0,
+        nullable=False
+    )

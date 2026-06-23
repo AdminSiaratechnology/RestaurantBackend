@@ -20,7 +20,7 @@ from app.accounts.order.router  import router as order_router
 from app.accounts.waiter.router import router as waiter_router
 from app.accounts.orderstatus.routers import router as orderstatus_router
 from app.accounts.inventory.router import router as inventory_router
-from app.accounts.deshboard.router import router as deshboard_router
+from app.accounts.deshboard.router import router as deshboard_router, today_router
 from app.accounts.auditlog.router import router as auditlog_router
 from app.accounts.permission.routers import router as permission_router
 from app.accounts.tax.router import router as tax_router
@@ -36,6 +36,9 @@ from app.accounts.rep_menu.router import router as rep_menu_router
 from app.accounts.rep_inventory.router import router as rep_inventory_router
 from app.accounts.forget_password.router import router as forget_password_router
 from app.accounts.change_password.router import router as change_password_router
+from app.accounts.total_sales.router import router as total_sales_router
+from app.accounts.rep_payment.router import router as rep_payment_router
+
 
 
 app = FastAPI()
@@ -107,6 +110,7 @@ app.include_router(tax_router)
 app.include_router(bill_router)
 app.include_router(offer_router)
 app.include_router(deshboard_router)
+app.include_router(today_router)
 app.include_router(legaldetails_router)
 app.include_router(auditlog_router)
 app.include_router(payment_router)
@@ -117,3 +121,5 @@ app.include_router(rep_menu_router)
 app.include_router(rep_inventory_router)
 app.include_router(forget_password_router)
 app.include_router(change_password_router)
+app.include_router(total_sales_router)
+app.include_router(rep_payment_router)

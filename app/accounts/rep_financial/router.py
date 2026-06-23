@@ -1,10 +1,18 @@
-from fastapi import APIRouter, Query
-from sqlalchemy import select, func
+from fastapi import APIRouter, Query, Depends
 
 from app.db.config import SessionDep
-from app.accounts.bill.model import Bill
-from app.accounts.bill.enum import PaymentStatus
-from app.accounts.rep_financial.schema import DashboardSummaryResponse, TaxCollectedResponse
+from app.accounts.deps import access_four
+from app.accounts.rep_financial.schema import (
+    DashboardSummaryResponse,
+    TaxCollectedResponse
+)
+
+from app.accounts.rep_financial.service import (
+    dashboard_summary_service,
+    financial_dashboard_all_branches_service,
+    get_tax_collected_service,
+    tax_collected_all_branches_service
+)
 
 router = APIRouter(
     prefix="/reports/financial",
@@ -20,33 +28,9 @@ async def dashboard_summary(
     db: SessionDep,
     branch_id: int
 ):
-    revenue_result = await db.execute(
-        select(
-            func.coalesce(
-                func.sum(Bill.grand_total),
-                0
-            )
-        ).where(
-            Bill.payment_status == PaymentStatus.complete,
-            Bill.branch_id == branch_id
-        )
-    )
-
-    orders_result = await db.execute(
-        select(
-            func.count(Bill.id)
-        ).where(
-            Bill.payment_status == PaymentStatus.complete,
-            Bill.branch_id == branch_id
-        )
-    )
-
-    total_revenue = revenue_result.scalar() or 0
-    paid_orders = orders_result.scalar() or 0
-
-    return DashboardSummaryResponse(
-        total_revenue=round(float(total_revenue), 2),
-        paid_orders=paid_orders
+    return await dashboard_summary_service(
+        db=db,
+        branch_id=branch_id
     )
 
 
@@ -58,26 +42,36 @@ async def get_tax_collected(
     db: SessionDep,
     branch_id: int = Query(...)
 ):
-    result = await db.execute(
-        select(
-            func.coalesce(
-                func.sum(
-                    Bill.tax_total +
-                    Bill.service_charge_amount
-                ),
-                0
-            )
-        ).where(
-            Bill.payment_status == PaymentStatus.complete,
-            Bill.branch_id == branch_id
-        )
+    return await get_tax_collected_service(
+        db=db,
+        branch_id=branch_id
     )
 
-    total_tax_collected = result.scalar() or 0
 
-    return TaxCollectedResponse(
-        total_tax_collected=round(
-            float(total_tax_collected),
-            2
-        )
+
+
+@router.get(
+    "/dashboard-summary/all-branches"
+)
+async def financial_dashboard_all_branches(
+    db: SessionDep,
+    current=Depends(access_four)
+):
+    return await financial_dashboard_all_branches_service(
+        db=db,
+        current=current
+    )
+
+
+
+@router.get(
+    "/tax-collected/all-branches"
+)
+async def tax_collected_all_branches(
+    db: SessionDep,
+    current=Depends(access_four)
+):
+    return await tax_collected_all_branches_service(
+        db=db,
+        current=current
     )

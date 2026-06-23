@@ -1,3 +1,4 @@
+from app.accounts.order.service import get_menu_all_branches, get_orders_all_branches
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, delete, func, or_
 from sqlalchemy.exc import SQLAlchemyError
@@ -1119,3 +1120,41 @@ async def update_order_item_status(
             status_code=500,
             detail=f"Unexpected error: {str(e)}"
         )
+    
+
+
+@router.get("/dashboard/all-branches")
+async def orders_all_branches(
+    db: SessionDep,
+    current=Depends(access_one)
+):
+    role = current["role"]
+    user = current["user"]
+
+    if role.name not in ["CLIENT", "PARTNER"]:
+        raise HTTPException(403, "Not allowed")
+
+    client_id = user.id  # adjust if partner logic differs
+
+    return await get_orders_all_branches(
+        db=db,
+        client_id=client_id
+    )
+
+@router.get("/menu/dashboard/all-branches")
+async def menu_all_branches(
+    db: SessionDep,
+    current=Depends(access_one)
+):
+    role = current["role"]
+    user = current["user"]
+
+    if role.name not in ["CLIENT", "PARTNER"]:
+        raise HTTPException(403, "Not allowed")
+
+    client_id = user.id  # adjust if partner logic differs
+
+    return await get_menu_all_branches(
+        db=db,
+        client_id=client_id
+    )
