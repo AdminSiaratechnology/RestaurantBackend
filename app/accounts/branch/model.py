@@ -26,6 +26,7 @@ class Branch(Base):
     status = Column(String, nullable=False, default=statusEnum.active.value)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     brand_id = Column(Integer, ForeignKey("brands.id"), nullable=True)
+    branch_code = Column(String(5),unique=True,nullable=False,index=True)
 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

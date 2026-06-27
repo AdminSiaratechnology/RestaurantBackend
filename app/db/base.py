@@ -30,3 +30,8 @@ from app.accounts.tax.model import TaxBillingSetting
 from app.accounts.legaldetails.model import LegalCompliance
 from app.accounts.ingredient.model import ItemIngredient
 from app.accounts.forget_password.model import PasswordResetOTP
+from app.accounts.inventory.model import InventoryItem
+from app.accounts.inventory.model import Godown
+from app.accounts.purchaseorder.model import PurchaseOrder, PurchaseOrderItem
+from app.accounts.bom.model import MenuItemBOM
+from app.accounts.vendor.model import Vendor

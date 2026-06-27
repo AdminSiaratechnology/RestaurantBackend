@@ -1,14 +1,33 @@
+
+
 from datetime import datetime, timezone
 from sqlalchemy.orm import relationship
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Float,
+    DateTime,
+    ForeignKey,
+    Index
+)
 from app.db.base import Base
 
 
 class InventoryItem(Base):
     __tablename__ = "inventory_items"
 
-    id = Column(Integer, primary_key=True)
+    __table_args__ = (
+        Index("ix_inventory_id", "id"),
+        Index("ix_inventory_branch_id", "branch_id"),
+        Index("ix_inventory_godown_id", "godown_id"),
+        Index("ix_inventory_name", "name"),
+        Index("ix_inventory_status", "status"),
+        Index("ix_inventory_branch_godown", "branch_id", "godown_id"),
+        Index("ix_inventory_branch_status", "branch_id", "status"),
+    )
 
+    id = Column(Integer, primary_key=True)
 
     branch_id = Column(
         Integer,
@@ -22,14 +41,16 @@ class InventoryItem(Base):
         nullable=True
     )
 
-    name = Column(String, nullable=False)
+    name = Column(
+        String,
+        nullable=False
+    )
 
     row_category = Column(
         String,
         default="other"
     )
 
-    # Only gm, ml, piece stored in DB
     unit = Column(
         String,
         nullable=False

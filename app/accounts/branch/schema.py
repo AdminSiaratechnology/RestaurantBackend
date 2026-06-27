@@ -10,7 +10,7 @@ class BranchCreate(BaseModel):
     address: Optional[str] = None
     city: Optional[str] = None
     status: str = "active"
-
+    
     client_id: int
     brand_id: Optional[int] = None
 
@@ -19,6 +19,7 @@ class BranchOut(BaseModel):
     id: int
     name: str
     client_id: int
+    branch_code: str
     brand_id: Optional[int]
 
     address: Optional[str]

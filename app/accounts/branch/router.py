@@ -57,10 +57,13 @@ async def create_branch(
         brand_id=data.brand_id,
         address=data.address,
         city=data.city,
-        status=data.status
+        status=data.status,
+        branch_code="" 
     )
 
     db.add(branch)
+    await db.flush()
+    branch.branch_code = f"BR{branch.id:03d}"
     await db.commit()
     await db.refresh(branch)
 

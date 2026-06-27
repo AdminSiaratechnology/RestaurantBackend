@@ -145,3 +145,5 @@ class StockUpdate(BaseModel):
             )
 
         return value
+
+
