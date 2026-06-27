@@ -9,7 +9,8 @@ from sqlalchemy import (
     DateTime,
     Enum,
     Boolean,
-    ForeignKey
+    ForeignKey,
+    Index,
 )
 
 from datetime import datetime
@@ -26,6 +27,17 @@ class OfferType(str, enum.Enum):
 class Offer(Base):
 
     __tablename__ = "offers"
+    __table_args__ = (
+        Index("ix_offers_branch_id", "branch_id"),
+        Index("ix_offers_is_active", "is_active"),
+        Index("ix_offers_valid_from", "valid_from"),
+        Index("ix_offers_valid_to", "valid_to"),
+        Index(
+            "ix_offers_branch_active",
+            "branch_id",
+            "is_active"
+        ),
+        )
 
     id = Column(Integer, primary_key=True, index=True)
 

@@ -1,7 +1,15 @@
 from datetime import datetime
 
-from sqlalchemy import Column, ForeignKey, Integer, String
-from sqlalchemy import Boolean, DateTime, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    ForeignKey,
+    Integer,
+    String,
+    Boolean,
+    DateTime,
+    UniqueConstraint,
+    Index,
+)
 from sqlalchemy.orm import relationship
 from app.db.base import Base
 
@@ -21,7 +29,19 @@ class Item(Base):
     is_active = Column(Boolean, default=True)
 
     __table_args__ = (
-        UniqueConstraint("name", "branch_id", name="uq_item_name_per_branch"),
+        UniqueConstraint(
+            "name",
+            "branch_id",
+            name="uq_item_name_per_branch"
+        ),
+        Index("ix_items_name", "name"),
+        Index("ix_items_category_id", "category_id"),
+        Index("ix_items_branch_id", "branch_id"),
+        Index(
+            "ix_items_branch_category_id",
+            "branch_id",
+            "category_id"
+        ),
     )
 
     client = relationship("Client", back_populates="items")

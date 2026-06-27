@@ -38,7 +38,9 @@ from app.accounts.forget_password.router import router as forget_password_router
 from app.accounts.change_password.router import router as change_password_router
 from app.accounts.total_sales.router import router as total_sales_router
 from app.accounts.rep_payment.router import router as rep_payment_router
-
+from app.accounts.purchaseorder.router import router as purchas_order_router
+from app.accounts.vendor.router import router as vendor_router
+from app.accounts.uploads.router import router as upload_router
 
 
 app = FastAPI()
@@ -123,3 +125,6 @@ app.include_router(forget_password_router)
 app.include_router(change_password_router)
 app.include_router(total_sales_router)
 app.include_router(rep_payment_router)
+app.include_router(purchas_order_router)
+app.include_router(vendor_router)
+app.include_router(upload_router)

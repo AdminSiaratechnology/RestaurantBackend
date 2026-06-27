@@ -10,7 +10,6 @@ from sqlalchemy import (
     DateTime,
     UniqueConstraint
 )
-
 from app.db.base import Base
 
 
