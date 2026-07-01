@@ -4,6 +4,8 @@ from sqlalchemy import select
 from app.accounts.category.model import Category
 from app.accounts.category.schema import CategoryCreate
 from app.accounts.deps import UserRole
+from app.core.cache import Cache
+from fastapi.encoders import jsonable_encoder
 
 
 class CategoryService:
@@ -50,6 +52,10 @@ class CategoryService:
         await db.commit()
         await db.refresh(category)
 
+        # Invalidate cache
+        await Cache.delete(f"categories:branch:{payload.branch_id}")
+        await Cache.delete(f"menu:branch:{payload.branch_id}")
+
         return category
 
     @staticmethod
@@ -68,13 +74,21 @@ class CategoryService:
                     detail="Access denied"
                 )
 
+        cache_key = f"categories:branch:{branch_id}"
+        cached_data = await Cache.get(cache_key)
+        if cached_data:
+            return cached_data
+
         result = await db.execute(
             select(Category).where(
                 Category.branch_id == branch_id
             )
         )
+        
+        categories = result.scalars().all()
+        await Cache.set(cache_key, jsonable_encoder(categories), expire=1800)
 
-        return result.scalars().all()
+        return categories
 
     @staticmethod
     async def update_category(
@@ -116,6 +130,9 @@ class CategoryService:
         await db.commit()
         await db.refresh(category)
 
+        await Cache.delete(f"categories:branch:{category.branch_id}")
+        await Cache.delete(f"menu:branch:{category.branch_id}")
+
         return category
 
     @staticmethod
@@ -151,8 +168,12 @@ class CategoryService:
                 detail="Category not found"
             )
 
+        branch_id = category.branch_id
         await db.delete(category)
         await db.commit()
+
+        await Cache.delete(f"categories:branch:{branch_id}")
+        await Cache.delete(f"menu:branch:{branch_id}")
 
         return {
             "message": "Category deleted"

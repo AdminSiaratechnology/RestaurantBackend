@@ -4,6 +4,7 @@ from sqlalchemy import select, func
 from datetime import datetime, date, timedelta
 
 from app.accounts.payment.model import Payment
+from app.core.cache import Cache
 
 
 async def payment_report_service(
@@ -12,6 +13,10 @@ async def payment_report_service(
     from_date: date | None = None,
     to_date: date | None = None,
 ):
+    cache_key = f"report:{branch_id or 'all'}:payment_report:{from_date or 'all'}_{to_date or 'all'}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return cached
     query = select(Payment)
 
     if branch_id:
@@ -121,6 +126,8 @@ async def payment_report_service(
             }
         ]
     }
+    await Cache.set(cache_key, result, expire=21600)
+    return result
 
 
 # app/accounts/reports/service/payment_report_all_branches.py
@@ -139,6 +146,10 @@ async def payment_report_all_branches_service(
     from_date: date | None = None,
     to_date: date | None = None,
 ):
+    cache_key = f"report:all:payment_report_all:{client_id}:{from_date or 'all'}_{to_date or 'all'}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return cached
     query = (
         select(Payment, Branch)
         .join(
@@ -253,6 +264,8 @@ async def payment_report_all_branches_service(
         },
         "branches": branches
     }
+    await Cache.set(cache_key, result, expire=21600)
+    return result
 
 
 from datetime import datetime, date
@@ -267,6 +280,10 @@ async def payment_method_totals_service(
     from_date: date | None = None,
     to_date: date | None = None,
 ):
+    cache_key = f"report:{branch_id or 'all'}:payment_totals:{from_date or 'all'}_{to_date or 'all'}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return cached
     query = select(Payment)
 
     if branch_id:
@@ -340,6 +357,8 @@ async def payment_method_totals_service(
         "credit_total": round(credit_total, 2),
         "total_collection": round(total_collection, 2)
     }
+    await Cache.set(cache_key, result, expire=21600)
+    return result
 
 
 from datetime import datetime, date
@@ -355,6 +374,10 @@ async def payment_method_totals_all_branches_service(
     from_date: date | None = None,
     to_date: date | None = None,
 ):
+    cache_key = f"report:all:payment_totals_all:{client_id}:{from_date or 'all'}_{to_date or 'all'}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return cached
     query = (
         select(Payment)
         .join(
@@ -436,3 +459,5 @@ async def payment_method_totals_all_branches_service(
         "credit_total": round(credit_total, 2),
         "total_collection": round(total_collection, 2)
     }
+    await Cache.set(cache_key, result, expire=21600)
+    return result

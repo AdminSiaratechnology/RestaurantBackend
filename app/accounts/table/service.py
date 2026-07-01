@@ -9,6 +9,8 @@ from app.accounts.branch.model import Branch
 from app.accounts.client.model import Client
 from app.accounts.order.model import Order, OrderItem
 from app.accounts.deps import UserRole
+from app.core.cache import Cache
+from fastapi.encoders import jsonable_encoder
 
 
 class TableService:
@@ -41,6 +43,8 @@ class TableService:
         db.add(table)
         await db.commit()
         await db.refresh(table)
+
+        await Cache.delete(f"tables:branch:{table.branch_id}")
 
         return table
 
@@ -131,9 +135,19 @@ class TableService:
                     "Not allowed to access this branch"
                 )
 
+            cache_key = f"tables:branch:{branch_id}"
+            cached_tables = await Cache.get(cache_key)
+            if cached_tables:
+                if filter_status:
+                    return [t for t in cached_tables if t.get("status") == filter_status]
+                return cached_tables
+
         result = await db.execute(query)
 
         tables = result.scalars().unique().all()
+
+        if branch_id:
+            await Cache.set(f"tables:branch:{branch_id}", jsonable_encoder(tables), expire=1800)
 
         if filter_status:
             tables = [
@@ -159,6 +173,8 @@ class TableService:
         await db.commit()
         await db.refresh(table)
 
+        await Cache.delete(f"tables:branch:{table.branch_id}")
+
         return table
 
     @staticmethod
@@ -166,8 +182,11 @@ class TableService:
         db,
         table
     ):
+        branch_id = table.branch_id
         await db.delete(table)
         await db.commit()
+
+        await Cache.delete(f"tables:branch:{branch_id}")
 
         return {
             "success": True,
@@ -185,6 +204,8 @@ class TableService:
         table.status = "occupied"
 
         await db.commit()
+        
+        await Cache.delete(f"tables:branch:{table.branch_id}")
 
         return {
             "message": "Customer seated"
@@ -195,6 +216,8 @@ class TableService:
         table.status = "available"
 
         await db.commit()
+
+        await Cache.delete(f"tables:branch:{table.branch_id}")
 
         return {
             "message": "Table vacated"
@@ -210,6 +233,8 @@ class TableService:
 
         await db.commit()
         await db.refresh(table)
+        
+        await Cache.delete(f"tables:branch:{table.branch_id}")
 
         return table
 

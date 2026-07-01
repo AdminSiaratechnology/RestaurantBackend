@@ -1,8 +1,13 @@
-from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.base import Base
 from app.db.config import engine
 from app.models import *
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from app.core.redis import redis_client, close_redis_connection, check_redis_health
+
+
+
 # from app.accounts.auth.routers import auth,  superadmin, partner, staff, client
 from app.accounts.auth.routers import router as auth_router
 from app.accounts.superadmin.routers import router as superadmin_router
@@ -61,10 +66,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# @app.on_event("startup")
-# async def startup():
-#     async with engine.begin() as conn:
-#         await conn.run_sync(Base.metadata.create_all)
 
 from app.db.create_indexes import create_db_indexes
 
@@ -81,8 +82,31 @@ async def startup():
 
     await create_db_indexes()
 
+    await check_redis_health()
+
     print("STARTUP END")
 
+@app.on_event("shutdown")
+async def shutdown():
+    await close_redis_connection()
+
+
+
+
+
+# @asynccontextmanager
+# async def lifespan(app: FastAPI):
+#     # Startup
+#     await redis_client.ping()
+#     print("✅ Connected to Memurai")
+
+#     yield
+
+#     # Shutdown
+#     await redis_client.aclose()
+#     print("🔴 Redis connection closed")
+
+# app = FastAPI(lifespan=lifespan)
 
 
 app.mount(

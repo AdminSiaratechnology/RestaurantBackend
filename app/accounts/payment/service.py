@@ -12,6 +12,7 @@ from app.accounts.offer.model import (
     Offer,
     OfferType
 )
+from app.core.cache import Cache
 
 
 # =====================================
@@ -157,6 +158,11 @@ async def make_payment_service(
 
         await db.commit()
         await db.refresh(payment)
+
+        # Invalidate dashboard cache (payment completed)
+        await Cache.delete_pattern(f"dashboard:*:branch:{bill.branch_id}")
+        # Invalidate cached invoice PDF so it reflects payment status
+        await Cache.delete(f"invoice:pdf:{bill.id}")
         
         return payment
         

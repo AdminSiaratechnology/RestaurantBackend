@@ -11,6 +11,7 @@ from app.accounts.staff.model import (
 from app.accounts.permission.model import (
     StaffPermission
 )
+from app.core.cache import Cache
 
 
 CHEF_PERMISSIONS = {
@@ -98,6 +99,8 @@ async def create_staff_permissions_service(
 
     await db.commit()
     await db.refresh(permission)
+    
+    await Cache.delete(f"permissions:user:{data.staff_id}")
 
     return permission
 
@@ -154,6 +157,8 @@ async def update_staff_permissions_service(
 
     await db.commit()
     await db.refresh(permission)
+    
+    await Cache.delete(f"permissions:user:{staff_id}")
 
     return permission
 

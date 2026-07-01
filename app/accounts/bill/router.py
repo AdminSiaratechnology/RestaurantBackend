@@ -1,22 +1,18 @@
-# =========================================================
-# FILE: app/accounts/bill/router.py
-# =========================================================
 
-# pyrefly: ignore [missing-import]
-# =========================================================
-# FILE: app/accounts/bill/router.py
-# =========================================================
-
-# pyrefly: ignore [missing-import]
-
-from fastapi import APIRouter, HTTPException
 from uuid import uuid4
 from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
+from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from io import BytesIO
 
+from app.db.config import get_db
+from app.accounts.bill.service import InvoiceService
+from app.accounts.deps import get_current_user,access_one, UserRole
 from app.db.config import SessionDep
-
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.accounts.order.model import (
     Order,
     OrderItem
@@ -605,6 +601,9 @@ async def get_bill(
         # "final_amount": (bill.final_amount if is_bill_finalized else bill.grand_total)
     }
 
+    # Invalidate dashboard cache because a new bill was generated
+    await Cache.delete_pattern(f"dashboard:*:branch:{order.branch_id}")
+
 
 @router.patch(
     "/status/{bill_id}",
@@ -709,6 +708,12 @@ async def update_bill_status(
 
     await db.commit()
     await db.refresh(bill)
+
+    # Invalidate dashboard cache (payment completed / bill status changed)
+    await Cache.delete_pattern(f"dashboard:*:branch:{bill.branch_id}")
+
+    # Invalidate invoice PDF cache since bill status changed
+    await Cache.delete(f"invoice:pdf:{bill.id}")
 
     return bill
 
@@ -894,11 +899,19 @@ async def edit_bill(
     await db.commit()
     await db.refresh(bill)
 
+    # Invalidate invoice PDF cache since bill was edited
+    await Cache.delete(f"invoice:pdf:{bill_id}")
+
+    # Invalidate dashboard cache
+    await Cache.delete_pattern(f"dashboard:*:branch:{bill.branch_id}")
+
     return bill
 
 from sqlalchemy import select
 
 from app.accounts.order.model import Order, OrderItem
+from app.core.cache import Cache
+import base64
 
 from app.accounts.item.model import Item
 from app.accounts.pricing.model import Pricing
@@ -1205,3 +1218,153 @@ async def edit_bill_items(
     await db.refresh(bill)
 
     return bill
+
+
+
+
+from app.accounts.bill.invoice_template import InvoiceTemplate
+
+@router.get("/invoice/{bill_id}")
+async def download_invoice(
+    bill_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    user = current_user["user"]
+    role = current_user["role"]
+
+    client_id = None
+    branch_id = None
+
+    if role == UserRole.STAFF:
+        client_id = getattr(user, "client_id", None)
+        branch_id = getattr(user, "branch_id", None)
+    elif role == UserRole.CLIENT:
+        client_id = user.id
+
+    cache_key = f"invoice:pdf:{bill_id}"
+    cached_b64 = await Cache.get(cache_key)
+    if cached_b64:
+        pdf_bytes = base64.b64decode(cached_b64)
+        return StreamingResponse(
+            BytesIO(pdf_bytes),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="INV-{bill_id}.pdf"'
+            }
+        )
+
+    bill = await get_bill_for_invoice(
+        db=db,
+        bill_id=bill_id,
+        client_id=client_id,
+        branch_id=branch_id,
+    )
+
+    pdf = BytesIO()
+
+    InvoiceTemplate.generate(
+        pdf,
+        bill,
+    )
+
+    pdf_bytes = pdf.getvalue()
+    b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+    await Cache.set(cache_key, b64_pdf, expire=86400) # 24 hours
+
+    pdf.seek(0)
+
+    return StreamingResponse(
+        pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{bill.invoice_no}.pdf"'
+        },
+    )
+
+
+async def get_bill_for_invoice(
+    db: AsyncSession,
+    bill_id: int,
+    client_id: int = None,
+    branch_id: int = None,
+):
+    query = select(Bill).options(
+        selectinload(Bill.branch),
+        selectinload(Bill.order)
+            .selectinload(Order.order_items)
+            .selectinload(OrderItem.item)
+    )
+
+    conditions = [Bill.id == bill_id]
+    if client_id is not None:
+        conditions.append(Bill.client_id == client_id)
+    if branch_id is not None:
+        conditions.append(Bill.branch_id == branch_id)
+
+    result = await db.execute(query.where(*conditions))
+
+    bill = result.scalar_one_or_none()
+
+    if not bill:
+        raise HTTPException(
+            status_code=404,
+            detail="Bill not found"
+        )
+
+    # Dynamically calculate item-level CGST and SGST for PDF
+    item_cgst = 0.0
+    item_sgst = 0.0
+    computed_subtotal = 0.0
+
+    for order_item in bill.order.order_items:
+        pricing_result = await db.execute(
+            select(Pricing).where(
+                Pricing.item_id == order_item.item_id,
+                Pricing.branch_id == bill.branch_id
+            )
+        )
+        pricing = pricing_result.scalars().first()
+        
+        if pricing:
+            price = float(pricing.price or 0)
+            discount = float(pricing.discount or 0)
+            discounted_price = round(price - discount, 2)
+            cgst_rate = float(pricing.cgst_rate or 0)
+            sgst_rate = float(pricing.sgst_rate or 0)
+            
+            cgst_amt = round(discounted_price * (cgst_rate / 100), 2)
+            sgst_amt = round(discounted_price * (sgst_rate / 100), 2)
+            
+            qty = order_item.quantity or 1
+            item_cgst += cgst_amt * qty
+            item_sgst += sgst_amt * qty
+            computed_subtotal += price * qty
+            
+            # Override for the PDF display
+            order_item.total_price = price * qty
+            order_item.unit_price = price
+
+    bill.cgst_amount = item_cgst
+    bill.sgst_amount = item_sgst
+    bill.tax_total = item_cgst + item_sgst
+    bill.subtotal = computed_subtotal
+
+    # Recalculate Grand Total
+    service_charge = float(bill.service_charge_amount or 0)
+    discount_amount = float(bill.discount_amount or 0)
+    calculated_total = bill.subtotal + bill.tax_total + service_charge - discount_amount
+    
+    rounded_total = round(calculated_total)
+    bill.round_off_amount = round(rounded_total - calculated_total, 2)
+    bill.grand_total = rounded_total
+
+    if bill.payment_status == PaymentStatus.pending:
+        bill.final_amount = bill.grand_total
+        bill.due_amount = bill.grand_total
+
+    return bill
+
+
+# router.py
+from app.accounts.bill.service import InvoiceService

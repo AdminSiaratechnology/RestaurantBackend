@@ -10,6 +10,7 @@ from app.accounts.inventory.model import InventoryItem, Godown
 from app.accounts.inventory.schema import InventoryCreate, InventoryResponse, StockUpdate, GodownCreate, GodownOut, GodownUpdate
 from app.db.config import SessionDep
 from app.accounts.deps import access_one, UserRole
+from app.core.cache import Cache
 
 
 router = APIRouter(
@@ -170,6 +171,8 @@ async def create_inventory_item(
 
     await db.commit()
     await db.refresh(item)
+
+    await Cache.delete_pattern(f"report:{item.branch_id}:inventory:*")
 
     return {
         "message": "Inventory item created successfully",
@@ -457,6 +460,8 @@ async def update_inventory_item(
     await db.commit()
     await db.refresh(item)
 
+    await Cache.delete_pattern(f"report:{item.branch_id}:inventory:*")
+
     return {
         "message": "Inventory updated successfully"
     }
@@ -559,6 +564,8 @@ async def update_stock(
         item.last_restocked = data.last_restocked
 
     await db.commit()
+
+    await Cache.delete_pattern(f"report:{item.branch_id}:inventory:*")
 
     return {
         "message": "Stock updated successfully",

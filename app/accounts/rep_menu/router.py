@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
+from datetime import date
 
 from app.db.config import SessionDep
+from app.core.cache import Cache
 
 from app.accounts.rep_menu.schema import (
     CategoryDistributionResponse,
@@ -31,10 +33,14 @@ async def get_category_distribution(
     db: SessionDep,
     branch_id: int = Query(...)
 ):
-    return await get_category_distribution_service(
-        db=db,
-        branch_id=branch_id
-    )
+    today_str = date.today().isoformat()
+    cache_key = f"report:{branch_id}:category_distribution:{today_str}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return CategoryDistributionResponse(**cached)
+    result = await get_category_distribution_service(db=db, branch_id=branch_id)
+    await Cache.set(cache_key, result if isinstance(result, dict) else result.dict(), expire=21600)
+    return result
 
 
 @router.get(
@@ -45,10 +51,14 @@ async def dashboard_summary(
     db: SessionDep,
     branch_id: int
 ):
-    return await dashboard_summary_service(
-        db=db,
-        branch_id=branch_id
-    )
+    today_str = date.today().isoformat()
+    cache_key = f"report:{branch_id}:menu_dashboard:{today_str}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return MenuDashboardResponse(**cached)
+    result = await dashboard_summary_service(db=db, branch_id=branch_id)
+    await Cache.set(cache_key, result if isinstance(result, dict) else result.dict(), expire=21600)
+    return result
 
 
 @router.get(
@@ -59,13 +69,16 @@ async def get_top_selling_items(
     db: SessionDep,
     branch_id: int = Query(...)
 ):
-    return await get_top_selling_items_service(
-        db=db,
-        branch_id=branch_id
-    )
+    today_str = date.today().isoformat()
+    cache_key = f"report:{branch_id}:top_selling:{today_str}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return TopSellingItemsResponse(**cached)
+    result = await get_top_selling_items_service(db=db, branch_id=branch_id)
+    await Cache.set(cache_key, result if isinstance(result, dict) else result.dict(), expire=21600)
+    return result
 
 
-from fastapi import Depends
 from app.accounts.deps import access_four
 
 @router.get(

@@ -18,6 +18,7 @@ from app.accounts.item.model import Item
 from app.accounts.customer.model import Customer
 from app.accounts.inventory.model import InventoryItem
 from app.accounts.pricing.model import Pricing
+from app.core.cache import Cache
 from app.db.config import SessionDep
 
 
@@ -61,6 +62,11 @@ async def get_today_revenue(
         # ✅ Access control
         await get_client_if_accessible(client_id, db, current)
 
+        cache_key = f"dashboard:today-revenue:branch:{branch_id}"
+        cached = await Cache.get(cache_key)
+        if cached:
+            return cached
+
         # ✅ Today's range
         today_start = datetime.combine(date.today(), datetime.min.time())
         today_end = datetime.combine(date.today(), datetime.max.time())
@@ -79,9 +85,11 @@ async def get_today_revenue(
 
         total_revenue = result.scalar_one()
 
-        return {
+        response_data = {
             "today_revenue": total_revenue
         }
+        await Cache.set(cache_key, response_data, expire=60)
+        return response_data
 
     except SQLAlchemyError:
         raise HTTPException(
@@ -126,6 +134,11 @@ async def get_active_orders(
             current
         )
 
+        cache_key = f"dashboard:active-orders:branch:{branch_id}"
+        cached = await Cache.get(cache_key)
+        if cached:
+            return cached
+
         # =========================
         # ✅ Active Orders Count
         # Active = pending/preparing/ready
@@ -147,11 +160,13 @@ async def get_active_orders(
 
         active_orders = result.scalar() or 0
 
-        return {
+        response_data = {
             "client_id": client_id,
             "branch_id": branch_id,
             "active_orders": active_orders
         }
+        await Cache.set(cache_key, response_data, expire=60)
+        return response_data
 
     # =========================
     # ✅ Exception Handling
@@ -325,6 +340,11 @@ async def get_weekly_revenue(
         # ✅ Access control
         await get_client_if_accessible(client_id, db, current)
 
+        cache_key = f"dashboard:weekly-revenue:branch:{branch_id}"
+        cached = await Cache.get(cache_key)
+        if cached:
+            return cached
+
         # ✅ Get last 7 days
         today = datetime.utcnow().date()
         week_start = today - timedelta(days=6)
@@ -360,9 +380,11 @@ async def get_weekly_revenue(
                 "revenue": revenue_map.get(str(day), 0)
             })
 
-        return {
+        response_data = {
             "weekly_revenue": weekly_data
         }
+        await Cache.set(cache_key, response_data, expire=60)
+        return response_data
 
     except SQLAlchemyError:
         raise HTTPException(500, "Database error while fetching weekly revenue")
@@ -391,6 +413,11 @@ async def get_top_items(
 
         # ✅ Access control
         await get_client_if_accessible(client_id, db, current)
+
+        cache_key = f"dashboard:top-items:branch:{branch_id}"
+        cached = await Cache.get(cache_key)
+        if cached:
+            return cached
 
         # ✅ Aggregation query
         result = await db.execute(
@@ -425,9 +452,11 @@ async def get_top_items(
                 "price": float(row.avg_price or 0)
             })
 
-        return {
+        response_data = {
             "top_items": top_items
         }
+        await Cache.set(cache_key, response_data, expire=60)
+        return response_data
 
     except SQLAlchemyError:
         raise HTTPException(500, "Database error while fetching top items")

@@ -14,6 +14,7 @@ from app.accounts.brand.model import Brand
 from app.accounts.permission.model import StaffPermission
 from sqlalchemy.orm import selectinload
 from app.accounts.staff.model import StaffRole
+from app.core.cache import Cache
 
 
 security = HTTPBearer()
@@ -25,7 +26,18 @@ async def get_current_user(
 ):
     token = credentials.credentials
 
+    # Check JWT Blacklist
+    is_blacklisted = await Cache.get(f"blacklist:{token}")
+    if is_blacklisted:
+        raise HTTPException(status_code=401, detail="Token has been revoked")
+
     payload = decode_token(token)
+
+    jti = payload.get("jti")
+    if jti:
+        is_blacklisted_jti = await Cache.get(f"blacklist:{jti}")
+        if is_blacklisted_jti:
+            raise HTTPException(status_code=401, detail="Token has been revoked")
 
     user_id = payload.get("user_id")
     role_str = payload.get("role")
@@ -253,28 +265,32 @@ def require_permission(permission_name: str):
         db: SessionDep,
         current=Depends(require_staff)
     ):
-
         user = current["user"]
+        cache_key = f"permissions:user:{user.id}"
+        
+        permissions_dict = await Cache.get(cache_key)
 
-        result = await db.execute(
-            select(StaffPermission).where(
-                StaffPermission.staff_id == user.id
+        if not permissions_dict:
+            result = await db.execute(
+                select(StaffPermission).where(
+                    StaffPermission.staff_id == user.id
+                )
             )
-        )
+            permissions = result.scalar_one_or_none()
 
-        permissions = result.scalar_one_or_none()
+            if not permissions:
+                raise HTTPException(
+                    status_code=403,
+                    detail="No permissions assigned"
+                )
+            
+            permissions_dict = {
+                c.name: getattr(permissions, c.name) 
+                for c in permissions.__table__.columns
+            }
+            await Cache.set(cache_key, permissions_dict, expire=1800)
 
-        if not permissions:
-            raise HTTPException(
-                status_code=403,
-                detail="No permissions assigned"
-            )
-
-        has_permission = getattr(
-            permissions,
-            permission_name,
-            False
-        )
+        has_permission = permissions_dict.get(permission_name, False)
 
         if not has_permission:
             raise HTTPException(
