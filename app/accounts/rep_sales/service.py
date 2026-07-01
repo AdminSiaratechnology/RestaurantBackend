@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from sqlalchemy import select, func
 
@@ -9,12 +9,19 @@ from app.accounts.bill.enum import PaymentStatus
 from app.accounts.rep_sales.schema import (
     DashboardSummaryResponse
 )
+from app.core.cache import Cache
 
 
 async def get_dashboard_summary_service(
     db,
     branch_id: int
 ):
+    today_str = date.today().isoformat()
+    cache_key = f"report:{branch_id}:sales_summary:{today_str}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return DashboardSummaryResponse(**cached)
+
     today = datetime.utcnow()
 
     start_of_week = (
@@ -80,7 +87,7 @@ async def get_dashboard_summary_service(
         1
     )
 
-    return DashboardSummaryResponse(
+    result = DashboardSummaryResponse(
         this_week_orders=this_week_orders,
         this_week_revenue=round(
             float(this_week_revenue),
@@ -88,6 +95,8 @@ async def get_dashboard_summary_service(
         ),
         avg_daily_orders=avg_daily_orders
     )
+    await Cache.set(cache_key, result.dict(), expire=21600)  # 6 hours
+    return result
 
 
 

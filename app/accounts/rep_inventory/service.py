@@ -2,6 +2,7 @@
 # app/accounts/rep_inventory/service.py
 # =========================================================
 
+from datetime import date
 from sqlalchemy import select, func
 
 from app.accounts.inventory.model import InventoryItem
@@ -11,12 +12,18 @@ from app.accounts.rep_inventory.schema import (
     LowStockItem,
     CategoryStockValue
 )
+from app.core.cache import Cache
 
 
 async def get_inventory_dashboard_service(
     db,
     branch_id: int
 ):
+    today_str = date.today().isoformat()
+    cache_key = f"report:{branch_id}:inventory:{today_str}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return InventoryDashboardResponse(**cached)
     total_items = await db.scalar(
         select(
             func.count(InventoryItem.id)
@@ -127,7 +134,7 @@ async def get_inventory_dashboard_service(
         for row in category_result.all()
     ]
 
-    return InventoryDashboardResponse(
+    result = InventoryDashboardResponse(
         total_items=total_items,
         stock_value=round(
             float(stock_value),
@@ -138,6 +145,8 @@ async def get_inventory_dashboard_service(
         low_stock_list=low_stock_list,
         category_stock_value=category_stock_value
     )
+    await Cache.set(cache_key, result.dict(), expire=21600)  # 6 hours
+    return result
 
 
 

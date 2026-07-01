@@ -1,4 +1,5 @@
 from sqlalchemy import select, func
+from datetime import date
 
 from app.accounts.bill.model import Bill
 from app.accounts.bill.enum import PaymentStatus
@@ -6,12 +7,19 @@ from app.accounts.rep_financial.schema import (
     DashboardSummaryResponse,
     TaxCollectedResponse
 )
+from app.core.cache import Cache
 
 
 async def dashboard_summary_service(
     db,
     branch_id: int
 ):
+    today = date.today().isoformat()
+    cache_key = f"report:{branch_id}:dashboard_summary:{today}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return DashboardSummaryResponse(**cached)
+
     revenue_result = await db.execute(
         select(
             func.coalesce(
@@ -36,16 +44,24 @@ async def dashboard_summary_service(
     total_revenue = revenue_result.scalar() or 0
     paid_orders = orders_result.scalar() or 0
 
-    return DashboardSummaryResponse(
+    result = DashboardSummaryResponse(
         total_revenue=round(float(total_revenue), 2),
         paid_orders=paid_orders
     )
+    await Cache.set(cache_key, result.dict(), expire=21600)  # 6 hours
+    return result
 
 
 async def get_tax_collected_service(
     db,
     branch_id: int
 ):
+    today = date.today().isoformat()
+    cache_key = f"report:{branch_id}:tax_collected:{today}"
+    cached = await Cache.get(cache_key)
+    if cached:
+        return TaxCollectedResponse(**cached)
+
     result = await db.execute(
         select(
             func.coalesce(
@@ -63,12 +79,14 @@ async def get_tax_collected_service(
 
     total_tax_collected = result.scalar() or 0
 
-    return TaxCollectedResponse(
+    tax_response = TaxCollectedResponse(
         total_tax_collected=round(
             float(total_tax_collected),
             2
         )
     )
+    await Cache.set(cache_key, tax_response.dict(), expire=21600)  # 6 hours
+    return tax_response
 
 
 

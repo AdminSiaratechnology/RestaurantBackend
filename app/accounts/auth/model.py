@@ -6,10 +6,22 @@ from app.accounts.client.model import Client
 from app.accounts.staff.model import Staff
 from app.accounts.auth.utils import verify_password, create_access_token
 from app.accounts.enum import UserRole
+from app.core.cache import Cache
+from app.core.redis import redis_client
+import time
+import json
+from uuid import uuid4
 
-
-async def authenticate_user(data, db, response, allowed_roles: list):
+async def authenticate_user(data, db, request, response, allowed_roles: list):
     email = data.email
+
+    # IP Rate Limiting
+    client_ip = request.client.host if request and request.client else "unknown"
+    rate_limit_key = f"login:{client_ip}"
+    
+    attempts = await redis_client.get(rate_limit_key)
+    if attempts and int(attempts) >= 5:
+        raise HTTPException(429, "Too many login attempts. Please try again later.")
 
     # 🔍 Search user in all tables
     user = None
@@ -34,10 +46,15 @@ async def authenticate_user(data, db, response, allowed_roles: list):
             break
 
     if not user:
+        # Increment failed attempts
+        await redis_client.incr(rate_limit_key)
+        await redis_client.expire(rate_limit_key, 900) # 15 mins
         raise HTTPException(401, "Invalid email or password")
 
     # 🔐 Password check
     if not verify_password(data.password, user.password_hash):
+        await redis_client.incr(rate_limit_key)
+        await redis_client.expire(rate_limit_key, 900)
         raise HTTPException(401, "Invalid email or password")
 
     # 🔐 Role restriction
@@ -45,9 +62,11 @@ async def authenticate_user(data, db, response, allowed_roles: list):
         raise HTTPException(403, "Access denied for this portal")
 
     # ✅ Create token payload
+    jti = str(uuid4())
     token_data = {
         "user_id": user.id,
-        "role": role.value
+        "role": role.value,
+        "jti": jti
     }
 
     access_token = create_access_token(token_data)
@@ -62,6 +81,18 @@ async def authenticate_user(data, db, response, allowed_roles: list):
         user_payload["role"] = user.role
     elif role == UserRole.CLIENT:
         user_payload["client_id"] = user.id
+
+    # Clear login attempts on success
+    await redis_client.delete(rate_limit_key)
+
+    # Store active session in Redis
+    session_data = {
+        "login_time": time.time(),
+        "device": request.headers.get("user-agent", "Unknown"),
+        "role": role.value,
+        "jwt_id": jti
+    }
+    await Cache.set(f"session:user:{user.id}", session_data, expire=86400)
 
     return {
         "access_token": access_token,

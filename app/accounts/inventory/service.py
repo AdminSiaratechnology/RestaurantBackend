@@ -3,6 +3,7 @@ from sqlalchemy import select
 from app.accounts.ingredient.model import ItemIngredient
 from app.accounts.inventory.model import InventoryItem
 from app.accounts.deps import calculate_status
+from app.core.cache import Cache
 
 
 async def consume_inventory_for_item(
@@ -44,6 +45,7 @@ async def consume_inventory_for_item(
             )
 
     # Deduct stock
+    branch_ids = set()
     for ingredient in ingredients:
 
         inventory = await db.get(
@@ -62,3 +64,8 @@ async def consume_inventory_for_item(
             inventory.stock_qty,
             inventory.reorder_level
         )
+        if inventory.branch_id:
+            branch_ids.add(inventory.branch_id)
+
+    for bid in branch_ids:
+        await Cache.delete_pattern(f"report:{bid}:inventory:*")

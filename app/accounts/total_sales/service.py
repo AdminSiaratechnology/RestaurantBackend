@@ -9,6 +9,7 @@ from app.accounts.order.model import Order, OrderItem
 from app.accounts.item.model import Item
 from app.accounts.pricing.model import Pricing
 from app.accounts.branch.model import Branch
+from app.core.cache import Cache
 
 
 def get_today_range():
@@ -26,6 +27,11 @@ class DashboardService:
         client_id,
         branch_id=None
     ):
+        today_str = date.today().isoformat()
+        cache_key = f"report:{branch_id or f'all_client_{client_id}'}:total_sales:{today_str}"
+        cached = await Cache.get(cache_key)
+        if cached is not None:
+            return cached
         conditions = [
             Bill.client_id == client_id,
             Bill.payment_status == PaymentStatus.complete
@@ -45,11 +51,13 @@ class DashboardService:
             ).where(*conditions)
         )
 
-        return {
+        result_dict = {
             "total_sales": float(
                 result.scalar() or 0
             )
         }
+        await Cache.set(cache_key, result_dict, expire=21600)
+        return result_dict
 
     @staticmethod
     async def get_orders_count(
@@ -57,6 +65,11 @@ class DashboardService:
         client_id,
         branch_id=None
     ):
+        today_str = date.today().isoformat()
+        cache_key = f"report:{branch_id or f'all_client_{client_id}'}:orders_count:{today_str}"
+        cached = await Cache.get(cache_key)
+        if cached is not None:
+            return cached
         conditions = [
             Bill.client_id == client_id,
             Bill.payment_status == PaymentStatus.complete
@@ -73,9 +86,11 @@ class DashboardService:
             ).where(*conditions)
         )
 
-        return {
+        result_dict = {
             "orders": result.scalar() or 0
         }
+        await Cache.set(cache_key, result_dict, expire=21600)
+        return result_dict
 
     @staticmethod
     async def get_gross_profit(
@@ -83,6 +98,11 @@ class DashboardService:
         client_id,
         branch_id=None
     ):
+        today_str = date.today().isoformat()
+        cache_key = f"report:{branch_id or f'all_client_{client_id}'}:gross_profit:{today_str}"
+        cached = await Cache.get(cache_key)
+        if cached is not None:
+            return cached
         conditions = [
             Bill.client_id == client_id,
             Bill.payment_status == PaymentStatus.complete
@@ -135,9 +155,11 @@ class DashboardService:
             food_cost_result.scalar() or 0
         )
 
-        return {
+        result_dict = {
             "gross_profit": round(
                 total_sales - food_cost,
                 2
             )
         }
+        await Cache.set(cache_key, result_dict, expire=21600)
+        return result_dict

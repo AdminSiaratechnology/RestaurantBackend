@@ -1,5 +1,5 @@
 
-from fastapi import APIRouter, Response, HTTPException, Depends
+from fastapi import APIRouter, Response, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from app.accounts.auth.model import authenticate_user
@@ -55,10 +55,12 @@ async def find_user_by_id_and_role(user_id: int, role: str, db):
 async def super_admin_login(
     data: LoginRequest,
     db: SessionDep,
+    request: Request,
 ):
     return await authenticate_user(
         data=data,
         db=db,
+        request=request,
         response=None,
         allowed_roles=[
             UserRole.SUPER_ADMIN,
@@ -72,10 +74,12 @@ async def super_admin_login(
 async def client_login(
     data: LoginRequest,
     db: SessionDep,
+    request: Request,
 ):
     return await authenticate_user(
         data=data,
         db=db,
+        request=request,
         response=None,
         allowed_roles=[
             UserRole.CLIENT,
@@ -105,3 +109,33 @@ async def change_password(
     await db.commit()
     
     return {"message": "Password changed successfully"}
+
+from app.core.cache import Cache
+import time
+
+@router.post("/logout")
+async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+    expire = 86400
+    jti = None
+    # Try to decode to get user_id to clear active session and get remaining TTL
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        user_id = payload.get("user_id")
+        jti = payload.get("jti")
+        exp = payload.get("exp")
+        if exp:
+            remaining = int(exp - time.time())
+            if remaining > 0:
+                expire = remaining
+        if user_id:
+            await Cache.delete(f"session:user:{user_id}")
+    except JWTError:
+        pass
+
+    if jti:
+        await Cache.set(f"blacklist:{jti}", "true", expire=expire)
+    else:
+        await Cache.set(f"blacklist:{token}", "true", expire=expire)
+
+    return {"message": "Successfully logged out"}

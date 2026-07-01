@@ -10,6 +10,8 @@ from app.accounts.category.model import Category
 from app.accounts.deps import get_client_if_accessible
 from app.accounts.item.model import Item
 from app.accounts.pricing.model import Pricing
+from app.core.cache import Cache
+from fastapi.encoders import jsonable_encoder
 
 
 async def get_items_service(
@@ -50,6 +52,11 @@ async def get_items_service(
     if not branch:
         raise HTTPException(404, "Branch not found")
 
+    cache_key = f"products:branch:{final_branch_id}:{limit}:{cursor}:{search}:{category_id}"
+    cached_data = await Cache.get(cache_key)
+    if cached_data:
+        return cached_data
+
     query = (
         select(Item)
         .options(selectinload(Item.pricings))
@@ -77,8 +84,11 @@ async def get_items_service(
         query = query.limit(limit)
 
     result = await db.execute(query)
+    items = result.scalars().all()
+    
+    await Cache.set(cache_key, jsonable_encoder(items), expire=600)
 
-    return result.scalars().all()
+    return items
 
 
 async def create_item_service(
@@ -146,6 +156,9 @@ async def create_item_service(
         .options(selectinload(Item.pricings))
         .where(Item.id == item.id)
     )
+
+    await Cache.delete_pattern(f"products:branch:{payload.branch_id}:*")
+    await Cache.delete(f"menu:branch:{payload.branch_id}")
 
     return result.scalar_one()
 
@@ -235,6 +248,9 @@ async def update_item_service(
         .where(Item.id == item.id)
     )
 
+    await Cache.delete_pattern(f"products:branch:{item.branch_id}:*")
+    await Cache.delete(f"menu:branch:{item.branch_id}")
+
     return result.scalar_one()
 
 
@@ -254,8 +270,13 @@ async def delete_item_service(
         current=current
     )
 
+    branch_id = item.branch_id
+
     await db.delete(item)
     await db.commit()
+
+    await Cache.delete_pattern(f"products:branch:{branch_id}:*")
+    await Cache.delete(f"menu:branch:{branch_id}")
 
     return {"message": "Item deleted"}
 
@@ -300,6 +321,9 @@ async def upload_image_service(
     item.image = image_url
 
     await db.commit()
+
+    await Cache.delete_pattern(f"products:branch:{item.branch_id}:*")
+    await Cache.delete(f"menu:branch:{item.branch_id}")
 
     return {
         "image_url": image_url
@@ -353,6 +377,9 @@ async def update_image_service(
 
     await db.commit()
     await db.refresh(item)
+
+    await Cache.delete_pattern(f"products:branch:{item.branch_id}:*")
+    await Cache.delete(f"menu:branch:{item.branch_id}")
 
     return {
         "message": "Image updated successfully",

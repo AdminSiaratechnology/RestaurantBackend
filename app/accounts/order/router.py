@@ -19,6 +19,7 @@ from app.accounts.inventory.service import (
     consume_inventory_for_item
 )
 from app.accounts.enum import UserRole
+from app.core.cache import Cache
 
 
 router = APIRouter(prefix="/order", tags=["Order"])
@@ -184,6 +185,11 @@ async def get_menu(
         # ✅ Tenant access
         await get_client_if_accessible(client_id, db, current)
 
+        cache_key = f"menu:branch:{branch_id}"
+        cached_menu = await Cache.get(cache_key)
+        if cached_menu:
+            return cached_menu
+
         result = await db.execute(
             select(Item)
             .options(
@@ -238,6 +244,8 @@ async def get_menu(
                 "tax": tax,
                 "total_price": total_price
             })
+
+        await Cache.set(cache_key, menu, expire=600)
 
         return menu
 
@@ -595,6 +603,8 @@ async def cancel_order(
         await db.commit()
         await db.refresh(order)
 
+        await Cache.delete(f"kitchen:branch:{order.branch_id}")
+
         return {
             "message": "Order cancelled successfully",
             "order_id": order.id,
@@ -692,6 +702,8 @@ async def update_order(
         # =========================
         await db.commit()
         await db.refresh(order)
+
+        await Cache.delete(f"kitchen:branch:{order.branch_id}")
 
         # =========================
         # ✅ Fetch Items for Response
@@ -1069,6 +1081,8 @@ async def update_order_item_status(
         await db.commit()
 
         await db.refresh(order_item)
+
+        await Cache.delete(f"kitchen:branch:{order.branch_id}")
 
         # =====================================================
         # ✅ RESPONSE
