@@ -8,9 +8,20 @@ from app.accounts.auth.utils import verify_password, create_access_token
 from app.accounts.enum import UserRole
 from app.core.cache import Cache
 from app.core.redis import redis_client
+from app.accounts.auditlog.service import create_audit_log
 import time
 import json
 from uuid import uuid4
+from datetime import datetime
+
+# Maps role value → DB table name for audit log
+_ROLE_TABLE_MAP = {
+    "super_admin": "superadmins",
+    "partner":     "partners",
+    "client":      "clients",
+    "staff":       "staffs",
+}
+
 
 async def authenticate_user(data, db, request, response, allowed_roles: list):
     email = data.email
@@ -93,6 +104,20 @@ async def authenticate_user(data, db, request, response, allowed_roles: list):
         "jwt_id": jti
     }
     await Cache.set(f"session:user:{user.id}", session_data, expire=86400)
+
+    # ✅ Audit Log: Record login event
+    login_time_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    await create_audit_log(
+        db=db,
+        actor=user,
+        action="login",
+        module="Auth",
+        table_name=_ROLE_TABLE_MAP.get(role.value, role.value),
+        record_id=user.id,
+        description=f"{role.value.replace('_', ' ').title()} '{getattr(user, 'name', user.email)}' logged in at {login_time_str}.",
+        status="success",
+        request=request,
+    )
 
     return {
         "access_token": access_token,

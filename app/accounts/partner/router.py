@@ -3,7 +3,8 @@
 from fastapi import (
     APIRouter,
     Depends,
-    HTTPException
+    HTTPException,
+    Request,
 )
 
 from app.db.config import SessionDep
@@ -38,12 +39,14 @@ router = APIRouter(
 async def create_client(
     data: ClientCreate,
     db: SessionDep,
+    request: Request,
     current=Depends(access_two)
 ):
     return await create_client_service(
         db,
         data,
-        current
+        current,
+        request,
     )
 
 
@@ -71,13 +74,15 @@ async def update_client(
     client_id: int,
     data: ClientUpdate,
     db: SessionDep,
+    request: Request,
     current=Depends(access_two)
 ):
     return await update_client_service(
         db,
         client_id,
         data,
-        current
+        current,
+        request,
     )
 
 
@@ -87,12 +92,14 @@ async def update_client(
 async def delete_client(
     client_id: int,
     db: SessionDep,
+    request: Request,
     current=Depends(access_two)
 ):
     return await delete_client_service(
         db,
         client_id,
-        current
+        current,
+        request,
     )
 
 
@@ -102,10 +109,39 @@ async def delete_client(
 async def activate_client(
     client_id: int,
     db: SessionDep,
+    request: Request,
     current=Depends(access_two)
 ):
     return await activate_client_service(
         db,
         client_id,
-        current
+        current,
+        request,
+    )
+
+
+
+# app/accounts/partner/router.py
+
+from app.accounts.partner.service import (
+    partner_dashboard_service
+)
+from app.accounts.partner.schema import (
+    PartnerDashboardOut
+)
+
+
+@router.get(
+    "/dashboard",
+    response_model=PartnerDashboardOut
+)
+async def partner_dashboard(
+    db: SessionDep,
+    current=Depends(access_two),
+    partner_id: int | None = None
+):
+    return await partner_dashboard_service(
+        db,
+        current,
+        partner_id
     )

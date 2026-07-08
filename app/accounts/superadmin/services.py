@@ -156,14 +156,14 @@ async def update_partner_service(
 
     if not partner:
         raise HTTPException(
-            404,
-            "Partner not found"
+            status_code=404,
+            detail="Partner not found"
         )
 
-    if data.name:
+    if data.name is not None:
         partner.name = data.name
 
-    if data.email:
+    if data.email is not None:
 
         result = await db.execute(
             select(Partner).where(
@@ -174,16 +174,11 @@ async def update_partner_service(
 
         if result.scalar_one_or_none():
             raise HTTPException(
-                400,
-                "Email already exists"
+                status_code=400,
+                detail="Email already exists"
             )
 
         partner.email = data.email
-
-    if data.password:
-        partner.password_hash = pwd_context.hash(
-            data.password
-        )
 
     if data.is_active is not None:
         partner.is_active = data.is_active
