@@ -13,6 +13,9 @@ from app.accounts.superadmin.schemas import (
     PartnerCreate,
     PartnerOut
 )
+from app.accounts.partner.schema import (
+    PartnerUpdate
+)
 
 from app.accounts.superadmin.services import (
     create_superadmin_service,
@@ -100,11 +103,9 @@ async def create_partner(
 )
 async def update_partner(
     partner_id: int,
-    data: PartnerCreate,
+    data: PartnerUpdate,
     db: SessionDep,
-    current=Depends(
-        require_super_admin
-    )
+    current=Depends(require_super_admin)
 ):
     return await update_partner_service(
         db=db,

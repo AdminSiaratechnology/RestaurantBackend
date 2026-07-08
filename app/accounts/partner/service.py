@@ -1,12 +1,15 @@
 # app/accounts/partner/service.py
 
-from fastapi import HTTPException
-from sqlalchemy import select
+from fastapi import HTTPException, Request
+from sqlalchemy import select, func
 from passlib.context import CryptContext
+from datetime import datetime, timedelta
 
 from app.accounts.client.model import Client
 from app.accounts.partner.model import Partner
 from app.accounts.deps import UserRole
+from app.accounts.auditlog.service import create_audit_log
+from app.accounts.auditlog.utils import model_to_dict
 
 pwd_context = CryptContext(
     schemes=["bcrypt"],
@@ -21,7 +24,8 @@ pwd_context = CryptContext(
 async def create_client_service(
     db,
     data,
-    current
+    current,
+    request: Request,
 ):
     if current["role"] == UserRole.SUPER_ADMIN.value:
 
@@ -77,12 +81,20 @@ async def create_client_service(
     await db.commit()
     await db.refresh(client)
 
+    await create_audit_log(
+        db=db,
+        actor=current,
+        action="create",
+        module="Client",
+        table_name="clients",
+        record_id=client.id,
+        new_data=model_to_dict(client),
+        description=f"Created client '{client.name}'.",
+        status="success",
+        request=request,
+    )
+
     return client
-
-
-# =====================================
-# GET CLIENTS
-# =====================================
 
 async def get_my_clients_service(
     db,
@@ -125,7 +137,8 @@ async def update_client_service(
     db,
     client_id: int,
     data,
-    current
+    current,
+    request: Request,
 ):
     result = await db.execute(
         select(Client).where(
@@ -142,18 +155,18 @@ async def update_client_service(
         )
 
     if current["role"] == UserRole.PARTNER.value:
-
         if client.partner_id != current["user"].id:
             raise HTTPException(
                 403,
                 "Not your client"
             )
 
+    old_data = model_to_dict(client)
+
     if data.name is not None:
         client.name = data.name
 
     if data.email is not None:
-
         result = await db.execute(
             select(Client).where(
                 Client.email == data.email,
@@ -169,18 +182,25 @@ async def update_client_service(
 
         client.email = data.email
 
-    if data.password is not None:
-        client.password_hash = (
-            pwd_context.hash(
-                data.password
-            )
-        )
-
     if data.is_active is not None:
         client.is_active = data.is_active
 
     await db.commit()
     await db.refresh(client)
+
+    await create_audit_log(
+        db=db,
+        actor=current,
+        action="update",
+        module="Client",
+        table_name="clients",
+        record_id=client.id,
+        old_data=old_data,
+        new_data=model_to_dict(client),
+        description=f"Updated client '{client.name}'.",
+        status="success",
+        request=request,
+    )
 
     return client
 
@@ -192,7 +212,8 @@ async def update_client_service(
 async def delete_client_service(
     db,
     client_id: int,
-    current
+    current,
+    request: Request,
 ):
     result = await db.execute(
         select(Client).where(
@@ -216,10 +237,25 @@ async def delete_client_service(
                 "Not your client"
             )
 
+    old_data = model_to_dict(client)
     client.is_active = False
 
     await db.commit()
     await db.refresh(client)
+
+    await create_audit_log(
+        db=db,
+        actor=current,
+        action="delete",
+        module="Client",
+        table_name="clients",
+        record_id=client.id,
+        old_data=old_data,
+        new_data=None,
+        description=f"Deleted client '{client.name}'.",
+        status="success",
+        request=request,
+    )
 
     return {
         "message":
@@ -234,7 +270,8 @@ async def delete_client_service(
 async def activate_client_service(
     db,
     client_id: int,
-    current
+    current,
+    request: Request,
 ):
     result = await db.execute(
         select(Client).where(
@@ -264,12 +301,158 @@ async def activate_client_service(
             "Client already active"
         )
 
+    old_data = model_to_dict(client)
     client.is_active = True
 
     await db.commit()
     await db.refresh(client)
 
+    await create_audit_log(
+        db=db,
+        actor=current,
+        action="update",
+        module="Client",
+        table_name="clients",
+        record_id=client.id,
+        old_data=old_data,
+        new_data=model_to_dict(client),
+        description=f"Activated client '{client.name}'.",
+        status="success",
+        request=request,
+    )
+
     return {
         "message":
         "Client activated successfully"
+    }
+
+
+
+
+async def partner_dashboard_service(
+    db,
+    current,
+    partner_id: int | None = None
+):
+
+    if current["role"] == UserRole.SUPER_ADMIN.value:
+
+        if partner_id:
+            base_query = (
+                select(Client)
+                .where(Client.partner_id == partner_id)
+            )
+        else:
+            base_query = select(Client)
+
+    else:
+
+        base_query = (
+            select(Client)
+            .where(
+                Client.partner_id == current["user"].id
+            )
+        )
+
+    # --------------------------
+    # Total Clients
+    # --------------------------
+
+    total_clients = await db.scalar(
+        select(func.count())
+        .select_from(base_query.subquery())
+    )
+
+    # --------------------------
+    # Active Clients
+    # --------------------------
+
+    active_query = base_query.where(
+        Client.is_active == True
+    )
+
+    active_clients = await db.scalar(
+        select(func.count())
+        .select_from(active_query.subquery())
+    )
+
+    # --------------------------
+    # Inactive Clients
+    # --------------------------
+
+    inactive_query = base_query.where(
+        Client.is_active == False
+    )
+
+    inactive_clients = await db.scalar(
+        select(func.count())
+        .select_from(inactive_query.subquery())
+    )
+
+    # --------------------------
+    # Last 7 Days
+    # --------------------------
+
+    seven_days = datetime.utcnow() - timedelta(days=7)
+
+    new_query = base_query.where(
+        Client.created_at >= seven_days
+    )
+
+    new_clients = await db.scalar(
+        select(func.count())
+        .select_from(new_query.subquery())
+    )
+
+    # --------------------------
+    # Previous 7 Days
+    # --------------------------
+
+    previous_start = seven_days - timedelta(days=7)
+
+    previous_query = base_query.where(
+        Client.created_at >= previous_start,
+        Client.created_at < seven_days
+    )
+
+    previous_clients = await db.scalar(
+        select(func.count())
+        .select_from(previous_query.subquery())
+    )
+
+    # --------------------------
+    # Growth %
+    # --------------------------
+
+    if previous_clients == 0:
+
+        growth = (
+            100.0
+            if new_clients > 0
+            else 0.0
+        )
+
+    else:
+
+        growth = round(
+            (
+                (new_clients - previous_clients)
+                / previous_clients
+            ) * 100,
+            2
+        )
+
+    return {
+
+        "total_clients": total_clients,
+
+        "active_clients": active_clients,
+
+        "inactive_clients": inactive_clients,
+
+        "new_clients_last_7_days": new_clients,
+
+        "growth_percentage": growth,
+
+        "total_active": active_clients
     }

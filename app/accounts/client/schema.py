@@ -12,7 +12,6 @@ class ClientCreate(BaseModel):
 class ClientUpdate(BaseModel):
     name: Optional[str]
     email: Optional[EmailStr]
-    password: Optional[str]
     is_active: Optional[bool]
 
 

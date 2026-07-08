@@ -1,271 +1,166 @@
-from fastapi import Depends
-from sqlalchemy import func, select
-from app import db
-from app.accounts.auditlog.model import AuditLog
-from fastapi import APIRouter
-from app.accounts.deps import require_super_admin
-from app.accounts.partner.model import Partner
-from app.accounts.partner.schema import PartnerCreate
-from app.api.routes import partner
-from app.db.config import SessionDep
+from typing import Any, List, Optional
 from datetime import datetime
-from app.models import user
+import math
+from fastapi import APIRouter, Depends, Query, HTTPException
 
-router = APIRouter(prefix="/auditlog", tags=["Audit Log"])
+from app.db.config import SessionDep
+from app.accounts.deps import require_roles
+from app.accounts.enum import UserRole
 
+from .schema import (
+    AuditLogResponse,
+    AuditLogListResponse,
+    AuditLogSummaryResponse,
+    TimelineResponse,
+    HistoryResponse
+)
+from .service import (
+    get_paginated_logs,
+    get_log_by_id,
+    get_recent_logs,
+    get_dashboard_summary,
+    get_user_timeline,
+    get_module_history
+)
 
-async def log_action(
+router = APIRouter(
+    prefix="/audit-logs",
+    tags=["Audit Logs"]
+)
+
+# Authentication dependency constraint
+# Blocks Clients and Staff from viewing audit logs; only allows Super Admin & Partner.
+audit_log_access = require_roles(UserRole.SUPER_ADMIN, UserRole.PARTNER)
+
+@router.get("", response_model=AuditLogListResponse)
+async def list_audit_logs(
     db: SessionDep,
-    current: dict | None,
-    action: str,
-    table_name: str,
-    record_id: str,
-    old_data: dict | None = None,
-    new_data: dict | None = None,
-    ip: str | None = None
-):
-    log = AuditLog(
-        table_name=table_name,
-        record_id=str(record_id),
+    current_user=Depends(audit_log_access),
+    page: int = Query(1, ge=1, description="Page number"),
+    page_size: int = Query(20, ge=1, le=100, description="Items per page"),
+    actor_type: Optional[str] = Query(None, description="Filter by actor type (partner/client/super_admin/system)"),
+    actor_id: Optional[int] = Query(None, description="Filter by actor ID"),
+    action: Optional[str] = Query(None, description="Filter by action name"),
+    module: Optional[str] = Query(None, description="Filter by module"),
+    table_name: Optional[str] = Query(None, description="Filter by affected table"),
+    record_id: Optional[int] = Query(None, description="Filter by affected record ID"),
+    status: Optional[str] = Query(None, description="Filter by status (success/failed)"),
+    from_date: Optional[datetime] = Query(None, description="Filter by from date"),
+    to_date: Optional[datetime] = Query(None, description="Filter by to date"),
+    sort: str = Query("newest", regex="^(newest|oldest)$", description="Sort order: newest or oldest")
+) -> Any:
+    """
+    List audit logs matching search filters with pagination and scoping.
+    """
+    logs, total = await get_paginated_logs(
+        db=db,
+        current_user=current_user,
+        page=page,
+        page_size=page_size,
+        actor_type=actor_type,
+        actor_id=actor_id,
         action=action,
-        old_data=old_data,
-        new_data=new_data,
-        changed_by=current["user"].id if current else None,
-        ip_address=ip
+        module=module,
+        table_name=table_name,
+        record_id=record_id,
+        status=status,
+        from_date=from_date,
+        to_date=to_date,
+        sort=sort
     )
-
-    db.add(log)
-
-    async def log_action(
-        db: SessionDep,
-        current: dict | None,
-        action: str,
-        table_name: str,
-        record_id: str,
-        old_data: dict | None = None,
-        new_data: dict | None = None,
-        ip: str | None = None
-    ):
-        log = AuditLog(
-            table_name=table_name,
-            record_id=str(record_id),
-            action=action,
-            old_data=old_data,
-            new_data=new_data,
-            changed_by=current["user"].id if current else None,
-            ip_address=ip
-        )
-
-        db.add(log)
-        await db.commit()   # ✅ important
-
-
-
-@router.get("/audit-logs")
-async def get_logs(
-    db: SessionDep,
-    current=Depends(require_super_admin),
-    page: int = 1,
-    page_size: int = 10,
-    table_name: str | None = None,
-    action: str | None = None,
-    changed_by: int | None = None,
-):
-    query = select(AuditLog)
-
-    if table_name:
-        query = query.where(AuditLog.table_name == table_name)
-
-    if action:
-        query = query.where(AuditLog.action == action)
-
-    if changed_by:
-        query = query.where(AuditLog.changed_by == changed_by)
-
-    # 🔢 Total count
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_query)).scalar()
-
-    # 📄 Pagination
-    offset = (page - 1) * page_size
-
-    query = (
-        query.order_by(AuditLog.timestamp.desc())
-        .offset(offset)
-        .limit(page_size)
-    )
-
-    result = await db.execute(query)
-
+    total_pages = math.ceil(total / page_size) if page_size else 1
     return {
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "data": result.scalars().all()
+        "message": "Audit logs fetched successfully",
+        "data": logs,
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_records": total,
+            "total_pages": total_pages
+        }
     }
 
-    await log_action(
-        db,
-        current,
-        action="CREATE",
-        table_name="partners",
-        record_id=partner.id,
-        new_data={"name": partner.name}
+@router.get("/recent", response_model=List[AuditLogResponse])
+async def get_recent_activities(
+    db: SessionDep,
+    current_user=Depends(audit_log_access),
+    limit: int = Query(20, ge=1, le=100, description="Limit count")
+) -> Any:
+    """
+    Get the latest 20 activities performed across the system.
+    """
+    return await get_recent_logs(db=db, current_user=current_user, limit=limit)
+
+@router.get("/summary", response_model=AuditLogSummaryResponse)
+async def get_dashboard_activity_summary(
+    db: SessionDep,
+    current_user=Depends(audit_log_access)
+) -> Any:
+    """
+    Retrieve audit statistics summary for today (logins, logouts, creates, updates, deletes, active users).
+    """
+    return await get_dashboard_summary(db=db, current_user=current_user)
+
+@router.get("/timeline/{actor_type}/{actor_id}", response_model=List[TimelineResponse])
+async def get_actor_timeline(
+    actor_type: str,
+    actor_id: int,
+    db: SessionDep,
+    current_user=Depends(audit_log_access)
+) -> Any:
+    """
+    Get activity history timeline for a specific Partner or Client.
+    """
+    logs = await get_user_timeline(
+        db=db,
+        current_user=current_user,
+        actor_type=actor_type,
+        actor_id=actor_id
     )
-
-    await db.commit()
-
-
-    await log_action(
-        db,
+    # Map to schema structure (action, performed_by, created_at)
+    return [
         {
-            "user": user,
-            "role": user.role
-        },
-        action="LOGIN",
-        table_name="auth",
-        record_id=user.id,
-        new_data={"email": user.email}
-    )
+            "action": log.action,
+            "performed_by": log.actor_name or log.actor_email or "System",
+            "created_at": log.created_at
+        } for log in logs
+    ]
 
-    await db.commit()
-
-    
-@router.post("/partners")
-async def create_partner(
-    data: PartnerCreate,
+@router.get("/module/{table_name}/{record_id}", response_model=List[HistoryResponse])
+async def get_record_changelog(
+    table_name: str,
+    record_id: int,
     db: SessionDep,
-    current=Depends(require_super_admin)
-):
-    partner = Partner(**data.dict())
-    db.add(partner)
-    await db.commit()
-    await db.refresh(partner)
-
-    # ✅ AUDIT LOG
-    await log_action(
-        db,
-        current,
-        action="CREATE",
-        table_name="partners",
-        record_id=partner.id,
-        new_data={"name": partner.name}
+    current_user=Depends(audit_log_access)
+) -> Any:
+    """
+    Retrieve change history list for a specific record.
+    """
+    logs = await get_module_history(
+        db=db,
+        current_user=current_user,
+        table_name=table_name,
+        record_id=record_id
     )
-    return partner
+    return [
+        {
+            "id": log.id,
+            "action": log.action,
+            "performed_by": log.actor_name or log.actor_email or "System",
+            "created_at": log.created_at
+        } for log in logs
+    ]
 
-
-@router.put("/partners/{partner_id}")
-async def update_partner(
-    partner_id: int,
-    data: PartnerCreate,
+@router.get("/{id}", response_model=AuditLogResponse)
+async def read_audit_log_detail(
+    id: int,
     db: SessionDep,
-    current=Depends(require_super_admin)
-):
-    partner = await db.get(Partner, partner_id)
-
-    old_data = {"name": partner.name}
-
-    for key, value in data.dict(exclude_unset=True).items():
-        setattr(partner, key, value)
-
-    await db.commit()
-
-    # ✅ AUDIT LOG
-    await log_action(
-        db,
-        current,
-        action="UPDATE",
-        table_name="partners",
-        record_id=partner.id,
-        old_data=old_data,
-        new_data=data.dict(exclude_unset=True)
-    )
-    return partner
-
-
-
-@router.delete("/partners/{partner_id}")
-async def delete_partner(
-    partner_id: int,
-    db: SessionDep,
-    current=Depends(require_super_admin)
-):
-    partner = await db.get(Partner, partner_id)
-
-    partner.is_active = False
-    await db.commit()
-
-    # ✅ AUDIT LOG
-    await log_action(
-        db,
-        current,
-        action="DELETE",
-        table_name="partners",
-        record_id=partner.id,
-        old_data={"name": partner.name}
-    )
-    return {"msg": "Partner deactivated"}
-
-
-@router.get("/audit-logs/partners")
-async def get_partner_logs(
-    db: SessionDep,
-    current=Depends(require_super_admin),
-    page: int = 1,
-    page_size: int = 10,
-):
-    query = select(AuditLog).where(AuditLog.table_name == "partners")
-
-    count_query = select(func.count()).select_from(query.subquery())
-    total = (await db.execute(count_query)).scalar()
-
-    offset = (page - 1) * page_size
-
-    result = await db.execute(
-        query.order_by(AuditLog.timestamp.desc())
-        .offset(offset)
-        .limit(page_size)
-    )
-
-    return {
-        "total": total,
-        "page": page,
-        "data": result.scalars().all()
-    }
-
-
-from sqlalchemy import select, and_
-
-@router.get("/audit-logs")
-async def get_partner_logs(
-    db: SessionDep,
-    current=Depends(require_super_admin),
-    partner_id: int | None = None,
-    start_date: datetime | None = None,
-    end_date: datetime | None = None,
-    skip: int = 0,
-    limit: int = 20,
-):
-    query = select(AuditLog)
-
-    filters = []
-
-    if partner_id:
-        filters.append(AuditLog.record_id == str(partner_id))
-
-    if start_date:
-        filters.append(AuditLog.timestamp >= start_date)
-
-    if end_date:
-        filters.append(AuditLog.timestamp <= end_date)
-
-    if filters:
-        query = query.where(and_(*filters))
-
-    query = query.order_by(AuditLog.timestamp.desc()).offset(skip).limit(limit)
-
-    result = await db.execute(query)
-
-    logs = result.scalars().all()
-
-    return logs
+    current_user=Depends(audit_log_access)
+) -> Any:
+    """
+    Retrieve specific audit log details (includes old_data and new_data values).
+    """
+    log = await get_log_by_id(db=db, current_user=current_user, log_id=id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Audit log not found")
+    return log
