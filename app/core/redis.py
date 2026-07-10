@@ -15,6 +15,7 @@ Redis failures are always caught and logged — they never crash the API.
 import logging
 import redis.asyncio as redis
 from fastapi import APIRouter
+from decouple import config
 
 logger = logging.getLogger(__name__)
 
@@ -22,18 +23,26 @@ logger = logging.getLogger(__name__)
 # Connection Pool
 # ---------------------------------------------------------------------------
 
-pool = redis.ConnectionPool(
-    host="localhost",
-    port=6379,
-    db=0,
+# pool = redis.ConnectionPool(
+#     host="localhost",
+#     port=6379,
+#     db=0,
+#     decode_responses=True,
+#     max_connections=100,
+# )
+
+# # Shared async Redis client — reuses the connection pool across all requests.
+# redis_client: redis.Redis = redis.Redis(connection_pool=pool)
+
+REDIS_URL = config("REDIS_URL", default="redis://localhost:6379")
+
+pool = redis.ConnectionPool.from_url(
+    REDIS_URL,
     decode_responses=True,
     max_connections=100,
 )
 
-# Shared async Redis client — reuses the connection pool across all requests.
-redis_client: redis.Redis = redis.Redis(connection_pool=pool)
-
-
+redis_client = redis.Redis(connection_pool=pool)
 # ---------------------------------------------------------------------------
 # Health Check
 # ---------------------------------------------------------------------------
