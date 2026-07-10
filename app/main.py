@@ -60,6 +60,7 @@ app.add_middleware(
         "http://localhost:3000",  # CRA dev server
         "https://restaurantsiara.netlify.app",
         "https://restaurantsiaralive.netlify.app",
+        "https://rmssuperadmin.netlify.app",
         
     ],
     allow_credentials=True,
