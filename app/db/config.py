@@ -49,18 +49,15 @@
 # SessionDep = Annotated[AsyncSession, Depends(get_db)]
 
 
-
-
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from fastapi import Depends
 from typing import AsyncGenerator, Annotated
-import ssl
 
 from app.core.settings import settings
 
 DATABASE_URL = settings.DATABASE_URL
 
-ssl_context = ssl.create_default_context()
+is_render = "render.com" in DATABASE_URL
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -68,9 +65,11 @@ engine = create_async_engine(
     future=True,
     pool_pre_ping=True,
     pool_recycle=300,
+    pool_size=5,
+    max_overflow=10,
     connect_args={
-        "ssl": ssl_context
-    } if "render.com" in DATABASE_URL else {}
+        "ssl": "require"
+    } if is_render else {},
 )
 
 async_session = async_sessionmaker(
@@ -86,7 +85,5 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
-        finally:
-            await session.close()
 
 SessionDep = Annotated[AsyncSession, Depends(get_db)]
