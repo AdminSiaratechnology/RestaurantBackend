@@ -1,6 +1,5 @@
 from fastapi import Depends, HTTPException, status, Request
 from sqlalchemy import select
-from app.accounts import role
 from app.db.config import SessionDep
 from app.core.security import decode_token
 from app.accounts.enum import UserRole
@@ -10,7 +9,6 @@ from app.accounts.client.model import Client
 from app.accounts.staff.model import Staff
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.accounts.brand.model import Brand
-
 from app.accounts.permission.model import StaffPermission
 from sqlalchemy.orm import selectinload
 from app.accounts.staff.model import StaffRole

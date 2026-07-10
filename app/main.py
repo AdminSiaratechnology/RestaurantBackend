@@ -4,6 +4,7 @@ from app.db.config import engine
 from app.models import *
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from sqlalchemy import text
 from app.core.redis import redis_client, close_redis_connection, check_redis_health
 
 
@@ -69,22 +70,44 @@ app.add_middleware(
 
 from app.db.create_indexes import create_db_indexes
 
+# @app.on_event("startup")
+# async def startup():
+#     print("STARTUP BEGIN")
+
+#     async with engine.begin() as conn:
+#         print("DB CONNECTED")
+
+#         await conn.run_sync(Base.metadata.create_all)
+
+#         print("TABLES CREATED")
+
+#     await create_db_indexes()
+
+#     await check_redis_health()
+
+#     print("STARTUP END")
+
+
 @app.on_event("startup")
 async def startup():
     print("STARTUP BEGIN")
 
-    async with engine.begin() as conn:
-        print("DB CONNECTED")
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
 
-        await conn.run_sync(Base.metadata.create_all)
+        print("Database Connected")
 
-        print("TABLES CREATED")
+        await create_db_indexes()
 
-    await create_db_indexes()
+        await check_redis_health()
 
-    await check_redis_health()
+        print("STARTUP END")
 
-    print("STARTUP END")
+    except Exception as e:
+        print("DATABASE ERROR:", repr(e))
+        raise
+
 
 @app.on_event("shutdown")
 async def shutdown():
