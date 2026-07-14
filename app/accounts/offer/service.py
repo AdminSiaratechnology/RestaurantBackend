@@ -1,18 +1,20 @@
 # app/accounts/offer/service.py
 
 from datetime import datetime, timezone
-
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
-
 from app.accounts.offer.model import Offer
 from app.accounts.offer.schema import (
     OfferCreate,
     OfferUpdate
 )
 from app.accounts.deps import UserRole
-
+from sqlalchemy import select
+from datetime import datetime
+from app.accounts.branch.model import Branch
+from app.accounts.offer.model import Offer
+from app.accounts.enum import UserRole
 
 # =========================================
 # CREATE OFFER
@@ -304,12 +306,7 @@ async def delete_offer_service(
     }
 
 
-from sqlalchemy import select
-from datetime import datetime
 
-from app.accounts.branch.model import Branch
-from app.accounts.offer.model import Offer
-from app.accounts.enum import UserRole
 
 
 async def get_offers_all_branches_service(
