@@ -106,3 +106,26 @@ class TableDetailsOut(BaseModel):
     table_name: str
     status: str
     orders: list[TableOrderOut]
+
+
+
+class TableOrderItemOut(BaseModel):
+    order_item_id: int
+    item_id: int
+    item_name: str
+    quantity: int
+    price: float
+    subtotal: float
+    order_status: str
+
+
+class TableDetailsOut(BaseModel):
+    table_id: int
+    table_name: str
+    status: str
+
+    customer_name: str | None
+    order_id: int | None
+    total_amount: float
+
+    items: list[TableOrderItemOut]

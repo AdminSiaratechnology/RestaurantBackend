@@ -11,6 +11,11 @@ from app.accounts.order.model import Order, OrderItem
 from app.accounts.deps import UserRole
 from app.core.cache import Cache
 from fastapi.encoders import jsonable_encoder
+from sqlalchemy.orm import selectinload
+from sqlalchemy import select
+
+from app.accounts.order.model import Order, OrderItem
+from app.accounts.item.model import Item
 
 
 class TableService:
@@ -334,3 +339,72 @@ class TableService:
             })
 
         return response
+
+    @staticmethod
+    async def get_table_details(
+        db,
+        table_id,
+        role,
+        user
+    ):
+        table = await TableService.get_table_by_id(
+            db,
+            table_id,
+            role,
+            user
+        )
+
+        if table.status != TableStatus.occupied:
+            raise HTTPException(
+                400,
+                "Table is not occupied."
+            )
+
+        result = await db.execute(
+            select(Order)
+            .options(
+                selectinload(Order.order_items)
+                .selectinload(OrderItem.item)
+            )
+            .where(
+                Order.table_id == table.id,
+                Order.status.notin_(
+                    ["completed", "paid", "cancelled"]
+                )
+            )
+            .order_by(Order.created_at.desc())
+        )
+
+        order = result.scalars().first()
+
+        if not order:
+            return {
+                "table_id": table.id,
+                "table_name": table.name,
+                "status": table.status.value,
+                "customer_name": None,
+                "order_id": None,
+                "total_amount": 0,
+                "items": []
+            }
+
+        return {
+            "table_id": table.id,
+            "table_name": table.name,
+            "status": table.status.value,
+            "customer_name": order.customer_name,
+            "order_id": order.id,
+            "total_amount": order.total_amount,
+            "items": [
+                {
+                    "order_item_id": item.id,
+                    "item_id": item.item.id,
+                    "item_name": item.item.name,
+                    "quantity": item.quantity,
+                    "price": item.price,
+                    "subtotal": item.total_price,
+                    "order_status": item.order_status
+                }
+                for item in order.order_items
+            ]
+        }

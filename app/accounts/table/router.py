@@ -17,6 +17,7 @@ from app.accounts.deps import (
 
 from app.accounts.table.schema import (
     TableCreate,
+    TableDetailsOut,
     TableUpdate,
     TableOut,
     TableStatus,
@@ -194,4 +195,23 @@ async def table_dashboard_all_branches(
     return await TableService.table_dashboard_all_branches(
         db=db,
         client_id=current["user"].id
+    )
+
+
+
+
+@router.get(
+    "/{table_id}/details",
+    response_model=TableDetailsOut
+)
+async def get_table_details(
+    table_id: int,
+    db: SessionDep,
+    current=Depends(access_four)
+):
+    return await TableService.get_table_details(
+        db=db,
+        table_id=table_id,
+        role=current["role"],
+        user=current["user"]
     )
