@@ -12,8 +12,7 @@ from app.accounts.item.model import Item
 from app.accounts.order.model import Order, OrderItem
 from app.accounts.order.schema import OrderCreate, OrderResponse, OrderUpdate, OrderItemStatusResponse, OrderItemStatusUpdate, CursorPaginatedResponse
 from app.accounts.pricing.model import Pricing
-from app.accounts.table.model import Table
-from app.accounts.table.schema import TableStatus
+from app.accounts.table.model import Table, TableStatus
 
 from app.accounts.inventory.service import (
     consume_inventory_for_item
@@ -572,6 +571,7 @@ async def get_orders_paginated(
 # cancel order_________________-__+___+__+_+_+_+_+_+_+_+_+
 
 @router.patch("/cancel_order/{order_id}")
+@router.patch("/cancel_order/{order_id}")
 async def cancel_order(
     order_id: int,
     db: SessionDep,
@@ -597,6 +597,13 @@ async def cancel_order(
         if order.status.lower() == "served":
             raise HTTPException(400, "Served orders cannot be cancelled")
 
+        # ✅ Update table status if table exists
+        if order.table_id:
+            table = await db.get(Table, order.table_id)
+            if table:
+                table.status = TableStatus.available
+                await Cache.delete(f"tables:branch:{table.branch_id}")
+
         # ✅ Update status instead of delete
         order.status = "cancelled"
 
@@ -618,7 +625,6 @@ async def cancel_order(
     except SQLAlchemyError:
         await db.rollback()
         raise HTTPException(500, "Database error while cancelling order")
-
 
 # =========================
 # ✅ UPDATE ORDER
@@ -832,21 +838,35 @@ async def create_order(
         db.add(order)
 
         await db.flush()
-        # update table status
         
+        # =====================================================
+        # UPDATE TABLE STATUS
+        # =====================================================
         if order.table_id:
-            table = await db.get(
-                Table,
-                order.table_id
-            )
+            table = await db.get(Table, order.table_id)
 
-            if not table:
+            if table is None:
+                raise HTTPException(404, "Table not found")
+
+            if table.branch_id != order.branch_id:
                 raise HTTPException(
-                    status_code=404,
-                    detail="Table not found"
+                    400,
+                    "Selected table does not belong to this branch."
+                )
+
+            if table.status == TableStatus.occupied:
+                raise HTTPException(
+                    400,
+                    "Table is already occupied."
                 )
 
             table.status = TableStatus.occupied
+            await Cache.delete(f"tables:branch:{table.branch_id}")
+            await db.flush()
+
+        # =====================================================
+        # VALIDATE AND ADD ITEMS
+        # =====================================================
         if not data.items:
             raise HTTPException(400, "Order must contain at least one item")
 
@@ -911,8 +931,6 @@ async def create_order(
         await db.rollback()
         print("CREATE ORDER UNEXPECTED ERROR:", str(e))
         raise HTTPException(500, f"Something went wrong: {str(e)}")
-
-
 # =========================
 # ✅ UPDATE ORDER ITEM STATUS
 # =========================

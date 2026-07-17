@@ -29,6 +29,7 @@ from app.accounts.pricing.model import Pricing
 
 from app.accounts.table.model import Table
 from app.accounts.table.schema import TableStatus
+from app.core.cache import Cache
 router = APIRouter(
     prefix="/bill",
     tags=["Bill"]
@@ -662,17 +663,20 @@ async def update_bill_status(
             order.table_id
         )
 
-        if data.payment_status == PaymentStatus.complete:
-            table.status = TableStatus.available
+        if table:
+            if data.payment_status == PaymentStatus.complete:
+                table.status = TableStatus.available
 
-        elif data.payment_status in [
-            PaymentStatus.pending,
-            PaymentStatus.edited,
-        ]:
-            table.status = TableStatus.occupied
+            elif data.payment_status in [
+                PaymentStatus.pending,
+                PaymentStatus.edited,
+            ]:
+                table.status = TableStatus.occupied
 
-        elif data.payment_status == PaymentStatus.cancel:
-            table.status = TableStatus.occupied
+            elif data.payment_status == PaymentStatus.cancel:
+                table.status = TableStatus.occupied
+            
+            await Cache.delete(f"tables:branch:{table.branch_id}")
 
     # FIXED: This block was incorrectly indented
     if data.payment_status == PaymentStatus.complete:

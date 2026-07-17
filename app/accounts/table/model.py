@@ -4,8 +4,7 @@ from datetime import datetime
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.orm import relationship
-
-from app.accounts.table.schema import TableShape, TableStatus
+from app.accounts.table.enum import TableShape, TableStatus
 from app.db.base import Base
 
 class TableStatus(str, Enum):
