@@ -3,7 +3,8 @@
 from sqlalchemy import select, func
 
 from app.accounts.branch.model import Branch
-from app.accounts.table.model import Table, TableStatus
+from app.accounts.table.model import Table
+from app.accounts.table.enum import TableStatus
 
 
 from fastapi import APIRouter, Depends

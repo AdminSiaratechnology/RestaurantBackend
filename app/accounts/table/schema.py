@@ -1,19 +1,15 @@
+
+from app.accounts.table.enum import TableShape, TableStatus
 from pydantic import BaseModel, Field
 from datetime import datetime
-from enum import Enum
-
-class TableShape(str, Enum):
-    rectangular = "rectangular"
-    round = "round"
-    square = "square"
-    oval = "oval"
 
 
-class TableStatus(str, Enum):
-    available = "available"
-    occupied = "occupied"
-    reserved = "reserved"
-    inactive = "inactive"
+
+# class TableStatus(str, Enum):
+#     available = "available"
+#     occupied = "occupied"
+#     reserved = "reserved"
+#     inactive = "inactive"
 
 
 # ✅ Base Schema

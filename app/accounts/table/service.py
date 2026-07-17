@@ -1,10 +1,10 @@
 # app/accounts/table/service.py
 
+from app.accounts.bill.enum import PaymentStatus
+from app.accounts.bill.model import Bill
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-
-from app.accounts.table.model import Table, TableStatus
 from app.accounts.branch.model import Branch
 from app.accounts.client.model import Client
 from app.accounts.order.model import Order, OrderItem
@@ -13,6 +13,8 @@ from app.core.cache import Cache
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import selectinload
 from sqlalchemy import select
+from app.accounts.table.model import Table
+from app.accounts.table.enum import TableStatus
 
 from app.accounts.order.model import Order, OrderItem
 from app.accounts.item.model import Item
@@ -355,10 +357,15 @@ class TableService:
         )
 
         if table.status != TableStatus.occupied:
-            raise HTTPException(
-                400,
-                "Table is not occupied."
-            )
+            return {
+                "table_id": table.id,
+                "table_name": table.name,
+                "status": table.status.value if hasattr(table.status, "value") else table.status,
+                "customer_name": None,
+                "order_id": None,
+                "total_amount": 0.0,
+                "items": []
+            }
 
         result = await db.execute(
             select(Order)
@@ -408,3 +415,58 @@ class TableService:
                 for item in order.order_items
             ]
         }
+    
+
+
+@staticmethod
+async def get_table_availability(db, table_id: int):
+
+    result = await db.execute(
+        select(Table)
+        .where(Table.id == table_id)
+    )
+
+    table = result.scalar_one_or_none()
+
+    if not table:
+        raise HTTPException(404, "Table not found")
+
+    order_result = await db.execute(
+        select(Order)
+        .where(
+            Order.table_id == table.id,
+            Order.status.notin_(["completed", "cancelled"])
+        )
+        .order_by(Order.created_at.desc())
+    )
+
+    order = order_result.scalar_one_or_none()
+
+    if not order:
+        return {
+            "table_id": table.id,
+            "status": "available",
+            "available": True
+        }
+
+    bill_result = await db.execute(
+        select(Bill)
+        .where(Bill.order_id == order.id)
+    )
+
+    bill = bill_result.scalar_one_or_none()
+
+    if bill and bill.payment_status == PaymentStatus.complete:
+        return {
+            "table_id": table.id,
+            "status": "available",
+            "available": True
+        }
+
+    return {
+        "table_id": table.id,
+        "status": "occupied",
+        "available": False,
+        "order_id": order.id,
+        "payment_status": bill.payment_status if bill else "pending"
+    }
