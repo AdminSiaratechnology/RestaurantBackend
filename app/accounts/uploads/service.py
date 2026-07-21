@@ -247,6 +247,72 @@ async def _load_existing_bom(db: AsyncSession) -> dict[tuple[int, int, int], Ite
 
 
 # ---------------------------------------------------------------------------
+# Auto-create helpers (idempotent: check map first, never duplicate)
+# ---------------------------------------------------------------------------
+
+async def _find_or_create_godown(
+    db: AsyncSession,
+    godown_name: str,
+    branch_id: int,
+    godowns_map: dict[tuple[str, int], Godown],
+    counters: dict[str, int],
+) -> Godown:
+    """
+    Return an existing Godown (case-insensitive name + branch_id match)
+    or create a new one with sensible defaults.
+    Always flushes after creation and updates godowns_map in-place.
+    """
+    key = (godown_name.strip().lower(), branch_id)
+    godown = godowns_map.get(key)
+    if godown is not None:
+        counters["godowns_skipped"] = counters.get("godowns_skipped", 0) + 1
+        return godown
+
+    # Not in map — create it.
+    godown = Godown(
+        name=godown_name.strip(),
+        branch_id=branch_id,
+    )
+    db.add(godown)
+    await db.flush()  # populate godown.id immediately
+    godowns_map[key] = godown
+    counters["godowns_created"] = counters.get("godowns_created", 0) + 1
+    return godown
+
+
+async def _find_or_create_category(
+    db: AsyncSession,
+    category_name: str,
+    branch_id: int,
+    client_id: int,
+    categories_map: dict[tuple[str, int], Category],
+    counters: dict[str, int],
+) -> Category:
+    """
+    Return an existing Category (case-insensitive name + branch_id match)
+    or create a new one.
+    Always flushes after creation and updates categories_map in-place.
+    """
+    key = (category_name.strip().lower(), branch_id)
+    category = categories_map.get(key)
+    if category is not None:
+        counters["categories_skipped"] = counters.get("categories_skipped", 0) + 1
+        return category
+
+    # Not in map — create it.
+    category = Category(
+        name=category_name.strip(),
+        branch_id=branch_id,
+        client_id=client_id,
+    )
+    db.add(category)
+    await db.flush()  # populate category.id immediately
+    categories_map[key] = category
+    counters["categories_created"] = counters.get("categories_created", 0) + 1
+    return category
+
+
+# ---------------------------------------------------------------------------
 # Module-specific processors
 # ---------------------------------------------------------------------------
 
@@ -255,7 +321,11 @@ async def _process_menu(
     sheets: dict[str, pd.DataFrame],
     client_id: int,
 ) -> UploadResult:
-    """Business logic for the 'menu' module. Handles Menu Items -> Pricing -> BOM."""
+    """Business logic for the 'menu' module. Handles Menu Items -> Pricing -> BOM.
+
+    Auto-creates missing Categories and Godowns (case-insensitive dedup).
+    Inventory Items are NOT auto-created — they must exist in the DB.
+    """
     menu_df = sheets["Menu_Items"]
     pricing_df = sheets["Pricing"]
     bom_df = sheets["BOM"]
@@ -264,9 +334,25 @@ async def _process_menu(
     categories_map = await _load_categories(db, client_id)
     items_map = await _load_existing_items(db, client_id)
 
-    items_created = pricing_created = bom_created = 0
+    # Shared counters dict — helpers mutate this in-place.
+    counters: dict[str, int] = {
+        "categories_created": 0,
+        "categories_skipped": 0,
+        "godowns_created": 0,
+        "godowns_skipped": 0,
+        "items_created": 0,
+        "items_updated": 0,
+        "pricing_created": 0,
+        "pricing_updated": 0,
+        "bom_created": 0,
+        "bom_updated": 0,
+        "errors": 0,
+    }
     new_items: dict[tuple[str, int], Item] = {}
 
+    # ----------------------------------------------------------------
+    # Phase 1: Menu Items  (auto-create Category if missing)
+    # ----------------------------------------------------------------
     for idx, row in menu_df.iterrows():
         name = _safe_str(row.get("Name"))
         branch_code = _safe_str(row.get("Branch Code")).upper()
@@ -283,15 +369,20 @@ async def _process_menu(
         if branch is None:
             raise HTTPException(400, f"Branch '{branch_code}' not found.")
 
-        category = categories_map.get((category_name.lower(), branch.id))
-        if category is None:
-            raise HTTPException(
-                400,
-                f"Category '{category_name}' not found for branch '{branch_code}'.",
-            )
+        # Auto-create category if it does not exist.
+        category = await _find_or_create_category(
+            db=db,
+            category_name=category_name,
+            branch_id=branch.id,
+            client_id=client_id,
+            categories_map=categories_map,
+            counters=counters,
+        )
 
         key = (name.lower(), branch.id)
         if key in items_map or key in new_items:
+            # Item already exists — treat as update (we update in-place later if needed)
+            counters["items_updated"] += 1
             continue
 
         item = Item(
@@ -303,11 +394,14 @@ async def _process_menu(
         )
         db.add(item)
         new_items[key] = item
-        items_created += 1
+        counters["items_created"] += 1
 
     await db.flush()
     items_map.update(new_items)
 
+    # ----------------------------------------------------------------
+    # Phase 2: Pricing  (create or update)
+    # ----------------------------------------------------------------
     pricings_map = await _load_existing_pricings(db, client_id)
 
     for idx, row in pricing_df.iterrows():
@@ -350,6 +444,7 @@ async def _process_menu(
             existing.sgst_rate = sgst
             existing.calories = calories
             existing.is_active = is_active
+            counters["pricing_updated"] += 1
         else:
             db.add(Pricing(
                 client_id=client_id,
@@ -364,10 +459,13 @@ async def _process_menu(
                 calories=calories,
                 is_active=is_active,
             ))
-            pricing_created += 1
+            counters["pricing_created"] += 1
 
     await db.flush()
 
+    # ----------------------------------------------------------------
+    # Phase 3: BOM  (auto-create Godown if missing; Inventory Item MUST exist)
+    # ----------------------------------------------------------------
     all_branch_ids = [b.id for b in branches_map.values()]
     inventory_map = await _load_inventory_items(db, all_branch_ids)
     godowns_map = await _load_godowns(db, all_branch_ids)
@@ -393,16 +491,24 @@ async def _process_menu(
                 f"Menu Item '{menu_item_name}' not found for Branch Code '{branch_code}'.",
             )
 
+        # Inventory Item must already exist — cannot safely auto-create
+        # (requires unit, cost, vendor, stock info that cannot be inferred).
         inv_item = inventory_map.get((inv_item_name.lower(), branch.id))
         if inv_item is None:
             raise HTTPException(
                 400,
-                f"Inventory Item '{inv_item_name}' not found for branch of item '{menu_item_name}'.",
+                f"Inventory Item '{inv_item_name}' not found for branch '{branch_code}'. "
+                "Please upload Inventory before importing BOM.",
             )
 
-        godown = godowns_map.get((godown_name.lower(), branch.id))
-        if godown is None:
-            raise HTTPException(400, f"Godown '{godown_name}' not found.")
+        # Auto-create Godown if it does not exist.
+        godown = await _find_or_create_godown(
+            db=db,
+            godown_name=godown_name,
+            branch_id=branch.id,
+            godowns_map=godowns_map,
+            counters=counters,
+        )
 
         try:
             quantity = float(row.get("Quantity"))
@@ -416,6 +522,7 @@ async def _process_menu(
 
         if existing_bom:
             existing_bom.quantity_required = quantity
+            counters["bom_updated"] += 1
         else:
             db.add(ItemIngredient(
                 item_id=item.id,
@@ -423,20 +530,19 @@ async def _process_menu(
                 godown_id=godown.id,
                 quantity_required=quantity,
             ))
-            bom_created += 1
+            counters["bom_created"] += 1
 
     return UploadResult(
         message="Menu uploaded successfully",
-        counts={
-            "items_created": items_created,
-            "pricing_created": pricing_created,
-            "bom_created": bom_created,
-        },
+        counts=counters,
     )
 
 
 _VALID_STATUS = {"in_stock", "low_stock", "out_of_stock"}
-_VALID_ROW_CATEGORY = {"dry", "wet", "frozen", "beverage", "dairy", "other"}
+# NOTE: row_category is intentionally open — it accepts any non-empty string.
+# This ensures that files exported by this system (which may contain values like
+# 'produce', 'dry_goods', etc.) can always be re-imported without validation failure.
+# We only fall back to "other" when the field is blank.
 
 
 async def _process_inventory(
@@ -444,7 +550,11 @@ async def _process_inventory(
     sheets: dict[str, pd.DataFrame],
     client_id: int,
 ) -> UploadResult:
-    """Business logic for the 'inventory' module."""
+    """Business logic for the 'inventory' module.
+
+    Auto-creates missing Godowns (case-insensitive dedup).
+    row_category accepts any non-empty string — no whitelist restriction.
+    """
     inv_df = sheets["Inventory_Items"]
 
     branches_map = await _load_branches(db, client_id)
@@ -452,7 +562,14 @@ async def _process_inventory(
     godowns_map = await _load_godowns(db, all_branch_ids)
     inventory_map = await _load_inventory_items(db, all_branch_ids)
 
-    created = updated = 0
+    # Shared counters dict — helpers mutate this in-place.
+    counters: dict[str, int] = {
+        "godowns_created": 0,
+        "godowns_skipped": 0,
+        "items_created": 0,
+        "items_updated": 0,
+        "errors": 0,
+    }
 
     for idx, row in inv_df.iterrows():
         name = _safe_str(row.get("Name"))
@@ -470,22 +587,21 @@ async def _process_inventory(
         if branch is None:
             raise HTTPException(400, f"Branch '{branch_code}' not found.")
 
-        godown_name = _safe_str(row.get("Godown"))
+        # Auto-create Godown if it is specified but does not exist.
         godown = None
+        godown_name = _safe_str(row.get("Godown"))
         if godown_name:
-            godown = godowns_map.get((godown_name.lower(), branch.id))
-            if godown is None:
-                raise HTTPException(
-                    400,
-                    f"Row {idx + 2}: Godown '{godown_name}' not found for branch '{branch_code}'.",
-                )
-
-        row_category = _safe_str(row.get("Category")) or "other"
-        if row_category not in _VALID_ROW_CATEGORY:
-            raise HTTPException(
-                400,
-                f"Row {idx + 2}: 'Category' must be one of {sorted(_VALID_ROW_CATEGORY)}, got '{row_category}'.",
+            godown = await _find_or_create_godown(
+                db=db,
+                godown_name=godown_name,
+                branch_id=branch.id,
+                godowns_map=godowns_map,
+                counters=counters,
             )
+
+        # Accept any non-empty category string; default to "other" when blank.
+        # This makes re-import of exported files always succeed.
+        row_category = _safe_str(row.get("Category")) or "other"
 
         display_unit = _safe_str(row.get("Display Unit")) or "piece"
         conversion_factor = _safe_float(row.get("Conversion Factor", 1.0), "Conversion Factor")
@@ -521,7 +637,7 @@ async def _process_inventory(
             existing.status = status_raw
             if godown is not None:
                 existing.godown_id = godown.id
-            updated += 1
+            counters["items_updated"] += 1
         else:
             item = InventoryItem(
                 name=name,
@@ -540,11 +656,11 @@ async def _process_inventory(
             )
             db.add(item)
             inventory_map[key] = item
-            created += 1
+            counters["items_created"] += 1
 
     return UploadResult(
         message="Inventory uploaded successfully",
-        counts={"items_created": created, "items_updated": updated},
+        counts=counters,
     )
 
 
@@ -586,7 +702,6 @@ async def _process_category(
                 name=name,
                 branch_id=branch.id,
                 client_id=client_id,
-                is_active=is_active,
             )
             db.add(category)
             categories_map[key] = category
