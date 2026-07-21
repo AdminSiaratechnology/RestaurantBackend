@@ -11,6 +11,8 @@ class Category(Base):
     name = Column(String, nullable=False)
     icon = Column(String, nullable=True)
 
+    
+
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=False)  # ✅ ADD THIS
 
