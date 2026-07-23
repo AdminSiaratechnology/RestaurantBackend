@@ -3,6 +3,7 @@ from sqlalchemy import select
 
 from app.accounts.category.model import Category
 from app.accounts.category.schema import CategoryCreate
+from app.accounts.branch.model import Branch
 from app.accounts.deps import UserRole
 from app.core.cache import Cache
 from fastapi.encoders import jsonable_encoder
@@ -25,6 +26,19 @@ class CategoryService:
                 raise HTTPException(
                     status_code=403,
                     detail="Access denied"
+                )
+
+            # Verify branch belongs to client
+            branch_result = await db.execute(
+                select(Branch).where(
+                    Branch.id == payload.branch_id,
+                    Branch.client_id == client_id
+                )
+            )
+            if not branch_result.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=403,
+                    detail="Invalid branch access"
                 )
 
         elif role == UserRole.STAFF:
@@ -69,6 +83,19 @@ class CategoryService:
 
         if role == UserRole.STAFF:
             if branch_id != user.branch_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied"
+                )
+        elif role == UserRole.CLIENT:
+            # Verify branch belongs to client
+            branch_result = await db.execute(
+                select(Branch).where(
+                    Branch.id == branch_id,
+                    Branch.client_id == user.id
+                )
+            )
+            if not branch_result.scalar_one_or_none():
                 raise HTTPException(
                     status_code=403,
                     detail="Access denied"
