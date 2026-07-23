@@ -111,8 +111,8 @@ async def create_item_service(
 
     category = result.scalar_one_or_none()
 
-    if not category:
-        raise HTTPException(400, "Invalid category")
+    if not category or category.branch_id != payload.branch_id:
+        raise HTTPException(400, "Invalid category for this branch")
 
     result = await db.execute(
         select(Branch).where(
@@ -187,9 +187,9 @@ async def update_item_service(
                 Category.client_id == item.client_id
             )
         )
-
-        if not result.scalar_one_or_none():
-            raise HTTPException(400, "Invalid category")
+        category = result.scalar_one_or_none()
+        if not category or category.branch_id != item.branch_id:
+            raise HTTPException(400, "Invalid category for this branch")
 
     if payload.name:
         result = await db.execute(

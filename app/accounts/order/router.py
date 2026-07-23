@@ -211,7 +211,7 @@ async def get_menu(
             # ✅ Category Name
             category_name = (
                 item.category.name
-                if item.category
+                if item.category and item.category.branch_id == branch_id
                 else "Others"
             )
 
