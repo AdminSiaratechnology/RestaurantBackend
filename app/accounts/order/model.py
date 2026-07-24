@@ -76,7 +76,13 @@ class Order(Base):
 
     table = relationship("Table")
 
-    customer = relationship("Customer")
+    # customer = relationship("Customer")
+
+    customer = relationship(
+        "Customer",
+        back_populates="orders",
+        foreign_keys=[customer_id]
+    )
 
     # ✅ IMPORTANT FIX
     order_items = relationship(

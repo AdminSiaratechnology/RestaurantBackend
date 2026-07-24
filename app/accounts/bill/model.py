@@ -241,4 +241,15 @@ class Bill(Base):
     offer = relationship(
         "Offer"
     )
-    
+
+
+    customer_id = Column(
+        Integer,
+        ForeignKey("customers.id"),
+        nullable=True,
+        index=True
+    )
+
+    customer = relationship(
+        "Customer"
+    )
