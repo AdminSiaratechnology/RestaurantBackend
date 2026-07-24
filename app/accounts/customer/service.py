@@ -1,6 +1,6 @@
+from datetime import datetime
 from fastapi import HTTPException
-from sqlalchemy import select
-
+from sqlalchemy import select, desc
 from app.accounts.branch.model import Branch
 from app.accounts.client.model import Client
 from app.accounts.customer.model import Customer
@@ -36,13 +36,22 @@ async def create_customer_service(
     existing = result.scalar_one_or_none()
 
     if existing:
-        return existing
+        raise HTTPException(
+            status_code=409,
+            detail="Customer already exists."
+        )
 
     customer = Customer(
         name=payload.name,
         phone=payload.phone,
         email=payload.email,
         address=payload.address,
+        gender=payload.gender,
+        dob=payload.dob,
+        anniversary=payload.anniversary,
+        customer_source=payload.customer_source,
+        first_visit_at=datetime.utcnow(),
+        last_visit_at=datetime.utcnow(),
         branch_id=branch.id,
         branch_name=branch.name,
         client_id=branch.client_id
@@ -100,7 +109,7 @@ async def get_customers_service(
     elif role == UserRole.STAFF:
 
         query = query.where(
-            Customer.client_id == user.id
+            Customer.client_id == user.client_id
         )
 
     else:
@@ -114,10 +123,13 @@ async def get_customers_service(
             Customer.branch_id == branch_id
         )
 
+    query = query.order_by(
+        desc(Customer.created_at)
+    )
+
     result = await db.execute(query)
 
     return result.scalars().all()
-
 
 
 async def update_customer_service(
@@ -136,28 +148,45 @@ async def update_customer_service(
             "Customer not found"
         )
 
-    update_data = payload.dict(
+    update_data = payload.model_dump(
         exclude_unset=True
     )
 
-    if "branch_id" in update_data:
-
-        branch = await db.get(
-            Branch,
-            update_data["branch_id"]
+    if "phone" in update_data:
+        result = await db.execute(
+            select(Customer).where(
+                Customer.phone == update_data["phone"],
+                Customer.client_id == customer.client_id,
+                Customer.id != customer.id
+            )
         )
 
-        if not branch:
+        duplicate = result.scalar_one_or_none()
+
+        if duplicate:
             raise HTTPException(
-                404,
-                "Branch not found"
+                status_code=409,
+                detail="Phone number already exists."
             )
 
-        customer.branch_id = branch.id
-        customer.branch_name = branch.name
+    if "branch_id" in update_data:
+        if update_data["branch_id"] != customer.branch_id:
+            branch = await db.get(
+                Branch,
+                update_data["branch_id"]
+            )
+
+            if not branch:
+                raise HTTPException(
+                    404,
+                    "Branch not found"
+                )
+
+            customer.branch_id = branch.id
+            customer.branch_name = branch.name
+            customer.client_id = branch.client_id
 
     for key, value in update_data.items():
-
         if key != "branch_id":
             setattr(customer, key, value)
 
@@ -165,7 +194,6 @@ async def update_customer_service(
     await db.refresh(customer)
 
     return customer
-
 
 
 async def delete_customer_service(
@@ -189,12 +217,6 @@ async def delete_customer_service(
     return {
         "message": "Customer deleted"
     }
-
-
-from sqlalchemy import select
-
-from app.accounts.customer.model import Customer
-from app.accounts.branch.model import Branch
 
 
 async def get_customers_all_branches(
