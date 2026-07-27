@@ -1,3 +1,5 @@
+from app import db
+from app.accounts.order.enum import OrderType
 from app.accounts.order.service import get_menu_all_branches, get_orders_all_branches
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy import select, delete, func, or_
@@ -817,6 +819,22 @@ async def create_order(
                 await db.flush()
 
         # =====================================================
+        # ORDER TYPE VALIDATION
+        # =====================================================
+
+        if data.order_type == OrderType.DINE_IN:
+
+            if data.table_id is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Table is required for Dine-In orders."
+                )
+
+        else:
+            # Takeaway & Delivery don't require a table
+            data.table_id = None
+
+        # =====================================================
         # CREATE ORDER
         # =====================================================
 
@@ -825,39 +843,40 @@ async def create_order(
             branch_id=data.branch_id,
             table_id=data.table_id,
             order_type=data.order_type,
-
             customer_name=data.customer_name,
             customer_phone=data.customer_phone,
-
-            # optional if field exists
             customer_id=customer.id if customer else None,
-
             notes=data.notes
         )
 
         db.add(order)
 
         await db.flush()
-        
+
         # =====================================================
-        # UPDATE TABLE STATUS
+        # UPDATE TABLE STATUS (ONLY DINE-IN)
         # =====================================================
-        if order.table_id:
+
+        if order.order_type == OrderType.DINE_IN:
+
             table = await db.get(Table, order.table_id)
 
             if table is None:
-                raise HTTPException(404, "Table not found")
+                raise HTTPException(
+                    status_code=404,
+                    detail="Table not found"
+                )
 
             if table.branch_id != order.branch_id:
                 raise HTTPException(
-                    400,
-                    "Selected table does not belong to this branch."
+                    status_code=400,
+                    detail="Selected table does not belong to this branch."
                 )
 
             if table.status == TableStatus.occupied:
                 raise HTTPException(
-                    400,
-                    "Table is already occupied."
+                    status_code=400,
+                    detail="Table is already occupied."
                 )
 
             table.status = TableStatus.occupied
@@ -931,15 +950,14 @@ async def create_order(
         await db.rollback()
         print("CREATE ORDER UNEXPECTED ERROR:", str(e))
         raise HTTPException(500, f"Something went wrong: {str(e)}")
-# =========================
-# ✅ UPDATE ORDER ITEM STATUS
-# =========================
+
+    
+
 
 # =========================
 # ✅ UPDATE ORDER ITEM STATUS
 # =========================
 
-from sqlalchemy.orm import selectinload
 
 
 @router.patch(
