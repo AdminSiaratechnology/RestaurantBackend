@@ -1,6 +1,7 @@
 from typing import List, Optional, Generic, TypeVar
 from pydantic import BaseModel
 from datetime import datetime
+from app.accounts.order.enum import OrderType
 
 T = TypeVar('T')
 
@@ -16,18 +17,20 @@ class OrderItemCreate(BaseModel):
     quantity: int
 
 
+
 class OrderCreate(BaseModel):
     client_id: int
     branch_id: int
     table_id: Optional[int] = None
 
-    order_type: str
+    order_type: OrderType
 
     customer_name: Optional[str] = None
     customer_phone: Optional[str] = None
     notes: Optional[str] = None
 
     items: List[OrderItemCreate]
+
 
 
 class OrderItemResponse(BaseModel):
@@ -49,7 +52,7 @@ class OrderResponse(BaseModel):
     table_id: Optional[int]
     table_number: Optional[str] = None
 
-    order_type: str
+    order_type: OrderType
 
     customer_name: Optional[str]
     customer_phone: Optional[str]
@@ -74,7 +77,7 @@ class OrderItemUpdate(BaseModel):
 
 class OrderUpdate(BaseModel):
     notes: str | None = None
-    order_type: str | None = None
+    order_type: OrderType | None = None
     items: list[OrderItemUpdate] | None = None
 
 

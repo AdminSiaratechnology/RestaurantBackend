@@ -300,3 +300,9 @@ class Customer(Base):
     #     "CampaignLog",
     #     back_populates="customer"
     # )
+
+    customer_visit_history = relationship(
+        "CustomerVisitHistory",
+        back_populates="customer",
+        cascade="all, delete-orphan"
+    )

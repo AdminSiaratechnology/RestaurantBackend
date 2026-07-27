@@ -1,5 +1,6 @@
 from sqlalchemy import (
     Column,
+    Enum,
     Float,
     ForeignKey,
     Integer,
@@ -9,7 +10,7 @@ from sqlalchemy import (
 
 from sqlalchemy.orm import relationship
 from datetime import datetime
-
+from app.accounts.order.enum import OrderType
 from app.db.base import Base
 
 
@@ -38,7 +39,15 @@ class Order(Base):
         ForeignKey("tables.id")
     )
 
-    order_type = Column(String, nullable=False)
+    order_type = Column(
+        Enum(
+            OrderType,
+            values_callable=lambda enum: [e.value for e in enum],
+            name="order_type_enum",
+            native_enum=True,
+        ),
+        nullable=False,
+    )
 
     customer_name = Column(String)
 

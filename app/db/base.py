@@ -35,3 +35,4 @@ from app.accounts.inventory.model import Godown
 from app.accounts.purchaseorder.model import PurchaseOrder, PurchaseOrderItem
 from app.accounts.bom.model import MenuItemBOM
 from app.accounts.vendor.model import Vendor
+from app.accounts.crm.customer_history.model import CustomerVisitHistory

@@ -47,6 +47,7 @@ from app.accounts.rep_payment.router import router as rep_payment_router
 from app.accounts.purchaseorder.router import router as purchas_order_router
 from app.accounts.vendor.router import router as vendor_router
 from app.accounts.uploads.router import router as upload_router
+from app.accounts.crm.customer_history.router import router as customer_history_router
 
 
 app = FastAPI()
@@ -176,3 +177,4 @@ app.include_router(rep_payment_router)
 app.include_router(purchas_order_router)
 app.include_router(vendor_router)
 app.include_router(upload_router)
+app.include_router(customer_history_router)
