@@ -23,6 +23,7 @@ async def get_category_distribution_service(
         select(
             Category.id,
             Category.name,
+            Category.icon,
             func.count(Item.id).label("item_count")
         )
         .outerjoin(
@@ -34,7 +35,8 @@ async def get_category_distribution_service(
         )
         .group_by(
             Category.id,
-            Category.name
+            Category.name,
+            Category.icon
         )
         .order_by(
             func.count(Item.id).desc()
@@ -63,6 +65,7 @@ async def get_category_distribution_service(
             CategoryDistributionItem(
                 category_id=row.id,
                 category_name=row.name,
+                category_icon=row.icon,
                 item_count=row.item_count,
                 percentage=percentage
             )
@@ -118,6 +121,9 @@ async def get_top_selling_items_service(
         select(
             Item.id.label("item_id"),
             Item.name.label("item_name"),
+            Category.id.label("category_id"),
+            Category.name.label("category_name"),
+            Category.icon.label("category_icon"),
             func.sum(
                 OrderItem.quantity
             ).label("quantity_sold")
@@ -134,13 +140,20 @@ async def get_top_selling_items_service(
             Bill,
             Bill.order_id == Order.id
         )
+        .outerjoin(
+            Category,
+            Category.id == Item.category_id
+        )
         .where(
             Order.branch_id == branch_id,
             Bill.payment_status == PaymentStatus.complete
         )
         .group_by(
             Item.id,
-            Item.name
+            Item.name,
+            Category.id,
+            Category.name,
+            Category.icon
         )
         .order_by(
             func.sum(
@@ -172,6 +185,9 @@ async def get_top_selling_items_service(
             TopSellingItem(
                 item_id=row.item_id,
                 item_name=row.item_name,
+                category_id=row.category_id,
+                category_name=row.category_name,
+                category_icon=row.category_icon,
                 quantity_sold=row.quantity_sold,
                 percentage=percentage
             )
@@ -322,6 +338,9 @@ async def get_top_selling_items_all_branches_service(
         select(
             Item.id.label("item_id"),
             Item.name.label("item_name"),
+            Category.id.label("category_id"),
+            Category.name.label("category_name"),
+            Category.icon.label("category_icon"),
             func.sum(
                 OrderItem.quantity
             ).label("quantity_sold")
@@ -338,13 +357,20 @@ async def get_top_selling_items_all_branches_service(
             Bill,
             Bill.order_id == Order.id
         )
+        .outerjoin(
+            Category,
+            Category.id == Item.category_id
+        )
         .where(
             Order.branch_id.in_(branch_ids),
             Bill.payment_status == PaymentStatus.complete
         )
         .group_by(
             Item.id,
-            Item.name
+            Item.name,
+            Category.id,
+            Category.name,
+            Category.icon
         )
         .order_by(
             func.sum(
@@ -380,6 +406,9 @@ async def get_top_selling_items_all_branches_service(
         items.append({
             "item_id": row.item_id,
             "item_name": row.item_name,
+            "category_id": row.category_id,
+            "category_name": row.category_name,
+            "category_icon": row.category_icon,
             "quantity_sold": row.quantity_sold,
             "percentage": percentage
         })
@@ -431,6 +460,7 @@ async def get_category_distribution_all_branches_service(
             select(
                 Category.id,
                 Category.name,
+                Category.icon,
                 func.count(Item.id).label("item_count")
             )
             .outerjoin(
@@ -442,7 +472,8 @@ async def get_category_distribution_all_branches_service(
             )
             .group_by(
                 Category.id,
-                Category.name
+                Category.name,
+                Category.icon
             )
             .order_by(
                 func.count(Item.id).desc()
@@ -473,6 +504,7 @@ async def get_category_distribution_all_branches_service(
             categories.append({
                 "category_id": row.id,
                 "category_name": row.name,
+                "category_icon": row.icon,
                 "item_count": row.item_count,
                 "percentage": percentage
             })

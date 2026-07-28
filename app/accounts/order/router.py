@@ -657,6 +657,15 @@ async def update_order(
             raise HTTPException(403, "Not allowed to update orders of another branch")
 
         # =========================
+        # ✅ Enforce Pending-Only Edit Rule
+        # =========================
+        if order.status.lower() != "pending":
+            raise HTTPException(
+                status_code=400,
+                detail="Only pending orders can be edited."
+            )
+
+        # =========================
         # ✅ Update Basic Fields
         # =========================
         if data.notes is not None:
