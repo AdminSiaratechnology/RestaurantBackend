@@ -1,12 +1,11 @@
-
-
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 
 class CategoryDistributionItem(BaseModel):
     category_id: int
     category_name: str
+    category_icon: Optional[str] = None
     item_count: int
     percentage: float
 
@@ -30,6 +29,9 @@ class MenuDashboardResponse(BaseModel):
 class TopSellingItem(BaseModel):
     item_id: int
     item_name: str
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
+    category_icon: Optional[str] = None
     quantity_sold: int
     percentage: float
 

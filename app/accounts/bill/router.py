@@ -1,4 +1,3 @@
-
 from uuid import uuid4
 from datetime import datetime
 from sqlalchemy import select
@@ -30,6 +29,7 @@ from app.accounts.pricing.model import Pricing
 from app.accounts.table.model import Table
 from app.accounts.table.schema import TableStatus
 from app.core.cache import Cache
+
 router = APIRouter(
     prefix="/bill",
     tags=["Bill"]
@@ -43,7 +43,6 @@ router = APIRouter(
 def _service_charge_rate(
     tax: TaxBillingSetting
 ) -> float:
-
     return float(
         tax.service_charge or 0.0
     )
@@ -53,11 +52,9 @@ def _compute_service_charge(
     tax: TaxBillingSetting,
     subtotal: float,
 ) -> tuple[float, float]:
-
     percent = _service_charge_rate(tax)
 
     if percent <= 0:
-
         return 0.0, 0.0
 
     return (
@@ -81,7 +78,6 @@ async def get_bill(
     order_id: int,
     db: SessionDep
 ):
-
     # =====================================================
     # GET ORDER
     # =====================================================
@@ -98,7 +94,6 @@ async def get_bill(
     order = result.scalar_one_or_none()
 
     if not order:
-
         raise HTTPException(
             status_code=404,
             detail="Order not found"
@@ -118,7 +113,6 @@ async def get_bill(
     tax = tax_result.scalar_one_or_none()
 
     if not tax:
-
         raise HTTPException(
             status_code=404,
             detail="Tax settings not found"
@@ -129,11 +123,9 @@ async def get_bill(
     # =====================================================
 
     items = []
-
     subtotal = 0.0
 
     for order_item in order.order_items:
-
         item_total = float(
             order_item.total_price or 0.0
         )
@@ -142,7 +134,6 @@ async def get_bill(
             item_total <= 0
             and order_item.quantity
         ):
-
             item_total = round(
                 order_item.quantity *
                 order_item.price,
@@ -174,7 +165,6 @@ async def get_bill(
         pricing_list = []
 
         for pricing in pricings:
-
             tax_percent = float(
                 pricing.tax or 0
             )
@@ -227,41 +217,23 @@ async def get_bill(
             )
 
             pricing_list.append({
-
                 "id": pricing.id,
-
                 "client_id": pricing.client_id,
-
                 "branch_id": pricing.branch_id,
-
                 "item_id": pricing.item_id,
-
                 "price": pricing.price,
-
                 "cost_price": pricing.cost_price,
-
                 "discount": pricing.discount,
-
                 "tax": pricing.tax,
-
                 "calories": pricing.calories,
-
                 "is_active": pricing.is_active,
-
                 "created_at": pricing.created_at,
-
                 "cgst_rate": cgst_rate,
-
                 "sgst_rate": sgst_rate,
-
                 "discounted_price": discounted_price,
-
                 "cgst_amount": cgst_amount,
-
                 "sgst_amount": sgst_amount,
-
                 "total_tax_amount": total_tax_amount,
-
                 "total_price": total_price
             })
 
@@ -270,21 +242,13 @@ async def get_bill(
         # =================================================
 
         items.append({
-
             "id": item.id,
-
             "name": item.name,
-
             "client_id": item.client_id,
-
             "category_id": item.category_id,
-
             "branch_id": item.branch_id,
-
             "created_at": item.created_at,
-
             "is_active": item.is_active,
-
             "pricings": pricing_list
         })
 
@@ -298,11 +262,9 @@ async def get_bill(
     # =====================================================
 
     cgst_amount = 0.0
-
     sgst_amount = 0.0
 
     if tax.enable_tax:
-
         cgst_amount = round(
             subtotal * (
                 tax.cgst / 100
@@ -346,20 +308,15 @@ async def get_bill(
     # =====================================================
 
     calculated_total = (
-
         subtotal +
-
         tax_total +
-
         service_charge_amount -
-
         discount_amount
     )
 
     round_off_amount = 0.0
 
     if tax.round_off_bill:
-
         rounded_total = round(
             calculated_total
         )
@@ -371,15 +328,11 @@ async def get_bill(
         )
 
         grand_total = rounded_total
-
     else:
-
         grand_total = round(
             calculated_total,
             2
         )
-
-
 
     # =====================================================
     # CHECK EXISTING BILL
@@ -396,90 +349,56 @@ async def get_bill(
         bill_result.scalar_one_or_none()
     )
 
-
-
     # =====================================================
     # CREATE BILL IF NOT EXISTS
     # =====================================================
 
-
-
     if not bill:
-
         bill = Bill(
-
             order_id=order.id,
-
             client_id=order.client_id,
-
             branch_id=order.branch_id,
-
             invoice_no=f"INV-{uuid4().hex[:8].upper()}",
-
             order_type=order.order_type,
-
             customer_name=order.customer_name,
-
             payment_status=PaymentStatus.pending,
-
             customer_phone=order.customer_phone,
-
             payment_method=None,
-
             subtotal=subtotal,
-
             cgst_percent=(
                 tax.cgst
                 if tax.enable_tax
                 else 0.0
             ),
-
             cgst_amount=cgst_amount,
-
             sgst_percent=(
                 tax.sgst
                 if tax.enable_tax
                 else 0.0
             ),
-
             sgst_amount=sgst_amount,
-
             service_charge_percent=service_charge_percent,
-
             service_charge_amount=service_charge_amount,
-
             tax_total=tax_total,
-
             discount_amount=0.0,
-
             round_off_amount=round_off_amount,
-
             grand_total=grand_total,
-
             # ==========================
             # OFFER DEFAULT VALUES
             # ==========================
             offer_id=None,
             offer_discount=0.0,
-
             # Amount customer has to pay
             final_amount=grand_total,
-
             paid_amount=0.0,
-
             due_amount=grand_total,
-
             footer_message=tax.bill_footer_message
         )
 
         db.add(bill)
         await db.commit()
         await db.refresh(bill)
-    
-
-
     else:
-
         updated = False
 
         if bill.final_amount is None:
@@ -509,93 +428,64 @@ async def get_bill(
 
     return {
         "id": bill.id,
-
         "order_id": bill.order_id,
-
         "invoice_no": bill.invoice_no,
-
         "order_type": bill.order_type,
-
         "customer_name": (
             bill.customer_name
         ),
-
         "customer_phone": (
             bill.customer_phone
         ),
-
         "table_id": order.table_id,
-
         "payment_status": (
             bill.payment_status
         ),
-
         "payment_method": (
             bill.payment_method
         ),
-
         "created_at": bill.created_at,
-
         "items": items,
-
         "subtotal": bill.subtotal,
-
         "cgst_percent": (
             bill.cgst_percent
         ),
-
         "cgst_amount": (
             bill.cgst_amount
         ),
-
         "sgst_percent": (
             bill.sgst_percent
         ),
-
         "sgst_amount": (
             bill.sgst_amount
         ),
-
         "service_charge_percent": (
             bill.service_charge_percent
         ),
-
         "service_charge_amount": (
             bill.service_charge_amount
         ),
-
         "tax_total": (
             bill.tax_total
         ),
-
         "discount_amount": (
             bill.discount_amount
         ),
-
         "round_off_amount": (
             bill.round_off_amount
         ),
-
         "grand_total": bill.grand_total,
-
         "paid_amount": bill.paid_amount,
-
         # Only show due amount as final if payment is complete
         # "due_amount": (bill.due_amount if is_bill_finalized else bill.grand_total),
-
         "footer_message": (
             bill.footer_message or ""
         ),
         "due_amount": bill.due_amount,
-
         "offer_id": bill.offer_id,
-
         "offer_discount": bill.offer_discount,
-
         "final_amount": bill.final_amount,
-
         "is_edited": bill.is_edited
-
         # Only show offer data if payment is complete
         # "offer_id": (bill.offer_id if is_bill_finalized else None),
         # "offer_discount": (bill.offer_discount if is_bill_finalized else 0.0),
@@ -657,7 +547,6 @@ async def update_bill_status(
     )
 
     if order and order.table_id:
-
         table = await db.get(
             Table,
             order.table_id
@@ -666,13 +555,11 @@ async def update_bill_status(
         if table:
             if data.payment_status == PaymentStatus.complete:
                 table.status = TableStatus.available
-
             elif data.payment_status in [
                 PaymentStatus.pending,
                 PaymentStatus.edited,
             ]:
                 table.status = TableStatus.occupied
-
             elif data.payment_status == PaymentStatus.cancel:
                 table.status = TableStatus.occupied
             
@@ -686,24 +573,17 @@ async def update_bill_status(
             if bill.final_amount > 0
             else bill.grand_total
         )
-
         bill.due_amount = 0.0
-
     elif data.payment_status == PaymentStatus.cancel:
-
         bill.paid_amount = 0.0
-
         bill.due_amount = (
             bill.final_amount
             if bill.final_amount > 0
             else bill.grand_total
         )
-
     elif data.payment_status == PaymentStatus.edited:
-
         # Bill modified but not paid yet
         bill.paid_amount = 0.0
-
         bill.due_amount = (
             bill.final_amount
             if bill.final_amount > 0
@@ -720,6 +600,7 @@ async def update_bill_status(
     await Cache.delete(f"invoice:pdf:{bill.id}")
 
     return bill
+
 
 # =====================================================
 # OFFER PREVIEW ENDPOINT - NO DB UPDATES!
@@ -753,19 +634,14 @@ async def preview_offer_application(
     
     # If no offer, return original
     if not data.offer_id:
-
         bill.offer_id = None
-
         bill.offer_discount = 0.0
-
         bill.final_amount = bill.grand_total
-
         bill.due_amount = bill.grand_total
 
         # bill.payment_status = PaymentStatus.pending
 
         await db.commit()
-
         await db.refresh(bill)
 
         return OfferPreviewResponse(
@@ -774,6 +650,7 @@ async def preview_offer_application(
             final_amount=original_amount,
             message="Offer removed"
         )
+    
     # =====================================================
     # GET OFFER
     # =====================================================
@@ -825,11 +702,9 @@ async def preview_offer_application(
     if offer.offer_type == OfferType.FLAT_DISCOUNT:
         # Flat discount: subtract discount_value from total
         discount = min(offer.discount_value or 0, original_amount)
-    
     elif offer.offer_type == OfferType.PERCENTAGE_OFF:
         # Percentage discount: calculate % of total
         discount = round(original_amount * (offer.discount_value / 100), 2)
-    
     # For BUY_ONE_GET_ONE and FREE_ITEM, we'd need more order details,
     # but for now we'll treat them as no discount since we don't have item breakdown in bill
     else:
@@ -841,28 +716,23 @@ async def preview_offer_application(
         )
     
     # Calculate final amount
-    # Calculate final amount
     final_amount = max(
         0,
         original_amount - discount
     )
 
-# ==========================================
-# SAVE OFFER ON BILL
-# ==========================================
+    # ==========================================
+    # SAVE OFFER ON BILL
+    # ==========================================
 
     bill.offer_id = offer.id
-
     bill.offer_discount = discount
-
     bill.final_amount = final_amount
-
     bill.due_amount = final_amount
 
     # bill.payment_status = PaymentStatus.edited
 
     await db.commit()
-
     await db.refresh(bill)
 
     return OfferPreviewResponse(
@@ -911,17 +781,14 @@ async def edit_bill(
 
     return bill
 
-from sqlalchemy import select
 
+from sqlalchemy import select
 from app.accounts.order.model import Order, OrderItem
 from app.core.cache import Cache
 import base64
-
 from app.accounts.item.model import Item
 from app.accounts.pricing.model import Pricing
-
 from app.accounts.offer.model import Offer, OfferType
-
 from app.accounts.bill.enum import PaymentStatus
 
 
@@ -979,7 +846,6 @@ async def edit_bill_items(
     # =====================================================
 
     for item_data in data.items:
-
         result = await db.execute(
             select(OrderItem).where(
                 OrderItem.order_id == order.id,
@@ -994,10 +860,8 @@ async def edit_bill_items(
         # ================================================
 
         if item_data.quantity <= 0:
-
             if order_item:
                 await db.delete(order_item)
-
             continue
 
         # ================================================
@@ -1005,15 +869,54 @@ async def edit_bill_items(
         # ================================================
 
         if order_item:
+            pricing_result = await db.execute(
+                select(Pricing).where(
+                    Pricing.item_id == order_item.item_id,
+                    Pricing.client_id == bill.client_id,
+                    Pricing.branch_id == bill.branch_id
+                )
+            )
 
-            order_item.quantity = item_data.quantity
+            pricing = pricing_result.scalar_one_or_none()
 
-            order_item.total_price = round(
-                float(order_item.price or 0)
-                * item_data.quantity,
+            if not pricing:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Pricing not found for item {order_item.item_id}"
+                )
+
+            unit_price = float(pricing.price or 0)
+            discount_percent = float(pricing.discount or 0)
+            tax_percent = float(pricing.tax or 0)
+
+            discounted_price = unit_price - (
+                unit_price * discount_percent / 100
+            )
+
+            tax_per_unit = discounted_price * tax_percent / 100
+
+            subtotal = round(
+                discounted_price * item_data.quantity,
                 2
             )
 
+            tax_amount = round(
+                tax_per_unit * item_data.quantity,
+                2
+            )
+
+            total_price = round(
+                subtotal + tax_amount,
+                2
+            )
+
+            order_item.unit_price = unit_price
+            order_item.discount_percent = discount_percent
+            order_item.tax_percent = tax_percent
+            order_item.quantity = item_data.quantity
+            order_item.subtotal = subtotal
+            order_item.tax_amount = tax_amount
+            order_item.total_price = total_price
             continue
 
         # ================================================
@@ -1033,7 +936,10 @@ async def edit_bill_items(
 
         pricing_result = await db.execute(
             select(Pricing).where(
-                Pricing.item_id == menu_item.id
+                Pricing.item_id == menu_item.id,
+                Pricing.client_id == bill.client_id,
+                Pricing.branch_id == bill.branch_id,
+                Pricing.is_active == True
             )
         )
 
@@ -1045,16 +951,41 @@ async def edit_bill_items(
                 detail=f"Pricing not found for item {menu_item.id}"
             )
 
+        unit_price = float(pricing.price or 0)
+        discount_percent = float(pricing.discount or 0)
+        tax_percent = float(pricing.tax or 0)
+
+        discounted_price = unit_price - (
+            unit_price * discount_percent / 100
+        )
+
+        tax_per_unit = discounted_price * tax_percent / 100
+
+        subtotal = round(
+            discounted_price * item_data.quantity,
+            2
+        )
+
+        tax_amount = round(
+            tax_per_unit * item_data.quantity,
+            2
+        )
+
+        total_price = round(
+            subtotal + tax_amount,
+            2
+        )
+
         new_order_item = OrderItem(
             order_id=order.id,
             item_id=menu_item.id,
             quantity=item_data.quantity,
-            price=pricing.total_price,
-            total_price=round(
-                float(pricing.total_price or 0)
-                * item_data.quantity,
-                2
-            )
+            unit_price=unit_price,
+            discount_percent=discount_percent,
+            tax_percent=tax_percent,
+            subtotal=subtotal,
+            tax_amount=tax_amount,
+            total_price=total_price
         )
 
         db.add(new_order_item)
@@ -1080,10 +1011,10 @@ async def edit_bill_items(
         )
 
     # =====================================================
-    # SUBTOTAL
+    # RECALCULATE ORDER TOTAL
     # =====================================================
 
-    subtotal = round(
+    order.total_amount = round(
         sum(
             float(i.total_price or 0)
             for i in order_items
@@ -1092,24 +1023,32 @@ async def edit_bill_items(
     )
 
     # =====================================================
-    # TAX
+    # SUBTOTAL
     # =====================================================
 
-    cgst_amount = round(
-        subtotal *
-        (bill.cgst_percent / 100),
-        2
-    )
-
-    sgst_amount = round(
-        subtotal *
-        (bill.sgst_percent / 100),
+    subtotal = round(
+        sum(
+            float(i.subtotal or 0)
+            for i in order_items
+        ),
         2
     )
 
     tax_total = round(
-        cgst_amount +
-        sgst_amount,
+        sum(
+            float(i.tax_amount or 0)
+            for i in order_items
+        ),
+        2
+    )
+
+    cgst_amount = round(
+        tax_total / 2,
+        2
+    )
+
+    sgst_amount = round(
+        tax_total / 2,
         2
     )
 
@@ -1144,14 +1083,12 @@ async def edit_bill_items(
     bill.offer_discount = 0
 
     if bill.offer_id:
-
         offer = await db.get(
             Offer,
             bill.offer_id
         )
 
         if offer:
-
             discount = 0
 
             if (
@@ -1164,7 +1101,6 @@ async def edit_bill_items(
                     ),
                     grand_total
                 )
-
             elif (
                 offer.offer_type ==
                 OfferType.PERCENTAGE_OFF
@@ -1178,7 +1114,6 @@ async def edit_bill_items(
                 )
 
             bill.offer_discount = discount
-
             final_amount = round(
                 grand_total -
                 discount,
@@ -1190,27 +1125,17 @@ async def edit_bill_items(
     # =====================================================
 
     bill.subtotal = subtotal
-
     bill.cgst_amount = cgst_amount
-
     bill.sgst_amount = sgst_amount
-
     bill.tax_total = tax_total
-
-    bill.service_charge_amount = (
-        service_charge_amount
-    )
-
+    bill.service_charge_amount = service_charge_amount
     bill.grand_total = grand_total
-
     bill.final_amount = final_amount
-
     bill.due_amount = final_amount
 
-    bill.payment_status = (
-        PaymentStatus.edited
-    )
+    order.total_amount = final_amount
 
+    bill.payment_status = PaymentStatus.edited
     bill.is_edited = True
 
     # =====================================================
@@ -1218,12 +1143,9 @@ async def edit_bill_items(
     # =====================================================
 
     await db.commit()
-
     await db.refresh(bill)
 
     return bill
-
-
 
 
 from app.accounts.bill.invoice_template import InvoiceTemplate

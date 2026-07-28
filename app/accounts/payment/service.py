@@ -75,7 +75,7 @@ async def make_payment_service(
             status_code=400,
             detail="At least one payment method is required"
         )
-    
+
     bill = await get_bill_or_404(db, data.bill_id)
 
     if bill.payment_status == PaymentStatus.complete:
@@ -84,14 +84,16 @@ async def make_payment_service(
             detail="Bill already paid"
         )
 
-    # Calculate amounts
+    # Calculate payable amount
     amount_to_pay = (
         data.final_amount
         if (data.final_amount is not None and data.final_amount > 0)
         else bill.due_amount
     )
 
-    total_received = sum(item.payment_amount for item in data.payments)
+    total_received = sum(
+        item.payment_amount for item in data.payments
+    )
 
     if total_received < amount_to_pay:
         raise HTTPException(
@@ -99,16 +101,21 @@ async def make_payment_service(
             detail=f"Amount should be at least {amount_to_pay}"
         )
 
-    change_amount = round(total_received - amount_to_pay, 2)
+    change_amount = round(
+        total_received - amount_to_pay,
+        2
+    )
 
-    # Determine payment method
+    # Payment method
     is_split_payment = len(data.payments) > 1
+
     payment_method = (
-        "split" if is_split_payment 
+        "split"
+        if is_split_payment
         else data.payments[0].payment_method.value
     )
 
-    # Build payment breakdown
+    # Payment breakdown
     payment_breakdown = [
         {
             "payment_method": item.payment_method.value,
@@ -117,7 +124,16 @@ async def make_payment_service(
         for item in data.payments
     ]
 
-    # Create payment record
+    # -----------------------------
+    # Normalize Offer ID
+    # -----------------------------
+    offer_id = (
+        data.offer_id
+        if data.offer_id is not None and data.offer_id > 0
+        else None
+    )
+
+    # Create Payment
     payment = Payment(
         bill_id=bill.id,
         order_id=bill.order_id,
@@ -130,26 +146,36 @@ async def make_payment_service(
         change_amount=change_amount,
         payment_reference=data.payment_reference,
         notes=data.notes,
-        offer_id=data.offer_id,
+        offer_id=offer_id,
         offer_discount=data.offer_discount or 0
     )
 
     db.add(payment)
 
-    # Handle offer discount
     try:
-        if data.offer_id and data.offer_id > 0:
-            bill.offer_id = data.offer_id
+        # -----------------------------
+        # Apply Offer
+        # -----------------------------
+        if offer_id:
+
+            offer = await get_offer_or_404(
+                db,
+                offer_id
+            )
+
+            bill.offer_id = offer.id
             bill.offer_discount = data.offer_discount or 0
-            
-            # Get and update offer (consider using optimistic locking or SELECT FOR UPDATE)
-            offer = await get_offer_or_404(db, data.offer_id)
+
             offer.no_used += 1
+
         else:
+
             bill.offer_id = None
             bill.offer_discount = 0
 
-        # Update bill
+        # -----------------------------
+        # Update Bill
+        # -----------------------------
         bill.final_amount = amount_to_pay
         bill.paid_amount = amount_to_pay
         bill.due_amount = 0
@@ -157,22 +183,28 @@ async def make_payment_service(
         bill.payment_method = payment_method
 
         await db.commit()
+
         await db.refresh(payment)
 
-        # Invalidate dashboard cache (payment completed)
-        await Cache.delete_pattern(f"dashboard:*:branch:{bill.branch_id}")
-        # Invalidate cached invoice PDF so it reflects payment status
-        await Cache.delete(f"invoice:pdf:{bill.id}")
-        
+        # Clear cache
+        await Cache.delete_pattern(
+            f"dashboard:*:branch:{bill.branch_id}"
+        )
+
+        await Cache.delete(
+            f"invoice:pdf:{bill.id}"
+        )
+
         return payment
-        
+
     except Exception as e:
+
         await db.rollback()
+
         raise HTTPException(
             status_code=500,
             detail=f"Payment processing failed: {str(e)}"
         )
-
 
 # =====================================
 # APPLY OFFER (PREVIEW ONLY)
