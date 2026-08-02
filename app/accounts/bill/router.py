@@ -9,7 +9,7 @@ from io import BytesIO
 
 from app.db.config import get_db
 from app.accounts.bill.service import InvoiceService
-from app.accounts.deps import get_current_user,access_one, UserRole
+from app.accounts.deps import get_current_user, UserRole
 from app.db.config import SessionDep
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.accounts.order.model import (
@@ -22,7 +22,7 @@ from app.accounts.tax.model import TaxBillingSetting
 
 from app.accounts.bill.model import Bill
 from app.accounts.offer.model import Offer, OfferType
-from app.accounts.bill.schema import BillOut, EditBillItemsRequest, EditBillResponse, OfferPreviewRequest, OfferPreviewResponse, BillStatusUpdate, BillStatusResponse
+from app.accounts.bill.schema import AddBillItemRequest, BillOut, EditBillItemsRequest, EditBillResponse, OfferPreviewRequest, OfferPreviewResponse, BillStatusUpdate, BillStatusResponse
 
 from app.accounts.pricing.model import Pricing
 
@@ -398,6 +398,10 @@ async def get_bill(
         db.add(bill)
         await db.commit()
         await db.refresh(bill)
+
+        # BUG #5 FIX: Invalidate dashboard cache when a new bill is generated.
+        # This was previously dead code placed after the return statement.
+        await Cache.delete_pattern(f"dashboard:*:branch:{order.branch_id}")
     else:
         updated = False
 
@@ -429,6 +433,7 @@ async def get_bill(
     return {
         "id": bill.id,
         "order_id": bill.order_id,
+        "branch_id": bill.branch_id,
         "invoice_no": bill.invoice_no,
         "order_type": bill.order_type,
         "customer_name": (
@@ -492,8 +497,92 @@ async def get_bill(
         # "final_amount": (bill.final_amount if is_bill_finalized else bill.grand_total)
     }
 
-    # Invalidate dashboard cache because a new bill was generated
-    await Cache.delete_pattern(f"dashboard:*:branch:{order.branch_id}")
+    # NOTE: Cache invalidation was previously dead code (after return).
+    # It is now correctly placed before the return above inside the
+    # `if not bill:` block implicitly via the commit path. Nothing more needed here.
+
+
+# =========================================================
+# OFFER PREVIEW — POST /bill/offer-preview
+# Returns a discount preview without persisting anything.
+# =========================================================
+
+@router.post(
+    "/offer-preview",
+    response_model=OfferPreviewResponse
+)
+async def offer_preview(
+    data: OfferPreviewRequest,
+    db: SessionDep
+):
+    # --------------------------------------------------
+    # 1. Fetch Bill
+    # --------------------------------------------------
+    bill_result = await db.execute(
+        select(Bill).where(Bill.id == data.bill_id)
+    )
+    bill = bill_result.scalar_one_or_none()
+
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+
+    grand_total = float(bill.grand_total or 0)
+    paid_amount = float(bill.paid_amount or 0)
+
+    offer_discount = 0.0
+    message = None
+
+    # --------------------------------------------------
+    # 2. Calculate Offer Discount (if offer_id provided)
+    # --------------------------------------------------
+    if data.offer_id is not None:
+        offer_result = await db.execute(
+            select(Offer).where(Offer.id == data.offer_id)
+        )
+        offer = offer_result.scalar_one_or_none()
+
+        if not offer:
+            raise HTTPException(status_code=404, detail="Offer not found")
+
+        if not offer.is_active:
+            raise HTTPException(status_code=400, detail="Offer is not active")
+
+        now = datetime.utcnow()
+        if offer.valid_from and now < offer.valid_from:
+            raise HTTPException(status_code=400, detail="Offer has not started yet")
+        if offer.valid_to and now > offer.valid_to:
+            raise HTTPException(status_code=400, detail="Offer has expired")
+
+        if offer.min_order_amount and grand_total < offer.min_order_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Minimum order amount ₹{offer.min_order_amount:.2f} not met"
+            )
+
+        if offer.offer_type == OfferType.FLAT_DISCOUNT:
+            offer_discount = min(float(offer.discount_value or 0), grand_total)
+
+        elif offer.offer_type == OfferType.PERCENTAGE_OFF:
+            offer_discount = round(grand_total * (float(offer.discount_value or 0) / 100), 2)
+
+        # BUY_ONE_GET_ONE / FREE_ITEM — no numeric discount in preview
+        else:
+            offer_discount = 0.0
+            message = f"Offer '{offer.offer_name}' applied — discount calculated at checkout"
+
+        message = message or f"Offer '{offer.offer_name}' applied"
+
+    final_amount = round(grand_total - offer_discount, 2)
+    due_amount = round(max(final_amount - paid_amount, 0), 2)
+
+    return OfferPreviewResponse(
+        original_amount=grand_total,
+        offer_discount=offer_discount,
+        final_amount=final_amount,
+        due_amount=due_amount,
+        message=message,
+    )
+
 
 
 @router.patch(
@@ -634,20 +723,21 @@ async def preview_offer_application(
     
     # If no offer, return original
     if not data.offer_id:
-        bill.offer_id = None
-        bill.offer_discount = 0.0
-        bill.final_amount = bill.grand_total
-        bill.due_amount = bill.grand_total
+        # bill.offer_id = None
+        # bill.offer_discount = 0.0
+        # bill.final_amount = bill.grand_total
+        # bill.due_amount = bill.grand_total
 
         # bill.payment_status = PaymentStatus.pending
 
-        await db.commit()
-        await db.refresh(bill)
+        # await db.commit()
+        # await db.refresh(bill)
 
         return OfferPreviewResponse(
             original_amount=original_amount,
             offer_discount=0.0,
             final_amount=original_amount,
+            due_amount=original_amount,
             message="Offer removed"
         )
     
@@ -672,6 +762,7 @@ async def preview_offer_application(
             original_amount=original_amount,
             offer_discount=0.0,
             final_amount=original_amount,
+            due_amount=original_amount,
             message="Offer is not active"
         )
     
@@ -682,6 +773,7 @@ async def preview_offer_application(
             original_amount=original_amount,
             offer_discount=0.0,
             final_amount=original_amount,
+            due_amount=original_amount,
             message="Offer is not valid at this time"
         )
     
@@ -691,6 +783,7 @@ async def preview_offer_application(
             original_amount=original_amount,
             offer_discount=0.0,
             final_amount=original_amount,
+            due_amount=original_amount,
             message=f"Minimum order amount of {offer.min_order_amount} required for this offer"
         )
     
@@ -712,6 +805,7 @@ async def preview_offer_application(
             original_amount=original_amount,
             offer_discount=0.0,
             final_amount=original_amount,
+            due_amount=original_amount,
             message="Offer type requires more order details"
         )
     
@@ -725,20 +819,21 @@ async def preview_offer_application(
     # SAVE OFFER ON BILL
     # ==========================================
 
-    bill.offer_id = offer.id
-    bill.offer_discount = discount
-    bill.final_amount = final_amount
-    bill.due_amount = final_amount
+    # bill.offer_id = offer.id
+    # bill.offer_discount = discount
+    # bill.final_amount = final_amount
+    # bill.due_amount = final_amount
 
     # bill.payment_status = PaymentStatus.edited
 
-    await db.commit()
-    await db.refresh(bill)
+    # await db.commit()
+    # await db.refresh(bill)
 
     return OfferPreviewResponse(
         original_amount=original_amount,
         offer_discount=discount,
         final_amount=final_amount,
+        due_amount=final_amount,
         message=f"Offer applied: {offer.offer_name}"
     )
 
@@ -817,13 +912,14 @@ async def edit_bill_items(
         )
 
     # =====================================================
-    # ONLY CANCELED BILL CAN BE EDITED
+    # BUG #1 FIX: Allow editing of pending, edited, AND cancelled bills.
+    # Only completely-paid bills must not be modified.
     # =====================================================
 
-    if bill.payment_status != PaymentStatus.cancel:
+    if bill.payment_status == PaymentStatus.complete:
         raise HTTPException(
             status_code=400,
-            detail="Only canceled bills can be edited"
+            detail="Completed bills cannot be edited"
         )
 
     # =====================================================
@@ -985,7 +1081,10 @@ async def edit_bill_items(
             tax_percent=tax_percent,
             subtotal=subtotal,
             tax_amount=tax_amount,
-            total_price=total_price
+            total_price=total_price,
+            # BUG #3a FIX: Mark new items as "served" so the frontend
+            # order-level served filter does not hide the bill after edit.
+            order_status="served",
         )
 
         db.add(new_order_item)
@@ -1145,6 +1244,13 @@ async def edit_bill_items(
     await db.commit()
     await db.refresh(bill)
 
+    # BUG #4 FIX: Invalidate invoice PDF and dashboard caches after edit.
+    # The previous code was missing these invalidations entirely.
+    await Cache.delete(f"invoice:pdf:{bill.id}")
+    await Cache.delete_pattern(
+        f"dashboard:*:branch:{bill.branch_id}"
+    )
+
     return bill
 
 
@@ -1294,3 +1400,272 @@ async def get_bill_for_invoice(
 
 # router.py
 from app.accounts.bill.service import InvoiceService
+
+
+
+@router.post(
+    "/{bill_id}/add-item",
+    response_model=EditBillResponse
+)
+async def add_bill_item(
+    bill_id: int,
+    data: AddBillItemRequest,
+    db: SessionDep
+):
+    # ============================================
+    # BILL
+    # ============================================
+
+    bill = await db.get(Bill, bill_id)
+
+    if not bill:
+        raise HTTPException(
+            status_code=404,
+            detail="Bill not found"
+        )
+
+    # ============================================
+    # COMPLETE BILL CANNOT BE MODIFIED
+    # ============================================
+
+    if bill.payment_status == PaymentStatus.complete:
+        raise HTTPException(
+            status_code=400,
+            detail="Completed bill cannot be modified"
+        )
+
+    # ============================================
+    # ORDER
+    # ============================================
+
+    order = await db.get(Order, bill.order_id)
+
+    if not order:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found"
+        )
+
+    # ============================================
+    # ITEM
+    # ============================================
+
+    menu_item = await db.get(Item, data.item_id)
+
+    if not menu_item:
+        raise HTTPException(
+            status_code=404,
+            detail="Item not found"
+        )
+
+    # ============================================
+    # ALREADY EXISTS ?
+    # ============================================
+
+    result = await db.execute(
+        select(OrderItem).where(
+            OrderItem.order_id == order.id,
+            OrderItem.item_id == data.item_id
+        )
+    )
+
+    order_item = result.scalar_one_or_none()
+
+    # ============================================
+    # PRICING
+    # ============================================
+
+    pricing_result = await db.execute(
+        select(Pricing).where(
+            Pricing.item_id == data.item_id,
+            Pricing.client_id == bill.client_id,
+            Pricing.branch_id == bill.branch_id,
+            Pricing.is_active == True
+        )
+    )
+
+    pricing = pricing_result.scalar_one_or_none()
+
+    if not pricing:
+        raise HTTPException(
+            status_code=404,
+            detail="Pricing not found"
+        )
+
+    unit_price = float(pricing.price or 0)
+    discount_percent = float(pricing.discount or 0)
+    tax_percent = float(pricing.tax or 0)
+
+    discounted_price = unit_price - (
+        unit_price * discount_percent / 100
+    )
+
+    tax_per_unit = discounted_price * tax_percent / 100
+
+    # ============================================
+    # UPDATE IF EXISTS
+    # ============================================
+
+    if order_item:
+
+        order_item.quantity += data.quantity
+
+        order_item.subtotal = round(
+            discounted_price * order_item.quantity,
+            2
+        )
+
+        order_item.tax_amount = round(
+            tax_per_unit * order_item.quantity,
+            2
+        )
+
+        order_item.total_price = round(
+            order_item.subtotal +
+            order_item.tax_amount,
+            2
+        )
+
+    else:
+
+        subtotal = round(
+            discounted_price * data.quantity,
+            2
+        )
+
+        tax_amount = round(
+            tax_per_unit * data.quantity,
+            2
+        )
+
+        total_price = round(
+            subtotal + tax_amount,
+            2
+        )
+
+        db.add(
+            OrderItem(
+                order_id=order.id,
+                item_id=data.item_id,
+                quantity=data.quantity,
+                unit_price=unit_price,
+                discount_percent=discount_percent,
+                tax_percent=tax_percent,
+                subtotal=subtotal,
+                tax_amount=tax_amount,
+                total_price=total_price,
+                # BUG #3b FIX: Mark new items as "served" so the frontend
+                # order-level served filter does not hide the bill after add.
+                order_status="served",
+            )
+        )
+
+    await db.flush()
+
+    # ============================================
+    # RECALCULATE BILL
+    # ============================================
+
+    result = await db.execute(
+        select(OrderItem).where(
+            OrderItem.order_id == order.id
+        )
+    )
+
+    order_items = result.scalars().all()
+
+    subtotal = round(
+        sum(float(i.subtotal or 0) for i in order_items),
+        2
+    )
+
+    tax_total = round(
+        sum(float(i.tax_amount or 0) for i in order_items),
+        2
+    )
+
+    cgst = round(tax_total / 2, 2)
+    sgst = round(tax_total / 2, 2)
+
+    service_charge = round(
+        subtotal *
+        (bill.service_charge_percent / 100),
+        2
+    )
+
+    grand_total = round(
+        subtotal +
+        tax_total +
+        service_charge,
+        2
+    )
+
+    # ============================================
+    # APPLY EXISTING OFFER AGAIN
+    # ============================================
+
+    offer_discount = 0
+    final_amount = grand_total
+
+    if bill.offer_id:
+
+        offer = await db.get(
+            Offer,
+            bill.offer_id
+        )
+
+        if offer:
+
+            if offer.offer_type == OfferType.FLAT_DISCOUNT:
+
+                offer_discount = min(
+                    float(offer.discount_value or 0),
+                    grand_total
+                )
+
+            elif offer.offer_type == OfferType.PERCENTAGE_OFF:
+
+                offer_discount = round(
+                    grand_total *
+                    (offer.discount_value / 100),
+                    2
+                )
+
+            final_amount = round(
+                grand_total - offer_discount,
+                2
+            )
+
+    # ============================================
+    # UPDATE BILL
+    # ============================================
+
+    order.total_amount = final_amount
+
+    bill.subtotal = subtotal
+    bill.tax_total = tax_total
+    bill.cgst_amount = cgst
+    bill.sgst_amount = sgst
+    bill.service_charge_amount = service_charge
+    bill.grand_total = grand_total
+    bill.offer_discount = offer_discount
+    bill.final_amount = final_amount
+    bill.due_amount = final_amount
+    bill.is_edited = True
+
+    if bill.payment_status != PaymentStatus.pending:
+        bill.payment_status = PaymentStatus.edited
+
+    await db.commit()
+    await db.refresh(bill)
+
+    # ============================================
+    # CLEAR CACHE
+    # ============================================
+
+    await Cache.delete(f"invoice:pdf:{bill.id}")
+    await Cache.delete_pattern(
+        f"dashboard:*:branch:{bill.branch_id}"
+    )
+
+    return bill

@@ -11,7 +11,7 @@ import io
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
-
+from app.accounts.item.enum import FoodType
 import pandas as pd
 from app.accounts.bill.model import Bill
 from fastapi import HTTPException, UploadFile
@@ -38,6 +38,7 @@ TEMPLATES: dict[str, dict[str, list[dict]]] = {
                 "Name": "Veg Burger",
                 "Category": "Fast Food",
                 "Branch Code": "BR001",
+                "Food Type": "veg",
                 "Active": True,
             }
         ],
@@ -126,7 +127,7 @@ class ModuleConfig:
 UPLOAD_CONFIG: dict[str, ModuleConfig] = {
     "menu": ModuleConfig(
         sheets=[
-            SheetConfig("Menu_Items", ["Name", "Category", "Branch Code", "Active"]),
+            SheetConfig("Menu_Items", ["Name", "Category", "Branch Code", "Food Type", "Active"]),
             SheetConfig(
                 "Pricing",
                 ["Menu Item", "Branch Code", "Price", "Cost Price",
@@ -195,6 +196,47 @@ def _safe_bool(val: Any) -> bool:
     if isinstance(val, bool):
         return val
     return str(val).strip().lower() in ("true", "1", "yes")
+
+
+def _safe_food_type(val: Any, row_num: int) -> FoodType:
+    """
+    Safely convert a value to FoodType enum.
+    
+    Args:
+        val: The value from the Excel cell
+        row_num: The row number for error messages (1-indexed)
+    
+    Returns:
+        FoodType enum value
+    
+    Raises:
+        HTTPException: If the value is invalid
+    """
+    if pd.isna(val) or not str(val).strip():
+        return FoodType.veg
+    
+    # Normalize: strip, lowercase, replace spaces with underscores
+    normalized = str(val).strip().lower().replace(" ", "_")
+    
+    # Handle common variations
+    if normalized in ["veg", "vegetarian"]:
+        return FoodType.veg
+    elif normalized in ["non_veg", "nonveg", "non-veg", "non vegetarian", "non-vegetarian"]:
+        return FoodType.non_veg
+    elif normalized in ["egg", "eggetarian"]:
+        return FoodType.egg
+    
+    # Try direct enum lookup
+    try:
+        return FoodType(normalized)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Row {row_num}: Invalid Food Type '{val}'. "
+                "Allowed values: veg, non_veg, egg."
+            ),
+        )
 
 
 def _auto_width_excel(writer: pd.ExcelWriter, sheet_name: str) -> None:
@@ -351,25 +393,38 @@ async def _process_menu(
     new_items: dict[tuple[str, int], Item] = {}
 
     # ----------------------------------------------------------------
-    # Phase 1: Menu Items  (auto-create Category if missing)
+    # Phase 1: Menu Items (auto-create Category if missing)
     # ----------------------------------------------------------------
     for idx, row in menu_df.iterrows():
         name = _safe_str(row.get("Name"))
         branch_code = _safe_str(row.get("Branch Code")).upper()
         category_name = _safe_str(row.get("Category"))
 
+        # Safely convert Food Type
+        food_type = _safe_food_type(row.get("Food Type"), idx + 2)
+
         if not name:
             continue
+
         if not branch_code:
-            raise HTTPException(400, f"Row {idx + 2}: 'Branch Code' cannot be empty.")
+            raise HTTPException(
+                400,
+                f"Row {idx + 2}: 'Branch Code' cannot be empty."
+            )
+
         if not category_name:
-            raise HTTPException(400, f"Row {idx + 2}: 'Category' cannot be empty.")
+            raise HTTPException(
+                400,
+                f"Row {idx + 2}: 'Category' cannot be empty."
+            )
 
         branch = branches_map.get(branch_code)
         if branch is None:
-            raise HTTPException(400, f"Branch '{branch_code}' not found.")
+            raise HTTPException(
+                400,
+                f"Branch '{branch_code}' not found."
+            )
 
-        # Auto-create category if it does not exist.
         category = await _find_or_create_category(
             db=db,
             category_name=category_name,
@@ -380,18 +435,32 @@ async def _process_menu(
         )
 
         key = (name.lower(), branch.id)
-        if key in items_map or key in new_items:
-            # Item already exists — treat as update (we update in-place later if needed)
+
+        existing_item = items_map.get(key)
+
+        if existing_item:
+            # Update existing item
+            existing_item.category_id = category.id
+            existing_item.food_type = food_type
+            existing_item.is_active = _safe_bool(row.get("Active", True))
+
             counters["items_updated"] += 1
             continue
 
+        if key in new_items:
+            counters["items_updated"] += 1
+            continue
+
+        # Create new item
         item = Item(
             name=name,
             category_id=category.id,
             branch_id=branch.id,
             client_id=client_id,
+            food_type=food_type,
             is_active=_safe_bool(row.get("Active", True)),
         )
+
         db.add(item)
         new_items[key] = item
         counters["items_created"] += 1
@@ -400,7 +469,7 @@ async def _process_menu(
     items_map.update(new_items)
 
     # ----------------------------------------------------------------
-    # Phase 2: Pricing  (create or update)
+    # Phase 2: Pricing (create or update)
     # ----------------------------------------------------------------
     pricings_map = await _load_existing_pricings(db, client_id)
 
@@ -464,7 +533,7 @@ async def _process_menu(
     await db.flush()
 
     # ----------------------------------------------------------------
-    # Phase 3: BOM  (auto-create Godown if missing; Inventory Item MUST exist)
+    # Phase 3: BOM (auto-create Godown if missing; Inventory Item MUST exist)
     # ----------------------------------------------------------------
     all_branch_ids = [b.id for b in branches_map.values()]
     inventory_map = await _load_inventory_items(db, all_branch_ids)
@@ -536,13 +605,6 @@ async def _process_menu(
         message="Menu uploaded successfully",
         counts=counters,
     )
-
-
-_VALID_STATUS = {"in_stock", "low_stock", "out_of_stock"}
-# NOTE: row_category is intentionally open — it accepts any non-empty string.
-# This ensures that files exported by this system (which may contain values like
-# 'produce', 'dry_goods', etc.) can always be re-imported without validation failure.
-# We only fall back to "other" when the field is blank.
 
 
 async def _process_inventory(
@@ -988,6 +1050,7 @@ async def _export_menu(
             "Name": item.name,
             "Category": category.name,
             "Branch Code": branch.branch_code,
+            "Food Type": item.food_type.value if item.food_type else "",
             "Active": item.is_active,
         }
         for item, branch, category in items_rows

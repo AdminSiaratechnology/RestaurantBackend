@@ -1,7 +1,8 @@
 from datetime import datetime
-
+from app.accounts.item.enum import FoodType
 from sqlalchemy import (
     Column,
+    Enum,
     ForeignKey,
     Integer,
     String,
@@ -51,6 +52,11 @@ class Item(Base):
     pricings = relationship("Pricing", back_populates="item", cascade="all, delete-orphan")
     order_items = relationship("OrderItem", back_populates="item")
 
+    food_type = Column(
+        Enum(FoodType, name="food_type_enum"),
+        nullable=False,
+        default=FoodType.veg
+    )
 
     ingredients = relationship(
         "ItemIngredient",

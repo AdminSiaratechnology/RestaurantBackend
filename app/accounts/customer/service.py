@@ -9,7 +9,8 @@ from app.accounts.customer.schema import (
     CustomerUpdate
 )
 from app.accounts.deps import UserRole
-
+from sqlalchemy import select, or_, and_
+from sqlalchemy.orm import selectinload
 
 async def create_customer_service(
     payload: CustomerCreate,
@@ -280,3 +281,141 @@ async def get_customers_all_branches(
         })
 
     return response
+
+
+
+
+
+from sqlalchemy import func
+
+async def find_existing_customer(
+    db,
+    client_id: int,
+    name: str | None = None,
+    phone: str | None = None,
+    email: str | None = None,
+):
+    """
+    Matching Priority
+
+    1. Phone
+    2. Email
+    3. Name + Phone
+    4. Name + Email
+    """
+
+    if phone:
+        customer = await db.scalar(
+            select(Customer).where(
+                Customer.client_id == client_id,
+                Customer.phone == phone,
+            )
+        )
+
+        if customer:
+            return customer
+
+    if email:
+        customer = await db.scalar(
+            select(Customer).where(
+                Customer.client_id == client_id,
+                func.lower(Customer.email) == email.lower(),
+            )
+        )
+
+        if customer:
+            return customer
+
+    if name and phone:
+        customer = await db.scalar(
+            select(Customer).where(
+                Customer.client_id == client_id,
+                func.lower(Customer.name) == name.lower(),
+                Customer.phone == phone,
+            )
+        )
+
+        if customer:
+            return customer
+
+    if name and email:
+        customer = await db.scalar(
+            select(Customer).where(
+                Customer.client_id == client_id,
+                func.lower(Customer.name) == name.lower(),
+                func.lower(Customer.email) == email.lower(),
+            )
+        )
+
+        if customer:
+            return customer
+
+    return None
+
+
+
+
+
+async def create_customer_from_order(
+    db,
+    *,
+    client_id: int,
+    branch_id: int,
+    branch_name: str,
+    name: str,
+    phone: str | None,
+    email: str | None,
+):
+    customer = Customer(
+        client_id=client_id,
+        branch_id=branch_id,
+        branch_name=branch_name,
+        name=name,
+        phone=phone or "",
+        email=email,
+        first_visit_at=datetime.utcnow(),
+        last_visit_at=datetime.utcnow(),
+    )
+
+    db.add(customer)
+
+    await db.flush()
+    await db.refresh(customer)
+
+    return customer
+
+
+
+
+async def find_or_create_customer(
+    db,
+    *,
+    client_id: int,
+    branch_id: int,
+    branch_name: str,
+    name: str,
+    phone: str | None = None,
+    email: str |None = None,
+):
+    customer = await find_existing_customer(
+        db=db,
+        client_id=client_id,
+        name=name,
+        phone=phone,
+        email=email,
+    )
+
+    if customer:
+        return customer, False
+
+    customer = await create_customer_from_order(
+        db=db,
+        client_id=client_id,
+        branch_id=branch_id,
+        branch_name=branch_name,
+        name=name,
+        phone=phone,
+        email=email,
+    )
+
+    return customer, True

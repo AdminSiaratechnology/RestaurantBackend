@@ -5,6 +5,7 @@ TEMPLATES = {
                 "Name": "Veg Burger",
                 "Category": "Fast Food",
                 "Branch Code": "BR001",
+                "Food Type": "veg",
                 "Image": "veg_burger.jpg",
                 "Active": True
             }

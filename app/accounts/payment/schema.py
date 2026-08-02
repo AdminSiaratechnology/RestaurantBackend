@@ -27,9 +27,9 @@ class PaymentCreate(BaseModel):
 
     offer_id: Optional[int] = None
 
-    offer_discount: Optional[float] = 0.0
+    # offer_discount: Optional[float] = 0.0
 
-    final_amount: Optional[float] = None
+    # final_amount: Optional[float] = None
 
 
 class PaymentItemOut(BaseModel):
