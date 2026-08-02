@@ -4,7 +4,9 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
-
+from sqlalchemy import select, asc, desc
+from app.accounts.pricing.model import Pricing
+from app.accounts.item.enum import ItemSort
 from app.accounts.branch.model import Branch
 from app.accounts.category.model import Category
 from app.accounts.deps import get_client_if_accessible
@@ -12,7 +14,7 @@ from app.accounts.item.model import Item
 from app.accounts.pricing.model import Pricing
 from app.core.cache import Cache
 from fastapi.encoders import jsonable_encoder
-
+from app.accounts.item.enum import FoodType
 
 async def get_items_service(
     db,
@@ -22,24 +24,43 @@ async def get_items_service(
     cursor=None,
     search=None,
     category_id=None,
+    food_type: FoodType | None = None,
+    sort_by: ItemSort | None = None,
 ):
     role = current["role"]
     user = current["user"]
+
+    # =====================================================
+    # GET BRANCH
+    # =====================================================
 
     if role == "staff":
         final_branch_id = user.selected_branch_id
 
         if not final_branch_id:
-            raise HTTPException(400, "Staff branch not assigned")
+            raise HTTPException(
+                status_code=400,
+                detail="Staff branch not assigned"
+            )
 
     elif role == "client":
         if not branch_id:
-            raise HTTPException(400, "branch_id is required")
+            raise HTTPException(
+                status_code=400,
+                detail="branch_id is required"
+            )
 
         final_branch_id = branch_id
 
     else:
-        raise HTTPException(403, "Access denied")
+        raise HTTPException(
+            status_code=403,
+            detail="Access denied"
+        )
+
+    # =====================================================
+    # VERIFY BRANCH
+    # =====================================================
 
     result = await db.execute(
         select(Branch).where(
@@ -50,43 +71,127 @@ async def get_items_service(
     branch = result.scalar_one_or_none()
 
     if not branch:
-        raise HTTPException(404, "Branch not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Branch not found"
+        )
 
-    cache_key = f"products:branch:{final_branch_id}:{limit}:{cursor}:{search}:{category_id}"
+    # =====================================================
+    # CACHE
+    # =====================================================
+
+    cache_key = (
+        f"products:branch:{final_branch_id}:"
+        f"{limit}:{cursor}:{search}:"
+        f"{category_id}:{food_type}:{sort_by}"
+    )
+
     cached_data = await Cache.get(cache_key)
+
     if cached_data:
         return cached_data
 
+    # =====================================================
+    # QUERY
+    # =====================================================
+
     query = (
         select(Item)
-        .options(selectinload(Item.pricings))
-        .where(Item.branch_id == final_branch_id)
+        .outerjoin(
+            Pricing,
+            (Pricing.item_id == Item.id)
+            & (Pricing.branch_id == final_branch_id)
+            & (Pricing.is_active == True)
+        )
+        .options(
+            selectinload(Item.pricings)
+        )
+        .where(
+            Item.branch_id == final_branch_id
+        )
     )
+
+    # =====================================================
+    # CATEGORY FILTER
+    # =====================================================
 
     if category_id:
         query = query.where(
             Item.category_id == category_id
         )
 
+    # =====================================================
+    # SEARCH
+    # =====================================================
+
     if search:
         query = query.where(
             Item.name.ilike(f"%{search}%")
         )
+
+    # =====================================================
+    # FOOD TYPE FILTER
+    # =====================================================
+
+    if food_type:
+        query = query.where(
+            Item.food_type == food_type
+        )
+
+    # =====================================================
+    # CURSOR PAGINATION
+    # =====================================================
 
     if cursor:
         query = query.where(
             Item.id > cursor
         )
 
-    query = query.order_by(Item.id.asc())
+    # =====================================================
+    # SORTING
+    # =====================================================
+
+    if sort_by == ItemSort.high_to_low:
+        query = query.order_by(
+            desc(Pricing.price),
+            Item.id.asc()
+        )
+
+    elif sort_by == ItemSort.low_to_high:
+        query = query.order_by(
+            asc(Pricing.price),
+            Item.id.asc()
+        )
+
+    else:
+        query = query.order_by(
+            Item.id.asc()
+        )
+
+    # =====================================================
+    # LIMIT
+    # =====================================================
 
     if limit:
         query = query.limit(limit)
 
+    # =====================================================
+    # EXECUTE
+    # =====================================================
+
     result = await db.execute(query)
-    items = result.scalars().all()
-    
-    await Cache.set(cache_key, jsonable_encoder(items), expire=600)
+
+    items = result.scalars().unique().all()
+
+    # =====================================================
+    # CACHE
+    # =====================================================
+
+    await Cache.set(
+        cache_key,
+        jsonable_encoder(items),
+        expire=600
+    )
 
     return items
 
@@ -144,7 +249,8 @@ async def create_item_service(
         name=payload.name,
         client_id=client.id,
         category_id=payload.category_id,
-        branch_id=payload.branch_id
+        branch_id=payload.branch_id,
+        food_type=payload.food_type
     )
 
     db.add(item)
@@ -196,14 +302,21 @@ async def update_item_service(
             select(Item).where(
                 Item.name == payload.name,
                 Item.client_id == item.client_id,
+                Item.branch_id == item.branch_id,
                 Item.id != item_id
             )
         )
 
         if result.scalar_one_or_none():
-            raise HTTPException(400, "Duplicate name")
+            raise HTTPException(
+                400,
+                "Item already exists in this branch"
+            )
 
-    item_data = payload.dict(
+        # if result.scalar_one_or_none():
+        #     raise HTTPException(400, "Duplicate name")
+
+    item_data = payload.model_dump(
         exclude_unset=True,
         exclude={"price", "pricing_is_active"}
     )
@@ -228,7 +341,11 @@ async def update_item_service(
                 client_id=item.client_id,
                 branch_id=item.branch_id,
                 price=payload.price,
-                is_active=payload.pricing_is_active or True
+                is_active=(
+                    payload.pricing_is_active
+                    if payload.pricing_is_active is not None
+                    else True
+                )
             )
 
             db.add(pricing)

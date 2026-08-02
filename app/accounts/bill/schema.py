@@ -5,6 +5,7 @@
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
+from pydantic import BaseModel, Field
 
 from app.accounts.bill.enum import PaymentStatus
 
@@ -18,6 +19,7 @@ class OfferPreviewResponse(BaseModel):
     original_amount: float
     offer_discount: Optional[float] = 0.0
     final_amount: float
+    due_amount: float
     message: Optional[str] = None
 # =========================================================
 # PRICING RESPONSE
@@ -189,3 +191,10 @@ class BillItemUpdate(BaseModel):
 
 class EditBillItemsRequest(BaseModel):
     items: List[BillItemUpdate]
+
+
+
+
+class AddBillItemRequest(BaseModel):
+    item_id: int
+    quantity: int = Field(gt=0)
