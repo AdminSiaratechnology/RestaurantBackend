@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Query
 
@@ -21,8 +21,8 @@ router = APIRouter(
 
 @router.get("", response_model=List[VisitHistoryOut])
 async def list_visit_history(
-    customer_id: int,
     db: SessionDep,
+    customer_id: Optional[int] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ):

@@ -1,5 +1,3 @@
-
-
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.accounts.customer.schema import (
@@ -17,7 +15,7 @@ from app.accounts.customer.service import (
 )
 
 from app.accounts.deps import (
-    access_one,UserRole
+    access_one, UserRole
 )
 
 from app.db.config import SessionDep
@@ -40,7 +38,6 @@ async def create_customer(
         payload=payload,
         db=db
     )
-
 
 
 @router.get(
@@ -77,7 +74,6 @@ async def update_customer(
     )
 
 
-
 @router.delete("/{customer_id}")
 async def delete_customer(
     customer_id: int,
@@ -89,7 +85,6 @@ async def delete_customer(
     )
 
 
-
 @router.get("/dashboard/all-branches")
 async def customers_all_branches(
     db: SessionDep,
@@ -99,16 +94,12 @@ async def customers_all_branches(
     user = current["user"]
 
     if role == UserRole.CLIENT:
-
         client_id = user.id
-
     elif role == UserRole.PARTNER:
-
         raise HTTPException(
             403,
             "Use partner-specific implementation"
         )
-
     else:
         raise HTTPException(
             403,

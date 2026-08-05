@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from io import BytesIO
+from app.accounts.branch.model import Branch
+from app.accounts.crm.customer_history.checkout_service import handle_customer_and_visit
 
 from app.db.config import get_db
 from app.accounts.bill.service import InvoiceService
@@ -594,6 +596,7 @@ async def update_bill_status(
     data: BillStatusUpdate,
     db: SessionDep
 ):
+    print("HANDLE CUSTOMER CALLED")####################################
     result = await db.execute(
         select(Bill).where(
             Bill.id == bill_id
@@ -611,6 +614,9 @@ async def update_bill_status(
     # ==========================================
     # ALREADY UPDATED
     # ==========================================
+    # NOTE: Ye guard hi customer/visit-history creation ko
+    # idempotent banata hai — complete/cancel ho chuke bill
+    # ke liye function dobara chalega hi nahi.
 
     if bill.payment_status in [
         PaymentStatus.complete,
@@ -651,10 +657,9 @@ async def update_bill_status(
                 table.status = TableStatus.occupied
             elif data.payment_status == PaymentStatus.cancel:
                 table.status = TableStatus.occupied
-            
+
             await Cache.delete(f"tables:branch:{table.branch_id}")
 
-    # FIXED: This block was incorrectly indented
     if data.payment_status == PaymentStatus.complete:
         bill.payment_status = PaymentStatus.complete
         bill.paid_amount = (
@@ -663,6 +668,41 @@ async def update_bill_status(
             else bill.grand_total
         )
         bill.due_amount = 0.0
+
+        # ==========================================
+        # CUSTOMER IDENTIFICATION + VISIT HISTORY
+        # Sirf tab trigger hoga jab payment COMPLETE
+        # ho rahi hai — yahi asli "successful checkout"
+        # moment hai (guard upar isko idempotent bana
+        # chuka hai).
+        # ==========================================
+
+        branch = await db.get(Branch, bill.branch_id)
+
+        customer = await handle_customer_and_visit(
+            db=db,
+            client_id=bill.client_id,
+            branch_id=bill.branch_id,
+            branch_name=branch.name if branch else "",
+            order_id=bill.order_id,
+            bill_id=bill.id,
+            total_amount=bill.final_amount or bill.grand_total,
+            discount=(bill.discount_amount or 0) + (bill.offer_discount or 0),
+            tax=bill.tax_total or 0,
+            payment_method=bill.payment_method,
+            table_name=(table.name if order and order.table_id and table else None),
+            visit_type=bill.order_type,
+            customer_name=bill.customer_name,
+            customer_phone=bill.customer_phone,
+        )
+
+        # Bill ko bhi identified customer se link karo,
+        # taaki future queries (order history, CRM) mein
+        # bill -> customer trace ho sake.
+        print("RETURNED CUSTOMER =", customer)
+        if customer:
+            bill.customer_id = customer.id
+
     elif data.payment_status == PaymentStatus.cancel:
         bill.paid_amount = 0.0
         bill.due_amount = (
@@ -679,7 +719,12 @@ async def update_bill_status(
             else bill.grand_total
         )
 
-    await db.commit()
+    try:
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+
     await db.refresh(bill)
 
     # Invalidate dashboard cache (payment completed / bill status changed)
@@ -688,7 +733,28 @@ async def update_bill_status(
     # Invalidate invoice PDF cache since bill status changed
     await Cache.delete(f"invoice:pdf:{bill.id}")
 
+    print("====== PAYMENT COMPLETE ======")
+    print("Bill ID:", bill.id)
+    print("Customer Name:", bill.customer_name)
+    print("Customer Phone:", bill.customer_phone)
+
+    if data.payment_status == PaymentStatus.complete:
+        try:
+            from app.accounts.crm.events.publisher import crm_event_publisher
+            await crm_event_publisher.publish_bill_completed(
+                bill_id=bill.id,
+                order_id=bill.order_id,
+                customer_id=bill.customer_id or 0,
+                client_id=bill.client_id,
+                branch_id=bill.branch_id
+            )
+        except Exception as err:
+            print("[CRM Event Publisher Error]:", err)
+
     return bill
+
+
+
 
 
 # =====================================================
