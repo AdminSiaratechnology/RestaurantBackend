@@ -11,6 +11,9 @@ from app.accounts.customer.schema import (
 from app.accounts.deps import UserRole
 from sqlalchemy import select, or_, and_
 from sqlalchemy.orm import selectinload
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+
 
 async def create_customer_service(
     payload: CustomerCreate,
@@ -39,7 +42,11 @@ async def create_customer_service(
     if existing:
         raise HTTPException(
             status_code=409,
-            detail="Customer already exists."
+            detail=(
+                f"Customer with phone '{payload.phone}' already exists "
+                f"for this client (customer_id={existing.id}, "
+                f"registered at branch_id={existing.branch_id})."
+            )
         )
 
     customer = Customer(
@@ -51,11 +58,9 @@ async def create_customer_service(
         dob=payload.dob,
         anniversary=payload.anniversary,
         customer_source=payload.customer_source,
-        first_visit_at=datetime.utcnow(),
-        last_visit_at=datetime.utcnow(),
         branch_id=branch.id,
         branch_name=branch.name,
-        client_id=branch.client_id
+        client_id=branch.client_id,
     )
 
     db.add(customer)
@@ -224,7 +229,6 @@ async def get_customers_all_branches(
     db,
     client_id: int
 ):
-    # Get all branches of client
     branches_result = await db.execute(
         select(Branch).where(
             Branch.client_id == client_id
@@ -241,7 +245,6 @@ async def get_customers_all_branches(
             "branches": []
         }
 
-    # Get all customers
     customers_result = await db.execute(
         select(Customer).where(
             Customer.client_id == client_id
@@ -283,11 +286,6 @@ async def get_customers_all_branches(
     return response
 
 
-
-
-
-from sqlalchemy import func
-
 async def find_existing_customer(
     db,
     client_id: int,
@@ -295,15 +293,6 @@ async def find_existing_customer(
     phone: str | None = None,
     email: str | None = None,
 ):
-    """
-    Matching Priority
-
-    1. Phone
-    2. Email
-    3. Name + Phone
-    4. Name + Email
-    """
-
     if phone:
         customer = await db.scalar(
             select(Customer).where(
@@ -353,9 +342,6 @@ async def find_existing_customer(
     return None
 
 
-
-
-
 async def create_customer_from_order(
     db,
     *,
@@ -370,21 +356,34 @@ async def create_customer_from_order(
         client_id=client_id,
         branch_id=branch_id,
         branch_name=branch_name,
-        name=name,
-        phone=phone or "",
+        name=name or "Guest",
+        phone=phone,
         email=email,
-        first_visit_at=datetime.utcnow(),
-        last_visit_at=datetime.utcnow(),
     )
 
     db.add(customer)
 
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+
+        customer = await find_existing_customer(
+            db=db,
+            client_id=client_id,
+            name=name,
+            phone=phone,
+            email=email,
+        )
+
+        if customer:
+            return customer
+
+        raise
+
     await db.refresh(customer)
 
     return customer
-
-
 
 
 async def find_or_create_customer(
@@ -395,8 +394,19 @@ async def find_or_create_customer(
     branch_name: str,
     name: str,
     phone: str | None = None,
-    email: str |None = None,
+    email: str | None = None,
 ):
+    phone = (phone.strip() if phone and phone.strip() else None)
+    email = (email.strip() if email and email.strip() else None)
+    name = (name.strip() if name and name.strip() else "Walk-in Guest")
+
+    if not phone and not email:
+        phone = f"GUEST-{client_id}-{branch_id}"
+        name = name or "Walk-in Guest"
+
+    if not phone and email:
+        phone = f"GUEST-EMAIL-{client_id}-{branch_id}"
+
     customer = await find_existing_customer(
         db=db,
         client_id=client_id,

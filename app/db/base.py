@@ -36,3 +36,12 @@ from app.accounts.purchaseorder.model import PurchaseOrder, PurchaseOrderItem
 from app.accounts.bom.model import MenuItemBOM
 from app.accounts.vendor.model import Vendor
 from app.accounts.crm.customer_history.model import CustomerVisitHistory
+from app.accounts.crm.events.model import CRMProcessedEvent
+from app.accounts.crm.loyalty.model import CustomerLoyaltyAccount, LoyaltyTransaction
+from app.accounts.crm.wallet.model import CustomerWalletAccount, WalletTransaction
+from app.accounts.crm.campaigns.model import (
+    Campaign,
+    CampaignLog,
+    CustomerCoupon,
+)
+from app.accounts.crm.rank_rules.model import CRMBranchRankRule

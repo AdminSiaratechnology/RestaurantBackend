@@ -17,19 +17,11 @@ class CustomerVisitHistory(Base):
 
     __tablename__ = "customer_visit_history"
 
-    # =====================================================
-    # PRIMARY KEY
-    # =====================================================
-
     id = Column(
         Integer,
         primary_key=True,
         index=True
     )
-
-    # =====================================================
-    # RELATIONS
-    # =====================================================
 
     customer_id = Column(
         Integer,
@@ -62,10 +54,6 @@ class CustomerVisitHistory(Base):
         nullable=False
     )
 
-    # =====================================================
-    # VISIT INFO
-    # =====================================================
-
     visit_date = Column(
         DateTime,
         default=datetime.utcnow,
@@ -75,15 +63,10 @@ class CustomerVisitHistory(Base):
     total_amount = Column(Float, default=0)
     discount = Column(Float, default=0)
     tax = Column(Float, default=0)
-    # net_amount = Column(Float, default=0)
 
     payment_method = Column(String, nullable=True)
     table_name = Column(String, nullable=True)
     visit_type = Column(String, nullable=True)
-
-    # =====================================================
-    # DATES
-    # =====================================================
 
     created_at = Column(
         DateTime,
@@ -91,12 +74,6 @@ class CustomerVisitHistory(Base):
         nullable=False
     )
 
-    # =====================================================
-    # RELATIONSHIPS
-    # =====================================================
-
-    # back_populates target already exists on your Customer model
-    # as `customer_visit_history` — no change needed there.
     customer = relationship(
         "Customer",
         back_populates="customer_visit_history"

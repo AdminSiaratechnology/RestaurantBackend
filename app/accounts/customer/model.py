@@ -275,32 +275,6 @@ class Customer(Base):
         uselist=False
     )
 
-    # Future CRM Modules
-
-    # history = relationship(
-    #     "CustomerHistory",
-    #     back_populates="customer"
-    # )
-
-    # loyalty = relationship(
-    #     "CustomerLoyalty",
-    #     uselist=False,
-    #     back_populates="customer",
-    #     cascade="all, delete-orphan"
-    # )
-
-    # wallet = relationship(
-    #     "CustomerWallet",
-    #     uselist=False,
-    #     back_populates="customer",
-    #     cascade="all, delete-orphan"
-    # )
-
-    # campaigns = relationship(
-    #     "CampaignLog",
-    #     back_populates="customer"
-    # )
-
     customer_visit_history = relationship(
         "CustomerVisitHistory",
         back_populates="customer",

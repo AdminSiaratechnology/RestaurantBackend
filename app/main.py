@@ -48,6 +48,10 @@ from app.accounts.purchaseorder.router import router as purchas_order_router
 from app.accounts.vendor.router import router as vendor_router
 from app.accounts.uploads.router import router as upload_router
 from app.accounts.crm.customer_history.router import router as customer_history_router
+from app.accounts.crm.wallet.router import router as wallet_router
+from app.accounts.crm.loyalty.router import router as loyalty_router
+from app.accounts.crm.campaigns.router import router as campaigns_router
+from app.accounts.crm.rank_rules.router import router as rank_rules_router
 
 
 app = FastAPI()
@@ -62,6 +66,7 @@ app.add_middleware(
         "https://restaurantsiara.netlify.app",
         "https://restaurantsiaralive.netlify.app",
         "https://rmssuperadminn.netlify.app",
+        "https://dx9mtcpd-5173.inc1.devtunnels.ms",
         
     ],
     allow_credentials=True,
@@ -178,3 +183,7 @@ app.include_router(purchas_order_router)
 app.include_router(vendor_router)
 app.include_router(upload_router)
 app.include_router(customer_history_router)
+app.include_router(wallet_router)
+app.include_router(loyalty_router)
+app.include_router(campaigns_router)
+app.include_router(rank_rules_router)

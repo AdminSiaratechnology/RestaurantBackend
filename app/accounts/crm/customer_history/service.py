@@ -7,10 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.accounts.crm.customer_history.model import CustomerVisitHistory
 
 
-# =========================================================
-# CREATE
-# =========================================================
-   
 async def create_visit_history(
     db: AsyncSession,
     *,
@@ -22,7 +18,6 @@ async def create_visit_history(
     total_amount: float = 0,
     discount: float = 0,
     tax: float = 0,
-    net_amount: float = 0,
     payment_method: Optional[str] = None,
     table_name: Optional[str] = None,
     visit_type: Optional[str] = None,
@@ -50,21 +45,18 @@ async def create_visit_history(
     return visit
 
 
-# =========================================================
-# READ
-# =========================================================
-
 async def get_customer_visits(
     db: AsyncSession,
-    customer_id: int,
+    customer_id: Optional[int] = None,
     limit: int = 50,
     offset: int = 0,
 ):
+    stmt = select(CustomerVisitHistory)
+    if customer_id and customer_id > 0:
+        stmt = stmt.where(CustomerVisitHistory.customer_id == customer_id)
 
     stmt = (
-        select(CustomerVisitHistory)
-        .where(CustomerVisitHistory.customer_id == customer_id)
-        .order_by(CustomerVisitHistory.visit_date.desc())
+        stmt.order_by(CustomerVisitHistory.visit_date.desc())
         .offset(offset)
         .limit(limit)
     )
@@ -101,25 +93,22 @@ async def get_visit_stats(
         "last_visit": last_visit,
     }
 
-# =========================================================
-# UPDATE CUSTOMER AGGREGATE STATS
-# =========================================================
 
 async def update_customer_stats(
     db: AsyncSession,
     customer,
     visit: CustomerVisitHistory,
 ):
-
-    customer.total_orders += 1
-    customer.total_visits += 1
-    customer.total_spend += visit.total_amount  or 0
+    customer.total_orders = (customer.total_orders or 0) + 1
+    customer.total_visits = (customer.total_visits or 0) + 1
+    customer.total_spend = (customer.total_spend or 0) + (visit.total_amount or 0)
     customer.average_order_value = round(
         customer.total_spend / customer.total_orders,
         2,
     )
-    customer.last_order_amount = visit.total_amount
+    customer.last_order_amount = visit.total_amount or 0
     customer.last_visit_at = visit.visit_date
+    customer.last_order_id = visit.order_id
 
     if not customer.first_visit_at:
         customer.first_visit_at = visit.visit_date
