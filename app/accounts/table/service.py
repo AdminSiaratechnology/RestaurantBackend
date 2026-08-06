@@ -91,17 +91,21 @@ class TableService:
     async def get_table_by_id(
         db,
         table_id,
-        role,
-        user
+        role=None,
+        user=None
     ):
-        query = await TableService.build_table_query(
-            role,
-            user
-        )
-
-        query = query.where(
-            Table.id == table_id
-        )
+        if role is not None and user is not None:
+            query = await TableService.build_table_query(
+                role,
+                user
+            )
+            query = query.where(
+                Table.id == table_id
+            )
+        else:
+            query = select(Table).where(
+                Table.id == table_id
+            )
 
         result = await db.execute(query)
 
@@ -121,12 +125,16 @@ class TableService:
         role,
         user,
         branch_id=None,
-        filter_status=None
+        filter_status=None,
+        include_inactive: bool = False
     ):
         query = await TableService.build_table_query(
             role,
             user
         )
+
+        if not include_inactive:
+            query = query.where(Table.is_active == True)
 
         if branch_id:
             query = query.where(
@@ -145,6 +153,8 @@ class TableService:
             cache_key = f"tables:branch:{branch_id}"
             cached_tables = await Cache.get(cache_key)
             if cached_tables:
+                if not include_inactive:
+                    cached_tables = [t for t in cached_tables if t.get("is_active") is not False]
                 if filter_status:
                     return [t for t in cached_tables if t.get("status") == filter_status]
                 return cached_tables
@@ -185,11 +195,28 @@ class TableService:
         return table
 
     @staticmethod
-    async def delete_table(
-        db,
-        table
-    ):
+    async def delete_table(db, table):
         branch_id = table.branch_id
+
+    # Check whether this table has ever been used
+        order = await db.scalar(
+            select(Order).where(Order.table_id == table.id).limit(1)
+        )
+
+        if order:
+        # Soft delete
+            table.is_active = False
+            await db.commit()
+            await db.refresh(table)
+
+            await Cache.delete(f"tables:branch:{branch_id}")
+
+            return {
+                "success": True,
+                "message": "Table has order history, so it was deactivated instead of deleted."
+            }
+
+    # Never used -> permanently delete
         await db.delete(table)
         await db.commit()
 
@@ -197,7 +224,7 @@ class TableService:
 
         return {
             "success": True,
-            "message": "Table deleted successfully"
+            "message": "Table deleted successfully."
         }
 
     @staticmethod
@@ -295,7 +322,8 @@ class TableService:
 
         tables_result = await db.execute(
             select(Table).where(
-                Table.branch_id.in_(branch_ids)
+                Table.branch_id.in_(branch_ids),
+                Table.is_active == True
             )
         )
 
@@ -335,6 +363,7 @@ class TableService:
                         "number_of_seats": t.number_of_seats,
                         "shape": t.shape.value if hasattr(t.shape, "value") else t.shape,
                         "status": t.status.value if hasattr(t.status, "value") else t.status,
+                        "is_active": t.is_active,
                     }
                     for t in branch_tables
                 ]
@@ -418,55 +447,55 @@ class TableService:
     
 
 
-@staticmethod
-async def get_table_availability(db, table_id: int):
+    @staticmethod
+    async def get_table_availability(db, table_id: int):
 
-    result = await db.execute(
-        select(Table)
-        .where(Table.id == table_id)
-    )
-
-    table = result.scalar_one_or_none()
-
-    if not table:
-        raise HTTPException(404, "Table not found")
-
-    order_result = await db.execute(
-        select(Order)
-        .where(
-            Order.table_id == table.id,
-            Order.status.notin_(["completed", "cancelled"])
+        result = await db.execute(
+            select(Table)
+            .where(Table.id == table_id)
         )
-        .order_by(Order.created_at.desc())
-    )
 
-    order = order_result.scalar_one_or_none()
+        table = result.scalar_one_or_none()
 
-    if not order:
+        if not table:
+            raise HTTPException(404, "Table not found")
+
+        order_result = await db.execute(
+            select(Order)
+            .where(
+                Order.table_id == table.id,
+                Order.status.notin_(["completed", "cancelled"])
+            )
+            .order_by(Order.created_at.desc())
+        )
+
+        order = order_result.scalar_one_or_none()
+
+        if not order:
+            return {
+                "table_id": table.id,
+                "status": "available",
+                "available": True
+            }
+
+        bill_result = await db.execute(
+            select(Bill)
+            .where(Bill.order_id == order.id)
+        )
+
+        bill = bill_result.scalar_one_or_none()
+
+        if bill and bill.payment_status == PaymentStatus.complete:
+            return {
+                "table_id": table.id,
+                "status": "available",
+                "available": True
+            }
+
         return {
             "table_id": table.id,
-            "status": "available",
-            "available": True
+            "status": "occupied",
+            "available": False,
+            "order_id": order.id,
+            "payment_status": bill.payment_status if bill else "pending"
         }
-
-    bill_result = await db.execute(
-        select(Bill)
-        .where(Bill.order_id == order.id)
-    )
-
-    bill = bill_result.scalar_one_or_none()
-
-    if bill and bill.payment_status == PaymentStatus.complete:
-        return {
-            "table_id": table.id,
-            "status": "available",
-            "available": True
-        }
-
-    return {
-        "table_id": table.id,
-        "status": "occupied",
-        "available": False,
-        "order_id": order.id,
-        "payment_status": bill.payment_status if bill else "pending"
-    }
