@@ -2,12 +2,12 @@
 
 from sqlalchemy import select, func
 
-from app.accounts.branch.model import Branch
 from app.accounts.table.model import Table
 from app.accounts.table.enum import TableStatus
 
 
 from fastapi import APIRouter, Depends
+from fastapi.security import HTTPBearer
 
 from app.db.config import SessionDep
 from app.accounts.deps import (
@@ -31,6 +31,8 @@ router = APIRouter(
     prefix="/tables",
     tags=["Tables"]
 )
+
+security_optional = HTTPBearer(auto_error=False)
 
 
 @router.post(
@@ -65,6 +67,94 @@ async def get_tables(
         current["user"],
         branch_id,
         filter_status
+    )
+
+
+@router.get(
+    "/dashboard/all-branches"
+)
+async def table_dashboard_all_branches_client(
+    db: SessionDep,
+    current=Depends(require_client)
+):
+    return await TableService.table_dashboard_all_branches(
+        db=db,
+        client_id=current["user"].id
+    )
+
+
+@router.get(
+    "/all-branches",
+    operation_id="table_dashboard_all_branches_v1"
+)
+async def table_dashboard_all_branches(
+    db: SessionDep,
+    current=Depends(access_four)
+):
+    return await TableService.table_dashboard_all_branches(
+        db=db,
+        client_id=current["user"].id
+    )
+
+
+@router.get(
+    "/{table_id}",
+    response_model=TableOut
+)
+async def get_table_by_id(
+    table_id: int,
+    db: SessionDep,
+    credentials=Depends(security_optional)
+):
+    current = None
+    if credentials and credentials.credentials:
+        try:
+            from app.accounts.deps import get_current_user
+            current = await get_current_user(db, credentials)
+        except Exception:
+            current = None
+
+    if current:
+        return await TableService.get_table_by_id(
+            db,
+            table_id,
+            current["role"],
+            current["user"]
+        )
+    else:
+        return await TableService.get_table_by_id(
+            db,
+            table_id
+        )
+
+
+@router.get(
+    "/{table_id}/availability"
+)
+async def get_table_availability(
+    table_id: int,
+    db: SessionDep
+):
+    return await TableService.get_table_availability(
+        db=db,
+        table_id=table_id
+    )
+
+
+@router.get(
+    "/{table_id}/details",
+    response_model=TableDetailsOut
+)
+async def get_table_details(
+    table_id: int,
+    db: SessionDep,
+    current=Depends(access_four)
+):
+    return await TableService.get_table_details(
+        db=db,
+        table_id=table_id,
+        role=current["role"],
+        user=current["user"]
     )
 
 
@@ -170,49 +260,4 @@ async def update_table_status(
         db,
         table,
         data.status
-    )
-
-
-# app/accounts/table/routers.py
-
-@router.get("/dashboard/all-branches")
-async def table_dashboard_all_branches(
-    db: SessionDep,
-    current=Depends(require_client)
-):
-    return await TableService.table_dashboard_all_branches(
-        db=db,
-        client_id=current["user"].id
-    )
-
-@router.get(
-    "/all-branches",
-    operation_id="table_dashboard_all_branches_v1"
-)
-async def table_dashboard_all_branches(
-    db: SessionDep,
-    current=Depends(access_four)
-):
-    return await TableService.table_dashboard_all_branches(
-        db=db,
-        client_id=current["user"].id
-    )
-
-
-
-
-@router.get(
-    "/{table_id}/details",
-    response_model=TableDetailsOut
-)
-async def get_table_details(
-    table_id: int,
-    db: SessionDep,
-    current=Depends(access_four)
-):
-    return await TableService.get_table_details(
-        db=db,
-        table_id=table_id,
-        role=current["role"],
-        user=current["user"]
     )
