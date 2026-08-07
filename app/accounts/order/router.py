@@ -278,108 +278,115 @@ async def get_all_orders(
     current=Depends(access_one)
 ):
     try:
-
         role = current["role"]
         user = current["user"]
 
-        query = select(Order)
+        query = (
+            select(Order)
+            .options(
+                selectinload(Order.order_items)
+                .selectinload(OrderItem.item)
+            )
+        )
 
         # =====================================================
-        # ✅ BRANCH FILTER
+        # Branch Filter
         # =====================================================
-
         if branch_id:
-            query = query.where(
-                Order.branch_id == branch_id
-            )
+            query = query.where(Order.branch_id == branch_id)
 
         # =====================================================
-        # ✅ ROLE FILTER
+        # Role Filter
         # =====================================================
-
         if role.name == "CLIENT":
-
-            query = query.where(
-                Order.client_id == user.id
-            )
+            query = query.where(Order.client_id == user.id)
 
         elif role.name == "PARTNER":
-
-            query = query.join(
-                Client,
-                Client.id == Order.client_id
-            ).where(
-                Client.partner_id == user.id
+            query = (
+                query.join(Client, Client.id == Order.client_id)
+                .where(Client.partner_id == user.id)
             )
 
-        # =====================================================
-        # ✅ GET ORDERS
-        # =====================================================
-
-        result = await db.execute(query)
-
+        result = await db.execute(query.order_by(Order.id.desc()))
         orders = result.scalars().all()
+
+        # =====================================================
+        # Load Tables Once
+        # =====================================================
+        table_query = select(Table)
+
+        if branch_id:
+            table_query = table_query.where(Table.branch_id == branch_id)
+
+        table_result = await db.execute(table_query)
+
+        tables = {
+            table.id: table
+            for table in table_result.scalars().all()
+        }
 
         final_orders = []
 
-        # =====================================================
-        # ✅ LOAD ITEMS FRESHLY
-        # =====================================================
-
         for order in orders:
 
-            items_result = await db.execute(
-                select(OrderItem).where(
-                    OrderItem.order_id == order.id
-                )
+            table_name = None
+
+            if order.table_id:
+                table = tables.get(order.table_id)
+
+                if table:
+                    table_name = (
+                        f"{table.name}"
+                        if not table.floor
+                        else f"{table.name} ({table.floor})"
+                    )
+
+            final_orders.append(
+                {
+                    "id": order.id,
+                    "client_id": order.client_id,
+                    "branch_id": order.branch_id,
+
+                    "table_id": order.table_id,
+                    "table_name": table_name,
+
+                    "order_type": order.order_type,
+
+                    "customer_name": order.customer_name,
+                    "customer_phone": order.customer_phone,
+
+                    "notes": order.notes,
+
+                    "status": order.status,
+
+                    "total_amount": order.total_amount,
+
+                    "created_at": order.created_at,
+
+                    "items": [
+                        {
+                            "id": item.id,
+                            "item_id": item.item_id,
+                            "item_name": item.item.name if item.item else None,
+                            "quantity": item.quantity,
+                            "price": item.price,
+                            "order_status": item.order_status,
+                        }
+                        for item in order.order_items
+                    ],
+                }
             )
-
-            order_items = items_result.scalars().all()
-
-            final_orders.append({
-
-                "id": order.id,
-                "client_id": order.client_id,
-                "branch_id": order.branch_id,
-                "table_id": order.table_id,
-
-                "order_type": order.order_type,
-
-                "customer_name": order.customer_name,
-                "customer_phone": order.customer_phone,
-
-                "notes": order.notes,
-
-                "status": order.status,
-
-                "total_amount": order.total_amount,
-
-                "created_at": order.created_at,
-
-                "items": [
-                    {
-                        "id": item.id,
-                        "item_id": item.item_id,
-                        "quantity": item.quantity,
-                        "price": item.price,
-                        "order_status": item.order_status
-                    }
-                    for item in order_items
-                ]
-            })
 
         return final_orders
 
     except SQLAlchemyError as e:
-
         print("GET ORDERS ERROR:", str(e))
-
         raise HTTPException(
             status_code=500,
-            detail="Database error while fetching orders"
+            detail="Database error while fetching orders",
         )
 
-
+    
 # =========================
 # ✅ GET ORDERS PAGINATED (CURSOR-BASED)
 # =========================
@@ -389,6 +396,7 @@ async def get_all_orders(
 )
 async def get_orders_paginated(
     db: SessionDep,
+    client_id: int | None = None,
     branch_id: int | None = None,
     cursor: int | None = None,
     limit: int = Query(20, ge=1, le=100),
@@ -402,6 +410,10 @@ async def get_orders_paginated(
 
         # Base query
         query = select(Order)
+
+        # Client filter
+        if client_id:
+            query = query.where(Order.client_id == client_id)
 
         # Branch filter
         if branch_id:
@@ -438,6 +450,8 @@ async def get_orders_paginated(
         # Get total count
         count_query = select(func.count(Order.id)).select_from(Order)
         # Reapply filters to count query
+        if client_id:
+            count_query = count_query.where(Order.client_id == client_id)
         if branch_id:
             count_query = count_query.where(Order.branch_id == branch_id)
         if role.name == "CLIENT":
@@ -461,7 +475,10 @@ async def get_orders_paginated(
         # Get items with limit + 1 to check for has_more
         query = query.limit(limit + 1)
         # Eager load order items to avoid N+1
-        query = query.options(selectinload(Order.order_items))
+        query = query.options(
+            selectinload(Order.order_items)
+            .selectinload(OrderItem.item)
+        )
         result = await db.execute(query)
         orders = result.scalars().all()
 
@@ -497,12 +514,15 @@ async def get_orders_paginated(
             # Enrich items
             enriched_items = []
             for item in order.order_items:
+                item_name_val = item.item.name if item.item else None
                 enriched_items.append({
                     "id": item.id,
                     "item_id": item.item_id,
+                    "item_name": item_name_val,
+                    "name": item_name_val,
                     "quantity": item.quantity,
                     "price": item.price,
-                    "order_status": item.order_status
+                    "order_status": item.order_status,
                 })
             final_orders.append({
                 "id": order.id,
@@ -524,7 +544,8 @@ async def get_orders_paginated(
             "items": final_orders,
             "next_cursor": next_cursor,
             "has_more": has_more,
-            "total_count": total_count
+            "total_count": total_count,
+            "total_orders": total_count
         }
 
     except SQLAlchemyError as e:
@@ -1185,19 +1206,20 @@ async def update_order_item_status(
 @router.get("/dashboard/all-branches")
 async def orders_all_branches(
     db: SessionDep,
+    client_id: int | None = Query(None),
     current=Depends(access_one)
 ):
     role = current["role"]
     user = current["user"]
 
-    if role.name not in ["CLIENT", "PARTNER"]:
-        raise HTTPException(403, "Not allowed")
+    effective_client_id = client_id or getattr(user, "client_id", None) or getattr(user, "id", None)
 
-    client_id = user.id  # adjust if partner logic differs
+    if not effective_client_id:
+        raise HTTPException(400, "client_id is required")
 
     return await get_orders_all_branches(
         db=db,
-        client_id=client_id
+        client_id=effective_client_id
     )
 
 @router.get("/menu/dashboard/all-branches")
