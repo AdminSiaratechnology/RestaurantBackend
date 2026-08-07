@@ -118,7 +118,8 @@ class OrderItem(Base):
 
     item_id = Column(
         Integer,
-        ForeignKey("items.id")
+        ForeignKey("items.id", ondelete="RESTRICT"),
+        nullable=False
     )
 
     customer_id = Column(

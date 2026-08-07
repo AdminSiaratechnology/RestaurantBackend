@@ -10,6 +10,7 @@ class CursorPaginatedResponse(BaseModel, Generic[T]):
     next_cursor: Optional[int]
     has_more: bool
     total_count: int
+    total_orders: Optional[int] = None
 
 
 class OrderItemCreate(BaseModel):
@@ -36,6 +37,7 @@ class OrderCreate(BaseModel):
 class OrderItemResponse(BaseModel):
     id: int
     item_id: int
+    item_name: str | None = None
     quantity: int
     price: float
     order_status: str
@@ -50,7 +52,7 @@ class OrderResponse(BaseModel):
     client_id: int
     branch_id: int
     table_id: Optional[int]
-    table_number: Optional[str] = None
+    table_name: Optional[str] = None
 
     order_type: OrderType
 

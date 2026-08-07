@@ -5,13 +5,24 @@ from app.db.config import SessionDep
 from app.accounts.branch.model import Branch
 from app.accounts.order.model import Order, OrderItem
 from app.accounts.item.model import Item
+from sqlalchemy.orm import selectinload
 from app.accounts.pricing.model import Pricing
 
 
+
+
+
+
+
 async def get_orders_all_branches(db, client_id: int):
-    # 1. get all branches
+
+    # =====================================
+    # Get all branches
+    # =====================================
     branches_result = await db.execute(
-        select(Branch).where(Branch.client_id == client_id)
+        select(Branch).where(
+            Branch.client_id == client_id
+        )
     )
     branches = branches_result.scalars().all()
 
@@ -23,24 +34,72 @@ async def get_orders_all_branches(db, client_id: int):
             "branches": []
         }
 
-    # 2. get all orders of client branches
+    # =====================================
+    # Get all orders
+    # =====================================
     orders_result = await db.execute(
-        select(Order).where(Order.branch_id.in_(branch_ids))
+        select(Order).where(
+            Order.branch_id.in_(branch_ids)
+        )
     )
     orders = orders_result.scalars().all()
 
-    # 3. get order items separately
+    order_ids = [o.id for o in orders]
+
+    if not order_ids:
+        return {
+            "total_orders": 0,
+            "branches": [
+                {
+                    "branch_id": b.id,
+                    "branch_name": b.name,
+                    "total_orders": 0,
+                    "orders": []
+                }
+                for b in branches
+            ]
+        }
+
+    # =====================================
+    # Get all order items
+    # =====================================
     items_result = await db.execute(
-        select(OrderItem)
-        .where(OrderItem.order_id.in_([o.id for o in orders]))
+        select(OrderItem).where(
+            OrderItem.order_id.in_(order_ids)
+        )
     )
-    items = items_result.scalars().all()
+    order_items = items_result.scalars().all()
 
-    # map items by order_id
+    # =====================================
+    # Create order_id -> items mapping
+    # =====================================
     items_map = {}
-    for i in items:
-        items_map.setdefault(i.order_id, []).append(i)
 
+    for item in order_items:
+        items_map.setdefault(item.order_id, []).append(item)
+
+    # =====================================
+    # Get item names
+    # =====================================
+    item_ids = list({item.item_id for item in order_items})
+
+    item_map = {}
+
+    if item_ids:
+        item_result = await db.execute(
+            select(Item).where(
+                Item.id.in_(item_ids)
+            )
+        )
+
+        item_map = {
+            item.id: item.name
+            for item in item_result.scalars().all()
+        }
+
+    # =====================================
+    # Build Response
+    # =====================================
     response = {
         "total_orders": len(orders),
         "branches": []
@@ -48,7 +107,10 @@ async def get_orders_all_branches(db, client_id: int):
 
     for branch in branches:
 
-        branch_orders = [o for o in orders if o.branch_id == branch.id]
+        branch_orders = [
+            order for order in orders
+            if order.branch_id == branch.id
+        ]
 
         response["branches"].append({
             "branch_id": branch.id,
@@ -57,31 +119,38 @@ async def get_orders_all_branches(db, client_id: int):
 
             "orders": [
                 {
-                    "order_id": o.id,
-                    "table_id": o.table_id,
-                    "order_type": o.order_type,
-                    "status": o.status,
-                    "total_amount": o.total_amount,
-                    "created_at": o.created_at,
+                    "order_id": order.id,
+                    "id": order.id,
+                    "branch_id": branch.id,
+                    "branch_name": branch.name,
+                    "table_id": order.table_id,
+                    "order_type": order.order_type,
+                    "customer_name": order.customer_name,
+                    "customer_phone": order.customer_phone,
+                    "notes": order.notes,
+                    "status": order.status,
+                    "total_amount": order.total_amount,
+                    "created_at": order.created_at,
 
                     "items": [
                         {
-                            "id": i.id,
-                            "item_id": i.item_id,
-                            "quantity": i.quantity,
-                            "unit_price": i.unit_price,
-                            "order_status": i.order_status,
+                            "id": oi.id,
+                            "item_id": oi.item_id,
+                            "item_name": item_map.get(oi.item_id),
+                            "name": item_map.get(oi.item_id),
+                            "quantity": oi.quantity,
+                            "unit_price": oi.unit_price,
+                            "price": oi.unit_price,
+                            "order_status": oi.order_status,
                         }
-                        for i in items_map.get(o.id, [])
+                        for oi in items_map.get(order.id, [])
                     ]
                 }
-                for o in branch_orders
+                for order in branch_orders
             ]
         })
 
     return response
-
-
 
 async def get_menu_all_branches(db, client_id: int):
 
