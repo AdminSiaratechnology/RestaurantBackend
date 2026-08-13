@@ -11,7 +11,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Index,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, synonym
 from app.db.base import Base
 
 
@@ -26,6 +26,7 @@ class Item(Base):
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True)
     branch_id = Column(Integer, ForeignKey("branches.id"), nullable=True)
     image = Column(String, nullable=True)
+    image_url = synonym("image")
     created_at = Column(DateTime, default=datetime.utcnow)
     is_active = Column(Boolean, default=True)
 

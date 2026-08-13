@@ -1,361 +1,1190 @@
+
+# app/accounts/bill/invoice_template.py
+
 import logging
 import os
+from io import BytesIO
 
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfgen import canvas
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Table,
+    TableStyle,
+    Paragraph,
+    Spacer,
+)
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------
-# Reusable Currency Helper
-# ---------------------------------------------------------
+
+# =========================================================
+# CURRENCY
+# =========================================================
+
 RUPEE = "\u20B9"
 
 
 def money(value) -> str:
-    """Format numeric values with Indian Rupee (₹) symbol."""
     try:
-        val = float(value) if value is not None else 0.0
-    except (ValueError, TypeError):
-        val = 0.0
-    return f"{RUPEE}{val:,.2f}"
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        amount = 0.0
+
+    return f"{RUPEE}{amount:,.2f}"
 
 
-# ---------------------------------------------------------
-# Robust Font Management (Loaded & Registered Once)
-# ---------------------------------------------------------
-def _get_font_paths() -> tuple[str, str]:
-    """Locate NotoSans font files across multiple candidate locations for cross-platform support."""
+# =========================================================
+# FONT
+# =========================================================
+
+def _get_font_paths():
     base_dir = os.path.dirname(os.path.abspath(__file__))
+
     candidate_dirs = [
-        # Primary path relative to app/accounts/bill/ -> app/assets/fonts/
-        os.path.abspath(os.path.join(base_dir, "..", "..", "assets", "fonts")),
-        # Secondary fallback relative to app/ -> app/assets/fonts/
-        os.path.abspath(os.path.join(base_dir, "..", "assets", "fonts")),
-        # CWD fallback options for containerized/deployed envs (e.g. Render/Docker root)
-        os.path.abspath(os.path.join(os.getcwd(), "app", "assets", "fonts")),
-        os.path.abspath(os.path.join(os.getcwd(), "assets", "fonts")),
+        os.path.abspath(
+            os.path.join(
+                base_dir,
+                "..",
+                "..",
+                "assets",
+                "fonts",
+            )
+        ),
+        os.path.abspath(
+            os.path.join(
+                base_dir,
+                "..",
+                "assets",
+                "fonts",
+            )
+        ),
+        os.path.abspath(
+            os.path.join(
+                os.getcwd(),
+                "app",
+                "assets",
+                "fonts",
+            )
+        ),
+        os.path.abspath(
+            os.path.join(
+                os.getcwd(),
+                "assets",
+                "fonts",
+            )
+        ),
     ]
 
-    for fdir in candidate_dirs:
-        reg_path = os.path.join(fdir, "NotoSans-Regular.ttf")
-        bold_path = os.path.join(fdir, "NotoSans-Bold.ttf")
-        if os.path.exists(reg_path) and os.path.exists(bold_path):
-            return reg_path, bold_path
+    for font_dir in candidate_dirs:
 
-    # Primary path fallback for logging error context if files missing
-    primary_dir = os.path.abspath(os.path.join(base_dir, "..", "..", "assets", "fonts"))
-    return (
-        os.path.join(primary_dir, "NotoSans-Regular.ttf"),
-        os.path.join(primary_dir, "NotoSans-Bold.ttf"),
-    )
-
-
-def register_fonts() -> tuple[str, str]:
-    """
-    Registers NotoSans fonts with ReportLab pdfmetrics exactly once.
-    Returns (font_regular, font_bold) font names.
-    Falls back to Helvetica ONLY if font files are actually missing.
-    """
-    font_regular = "NotoSans"
-    font_bold = "NotoSans-Bold"
-
-    registered = pdfmetrics.getRegisteredFontNames()
-    if font_regular in registered and font_bold in registered:
-        return font_regular, font_bold
-
-    reg_path, bold_path = _get_font_paths()
-
-    if os.path.exists(reg_path) and os.path.exists(bold_path):
-        try:
-            if font_regular not in registered:
-                pdfmetrics.registerFont(TTFont(font_regular, reg_path))
-            if font_bold not in registered:
-                pdfmetrics.registerFont(TTFont(font_bold, bold_path))
-            logger.info("Successfully registered NotoSans fonts for PDF invoice generation.")
-            return font_regular, font_bold
-        except Exception as err:
-            logger.error(f"Error registering NotoSans fonts: {err}. Falling back to Helvetica.")
-    else:
-        logger.error(
-            f"Unicode font files missing from expected path ({reg_path}, {bold_path}). "
-            "Falling back to Helvetica. Indian Rupee symbol (₹) may not render correctly."
+        regular = os.path.join(
+            font_dir,
+            "NotoSans-Regular.ttf",
         )
 
-    # Fallback to standard Helvetica if font files missing or registration failed
+        bold = os.path.join(
+            font_dir,
+            "NotoSans-Bold.ttf",
+        )
+
+        if (
+            os.path.exists(regular)
+            and os.path.exists(bold)
+        ):
+            return regular, bold
+
+    return None, None
+
+
+def register_fonts():
+
+    regular_name = "NotoSans"
+    bold_name = "NotoSans-Bold"
+
+    registered = pdfmetrics.getRegisteredFontNames()
+
+    if (
+        regular_name in registered
+        and bold_name in registered
+    ):
+        return regular_name, bold_name
+
+    regular_path, bold_path = _get_font_paths()
+
+    if regular_path and bold_path:
+
+        try:
+
+            if regular_name not in registered:
+                pdfmetrics.registerFont(
+                    TTFont(
+                        regular_name,
+                        regular_path,
+                    )
+                )
+
+            if bold_name not in registered:
+                pdfmetrics.registerFont(
+                    TTFont(
+                        bold_name,
+                        bold_path,
+                    )
+                )
+
+            return regular_name, bold_name
+
+        except Exception as exc:
+            logger.error(
+                "Failed to register NotoSans: %s",
+                exc,
+            )
+
+    logger.warning(
+        "NotoSans font not found. Using Helvetica."
+    )
+
     return "Helvetica", "Helvetica-Bold"
 
+
+# =========================================================
+# SAFE VALUE
+# =========================================================
+
+def safe_float(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+# =========================================================
+# INVOICE PDF
+# =========================================================
 
 class InvoiceTemplate:
 
     @staticmethod
-    def generate(buffer, bill):
+    def generate(buffer: BytesIO, bill):
+
         font_regular, font_bold = register_fonts()
 
-        pdf = canvas.Canvas(
+        # -------------------------------------------------
+        # 80mm THERMAL RECEIPT
+        # -------------------------------------------------
+
+        doc = SimpleDocTemplate(
             buffer,
-            pagesize=(120 * mm, 250 * mm),
+            pagesize=(
+                80 * mm,
+                300 * mm,
+            ),
+            rightMargin=4 * mm,
+            leftMargin=4 * mm,
+            topMargin=4 * mm,
+            bottomMargin=4 * mm,
         )
 
-        y = 230 * mm
+        # =================================================
+        # STYLES
+        # =================================================
 
-        # -------------------------
-        # Header
-        # -------------------------
-        pdf.setFont(font_bold, 16)
-        pdf.drawCentredString(
-            60 * mm,
-            y,
-            bill.branch.name.upper()
-            if bill.branch and getattr(bill.branch, "name", None)
-            else "DELICIUS",
+        restaurant_style = ParagraphStyle(
+            "Restaurant",
+            fontName=font_bold,
+            fontSize=13,
+            leading=15,
+            alignment=TA_CENTER,
+            spaceAfter=2,
         )
 
-        y -= 6 * mm
-
-        pdf.setFont(font_regular, 9)
-        pdf.drawCentredString(
-            60 * mm,
-            y,
-            "GSTIN: XXXXXXXXXXXXXXX",
+        address_style = ParagraphStyle(
+            "Address",
+            fontName=font_regular,
+            fontSize=7,
+            leading=9,
+            alignment=TA_CENTER,
         )
 
-        y -= 8 * mm
-
-        def draw_dashed_line(y_pos):
-            pdf.setDash(2, 2)
-            pdf.setStrokeColor(colors.lightgrey)
-            pdf.line(10 * mm, y_pos, 110 * mm, y_pos)
-            pdf.setDash()
-            pdf.setStrokeColor(colors.black)
-
-        draw_dashed_line(y)
-
-        # -------------------------
-        # Invoice Info
-        # -------------------------
-        y -= 6 * mm
-
-        pdf.setFont(font_regular, 10)
-
-        pdf.drawString(10 * mm, y, "Invoice No")
-        pdf.drawRightString(110 * mm, y, str(getattr(bill, "invoice_no", "")))
-
-        y -= 6 * mm
-
-        pdf.drawString(10 * mm, y, "Date")
-        billed_at = getattr(bill, "billed_at", None)
-        date_str = billed_at.strftime("%d %b %Y") if billed_at else ""
-        pdf.drawRightString(110 * mm, y, date_str)
-
-        y -= 6 * mm
-
-        pdf.drawString(10 * mm, y, "Customer")
-        pdf.drawRightString(
-            110 * mm,
-            y,
-            getattr(bill, "customer_name", None) or "Guest",
+        normal_style = ParagraphStyle(
+            "NormalInvoice",
+            fontName=font_regular,
+            fontSize=7.5,
+            leading=9,
         )
 
-        y -= 8 * mm
-        draw_dashed_line(y)
+        bold_style = ParagraphStyle(
+            "BoldInvoice",
+            fontName=font_bold,
+            fontSize=7.5,
+            leading=9,
+        )
 
-        # -------------------------
-        # Items
-        # -------------------------
-        y -= 6 * mm
+        total_style = ParagraphStyle(
+            "Total",
+            fontName=font_bold,
+            fontSize=10,
+            leading=12,
+        )
 
-        pdf.setFont(font_bold, 10)
-        pdf.drawString(10 * mm, y, "Items")
+        footer_style = ParagraphStyle(
+            "Footer",
+            fontName=font_regular,
+            fontSize=7.5,
+            leading=9,
+            alignment=TA_CENTER,
+        )
 
-        y -= 8 * mm
+        elements = []
 
-        pdf.setFont(font_bold, 8)
-        pdf.setFillColor(colors.HexColor("#4A6076"))
+        # =================================================
+        # RESTAURANT
+        # =================================================
 
-        pdf.drawString(10 * mm, y, "ITEM")
-        pdf.drawCentredString(65 * mm, y, "QTY")
-        pdf.drawRightString(85 * mm, y, "PRICE")
-        pdf.drawRightString(110 * mm, y, "AMOUNT")
+        branch = getattr(
+            bill,
+            "branch",
+            None,
+        )
 
-        pdf.setFillColor(colors.black)
+        branch_name = (
+            getattr(
+                branch,
+                "name",
+                None,
+            )
+            or "RESTAURANT"
+        )
 
-        y -= 6 * mm
+        branch_address = (
+            getattr(
+                branch,
+                "address",
+                None,
+            )
+            or ""
+        )
 
-        pdf.setFont(font_regular, 9)
+        elements.append(
+            Paragraph(
+                str(branch_name).upper(),
+                restaurant_style,
+            )
+        )
 
-        if bill.order and hasattr(bill.order, "order_items"):
-            for order_item in bill.order.order_items:
-                item_name = order_item.item.name if (order_item.item and hasattr(order_item.item, "name")) else ""
-                pdf.drawString(10 * mm, y, item_name)
+        if branch_address:
+            elements.append(
+                Paragraph(
+                    str(branch_address),
+                    address_style,
+                )
+            )
 
-                pdf.drawCentredString(
-                    65 * mm,
-                    y,
-                    str(getattr(order_item, "quantity", 1)),
+        elements.append(
+            Spacer(
+                1,
+                4,
+            )
+        )
+
+        # =================================================
+        # HEADER LINE
+        # =================================================
+
+        header_line = Table(
+            [[""]],
+            colWidths=[72 * mm],
+            rowHeights=[0.5],
+        )
+
+        header_line.setStyle(
+            TableStyle([
+                (
+                    "LINEABOVE",
+                    (0, 0),
+                    (-1, -1),
+                    0.5,
+                    colors.grey,
+                ),
+            ])
+        )
+
+        elements.append(header_line)
+
+        elements.append(
+            Spacer(
+                1,
+                4,
+            )
+        )
+
+        # =================================================
+        # BILL INFORMATION
+        # =================================================
+
+        invoice_no = (
+            getattr(
+                bill,
+                "invoice_no",
+                None,
+            )
+            or "-"
+        )
+
+        created_at = getattr(
+            bill,
+            "created_at",
+            None,
+        )
+
+        if created_at:
+            date_text = created_at.strftime(
+                "%d-%m-%Y %H:%M"
+            )
+        else:
+            date_text = "-"
+
+        customer_name = (
+            getattr(
+                bill,
+                "customer_name",
+                None,
+            )
+            or "Walk In"
+        )
+
+        customer_phone = (
+            getattr(
+                bill,
+                "customer_phone",
+                None,
+            )
+            or ""
+        )
+
+        bill_info = [
+            [
+                Paragraph(
+                    "<b>Invoice</b>",
+                    normal_style,
+                ),
+                Paragraph(
+                    str(invoice_no),
+                    normal_style,
+                ),
+            ],
+            [
+                Paragraph(
+                    "<b>Date</b>",
+                    normal_style,
+                ),
+                Paragraph(
+                    date_text,
+                    normal_style,
+                ),
+            ],
+            [
+                Paragraph(
+                    "<b>Customer</b>",
+                    normal_style,
+                ),
+                Paragraph(
+                    str(customer_name),
+                    normal_style,
+                ),
+            ],
+        ]
+
+        if customer_phone:
+            bill_info.append(
+                [
+                    Paragraph(
+                        "<b>Phone</b>",
+                        normal_style,
+                    ),
+                    Paragraph(
+                        str(customer_phone),
+                        normal_style,
+                    ),
+                ]
+            )
+
+        bill_info_table = Table(
+            bill_info,
+            colWidths=[
+                25 * mm,
+                47 * mm,
+            ],
+        )
+
+        bill_info_table.setStyle(
+            TableStyle([
+                (
+                    "ALIGN",
+                    (1, 0),
+                    (1, -1),
+                    "RIGHT",
+                ),
+                (
+                    "VALIGN",
+                    (0, 0),
+                    (-1, -1),
+                    "TOP",
+                ),
+                (
+                    "LEFTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    0,
+                ),
+                (
+                    "RIGHTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    0,
+                ),
+                (
+                    "TOPPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    1,
+                ),
+                (
+                    "BOTTOMPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    1,
+                ),
+            ])
+        )
+
+        elements.append(
+            bill_info_table
+        )
+
+        elements.append(
+            Spacer(
+                1,
+                5,
+            )
+        )
+
+        # =================================================
+        # ITEMS
+        # =================================================
+
+        item_data = [
+            [
+                Paragraph(
+                    "<b>Item</b>",
+                    bold_style,
+                ),
+                Paragraph(
+                    "<b>Qty</b>",
+                    bold_style,
+                ),
+                Paragraph(
+                    "<b>Price</b>",
+                    bold_style,
+                ),
+                Paragraph(
+                    "<b>Amount</b>",
+                    bold_style,
+                ),
+            ]
+        ]
+
+        order = getattr(
+            bill,
+            "order",
+            None,
+        )
+
+        order_items = (
+            getattr(
+                order,
+                "order_items",
+                [],
+            )
+            if order
+            else []
+        )
+
+        for order_item in order_items:
+
+            item = getattr(
+                order_item,
+                "item",
+                None,
+            )
+
+            item_name = (
+                getattr(
+                    item,
+                    "name",
+                    None,
+                )
+                if item
+                else None
+            ) or "Item"
+
+            quantity = safe_float(
+                getattr(
+                    order_item,
+                    "quantity",
+                    1,
+                )
+            )
+
+            if quantity <= 0:
+                quantity = 1
+
+            unit_price = getattr(
+                order_item,
+                "unit_price",
+                None,
+            )
+
+            if unit_price is None:
+                unit_price = getattr(
+                    order_item,
+                    "price",
+                    0,
                 )
 
-                # 1. Item Price field
-                pdf.drawRightString(
-                    85 * mm,
-                    y,
-                    money(getattr(order_item, "price", 0)),
+            unit_price = safe_float(
+                unit_price
+            )
+
+            total_price = getattr(
+                order_item,
+                "total_price",
+                None,
+            )
+
+            if total_price is None:
+                total_price = (
+                    unit_price
+                    * quantity
                 )
 
-                # 2. Item Amount field
-                pdf.drawRightString(
-                    110 * mm,
-                    y,
-                    money(getattr(order_item, "total_price", 0)),
-                )
+            total_price = safe_float(
+                total_price
+            )
 
-                y -= 6 * mm
+            item_data.append(
+                [
+                    Paragraph(
+                        str(item_name),
+                        normal_style,
+                    ),
+                    Paragraph(
+                        str(int(quantity)),
+                        normal_style,
+                    ),
+                    Paragraph(
+                        money(unit_price),
+                        normal_style,
+                    ),
+                    Paragraph(
+                        money(total_price),
+                        normal_style,
+                    ),
+                ]
+            )
 
-        y -= 2 * mm
-
-        draw_dashed_line(y)
-
-        # -------------------------
-        # Totals
-        # -------------------------
-        y -= 6 * mm
-
-        pdf.setFont(font_regular, 9)
-        pdf.drawString(10 * mm, y, "Subtotal")
-        # 3. Subtotal field
-        pdf.drawRightString(
-            110 * mm,
-            y,
-            money(getattr(bill, "subtotal", 0)),
-        )
-
-        service_charge_amount = getattr(bill, "service_charge_amount", 0)
-        if service_charge_amount and service_charge_amount > 0:
-            y -= 6 * mm
-            service_charge_percent = getattr(bill, "service_charge_percent", 0)
-            pdf.drawString(
+        item_table = Table(
+            item_data,
+            colWidths=[
+                30 * mm,
                 10 * mm,
-                y,
-                f"Service Charge ({service_charge_percent}%)",
+                15 * mm,
+                17 * mm,
+            ],
+            repeatRows=1,
+        )
+
+        item_table.setStyle(
+            TableStyle([
+                (
+                    "LINEABOVE",
+                    (0, 0),
+                    (-1, 0),
+                    0.5,
+                    colors.grey,
+                ),
+                (
+                    "LINEBELOW",
+                    (0, 0),
+                    (-1, 0),
+                    0.5,
+                    colors.grey,
+                ),
+                (
+                    "ALIGN",
+                    (1, 1),
+                    (1, -1),
+                    "CENTER",
+                ),
+                (
+                    "ALIGN",
+                    (2, 1),
+                    (-1, -1),
+                    "RIGHT",
+                ),
+                (
+                    "VALIGN",
+                    (0, 0),
+                    (-1, -1),
+                    "MIDDLE",
+                ),
+                (
+                    "LEFTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    1,
+                ),
+                (
+                    "RIGHTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    1,
+                ),
+                (
+                    "TOPPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    2,
+                ),
+                (
+                    "BOTTOMPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    2,
+                ),
+            ])
+        )
+
+        elements.append(
+            item_table
+        )
+
+        elements.append(
+            Spacer(
+                1,
+                5,
             )
-            # 4. Service Charge field
-            pdf.drawRightString(
-                110 * mm,
-                y,
-                money(service_charge_amount),
+        )
+
+        # =================================================
+        # BILL TOTALS
+        # =================================================
+
+        subtotal = safe_float(
+            getattr(
+                bill,
+                "subtotal",
+                0,
+            )
+        )
+
+        cgst_amount = safe_float(
+            getattr(
+                bill,
+                "cgst_amount",
+                0,
+            )
+        )
+
+        sgst_amount = safe_float(
+            getattr(
+                bill,
+                "sgst_amount",
+                0,
+            )
+        )
+
+        service_charge_amount = safe_float(
+            getattr(
+                bill,
+                "service_charge_amount",
+                0,
+            )
+        )
+
+        service_charge_percent = safe_float(
+            getattr(
+                bill,
+                "service_charge_percent",
+                0,
+            )
+        )
+
+        cgst_percent = safe_float(
+            getattr(
+                bill,
+                "cgst_percent",
+                0,
+            )
+        )
+
+        sgst_percent = safe_float(
+            getattr(
+                bill,
+                "sgst_percent",
+                0,
+            )
+        )
+
+        discount_amount = safe_float(
+            getattr(
+                bill,
+                "discount_amount",
+                0,
+            )
+        )
+
+        offer_discount = safe_float(
+            getattr(
+                bill,
+                "offer_discount",
+                0,
+            )
+        )
+
+        round_off_amount = safe_float(
+            getattr(
+                bill,
+                "round_off_amount",
+                0,
+            )
+        )
+
+        grand_total = safe_float(
+            getattr(
+                bill,
+                "grand_total",
+                0,
+            )
+        )
+
+        final_amount = getattr(
+            bill,
+            "final_amount",
+            None,
+        )
+
+        if final_amount is None:
+            final_amount = grand_total
+        else:
+            final_amount = safe_float(
+                final_amount
             )
 
-        cgst_amount = getattr(bill, "cgst_amount", 0)
-        if cgst_amount and cgst_amount > 0:
-            y -= 6 * mm
-            pdf.drawString(10 * mm, y, "CGST")
-            # 5. CGST field
-            pdf.drawRightString(
-                110 * mm,
-                y,
-                money(cgst_amount),
+        totals = []
+
+        totals.append(
+            [
+                Paragraph(
+                    "Subtotal",
+                    normal_style,
+                ),
+                Paragraph(
+                    money(subtotal),
+                    normal_style,
+                ),
+            ]
+        )
+
+        if service_charge_amount > 0:
+            totals.append(
+                [
+                    Paragraph(
+                        f"Service Charge "
+                        f"({service_charge_percent:g}%)",
+                        normal_style,
+                    ),
+                    Paragraph(
+                        money(
+                            service_charge_amount
+                        ),
+                        normal_style,
+                    ),
+                ]
             )
 
-        sgst_amount = getattr(bill, "sgst_amount", 0)
-        if sgst_amount and sgst_amount > 0:
-            y -= 6 * mm
-            pdf.drawString(10 * mm, y, "SGST")
-            # 6. SGST field
-            pdf.drawRightString(
-                110 * mm,
-                y,
-                money(sgst_amount),
+        if cgst_amount > 0:
+            totals.append(
+                [
+                    Paragraph(
+                        f"CGST "
+                        f"({cgst_percent:g}%)",
+                        normal_style,
+                    ),
+                    Paragraph(
+                        money(cgst_amount),
+                        normal_style,
+                    ),
+                ]
             )
 
-        round_off_amount = getattr(bill, "round_off_amount", 0)
+        if sgst_amount > 0:
+            totals.append(
+                [
+                    Paragraph(
+                        f"SGST "
+                        f"({sgst_percent:g}%)",
+                        normal_style,
+                    ),
+                    Paragraph(
+                        money(sgst_amount),
+                        normal_style,
+                    ),
+                ]
+            )
+
+        total_discount = (
+            discount_amount
+            + offer_discount
+        )
+
+        if total_discount > 0:
+            totals.append(
+                [
+                    Paragraph(
+                        "Discount",
+                        normal_style,
+                    ),
+                    Paragraph(
+                        f"-{money(total_discount)}",
+                        normal_style,
+                    ),
+                ]
+            )
+
         if round_off_amount != 0:
-            y -= 6 * mm
-            pdf.drawString(10 * mm, y, "Round Off")
-            # 7. Round Off field
-            pdf.drawRightString(
-                110 * mm,
-                y,
-                money(round_off_amount),
+            totals.append(
+                [
+                    Paragraph(
+                        "Round Off",
+                        normal_style,
+                    ),
+                    Paragraph(
+                        money(
+                            round_off_amount
+                        ),
+                        normal_style,
+                    ),
+                ]
             )
 
-        # -------------------------
-        # Grand Total
-        # -------------------------
-        y -= 8 * mm
-        draw_dashed_line(y)
-
-        y -= 8 * mm
-
-        pdf.setFont(font_bold, 11)
-        pdf.setFillColor(colors.HexColor("#FF4500"))
-
-        pdf.drawString(10 * mm, y, "Grand Total")
-
-        # 8. Grand Total field
-        pdf.drawRightString(
-            110 * mm,
-            y,
-            money(getattr(bill, "grand_total", 0)),
+        totals.append(
+            [
+                Paragraph(
+                    "<b>Grand Total</b>",
+                    total_style,
+                ),
+                Paragraph(
+                    f"<b>{money(grand_total)}</b>",
+                    total_style,
+                ),
+            ]
         )
 
-        pdf.setFillColor(colors.black)
+        if abs(
+            final_amount - grand_total
+        ) > 0.001:
 
-        y -= 8 * mm
-        draw_dashed_line(y)
+            totals.append(
+                [
+                    Paragraph(
+                        "<b>Final Amount</b>",
+                        total_style,
+                    ),
+                    Paragraph(
+                        f"<b>{money(final_amount)}</b>",
+                        total_style,
+                    ),
+                ]
+            )
 
-        # -------------------------
-        # Payment
-        # -------------------------
-        paid_amount = getattr(bill, "paid_amount", 0) or 0
-        due_amount = getattr(bill, "due_amount", None)
+        totals_table = Table(
+            totals,
+            colWidths=[
+                40 * mm,
+                32 * mm,
+            ],
+        )
+
+        totals_table.setStyle(
+            TableStyle([
+                (
+                    "ALIGN",
+                    (1, 0),
+                    (1, -1),
+                    "RIGHT",
+                ),
+                (
+                    "LEFTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    0,
+                ),
+                (
+                    "RIGHTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    0,
+                ),
+                (
+                    "TOPPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    2,
+                ),
+                (
+                    "BOTTOMPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    2,
+                ),
+                (
+                    "LINEABOVE",
+                    (0, -1),
+                    (-1, -1),
+                    0.7,
+                    colors.black,
+                ),
+            ])
+        )
+
+        elements.append(
+            totals_table
+        )
+
+        # =================================================
+        # PAYMENT
+        # =================================================
+
+        paid_amount = safe_float(
+            getattr(
+                bill,
+                "paid_amount",
+                0,
+            )
+        )
+
+        due_amount = getattr(
+            bill,
+            "due_amount",
+            None,
+        )
+
         if due_amount is None:
-            due_amount = getattr(bill, "grand_total", 0) or 0
+            due_amount = max(
+                final_amount
+                - paid_amount,
+                0,
+            )
 
-        y -= 8 * mm
-
-        pdf.setFont(font_bold, 10)
-        pdf.setFillColor(colors.green)
-
-        pdf.drawString(10 * mm, y, "Paid")
-        # 9. Paid Amount field
-        pdf.drawRightString(
-            110 * mm,
-            y,
-            money(paid_amount),
+        due_amount = safe_float(
+            due_amount
         )
 
-        pdf.setFillColor(colors.black)
-
-        y -= 6 * mm
-
-        pdf.setFont(font_regular, 10)
-
-        pdf.drawString(10 * mm, y, "Due")
-        # 10. Due Amount field
-        pdf.drawRightString(
-            110 * mm,
-            y,
-            money(due_amount),
+        payment_method = getattr(
+            bill,
+            "payment_method",
+            None,
         )
 
-        # -------------------------
-        # Footer
-        # -------------------------
-        y -= 8 * mm
-        draw_dashed_line(y)
-
-        y -= 10 * mm
-
-        pdf.setFont(font_regular, 9)
-        pdf.setFillColor(colors.grey)
-
-        pdf.drawCentredString(
-            60 * mm,
-            y,
-            getattr(bill, "footer_message", None) or "Thank you for dining with us!",
+        payment_status = getattr(
+            bill,
+            "payment_status",
+            None,
         )
 
-        pdf.save()
+        elements.append(
+            Spacer(
+                1,
+                5,
+            )
+        )
+
+        payment_data = [
+            [
+                Paragraph(
+                    "<b>Paid</b>",
+                    normal_style,
+                ),
+                Paragraph(
+                    money(paid_amount),
+                    normal_style,
+                ),
+            ],
+            [
+                Paragraph(
+                    "<b>Due</b>",
+                    normal_style,
+                ),
+                Paragraph(
+                    money(due_amount),
+                    normal_style,
+                ),
+            ],
+        ]
+
+        if payment_method:
+            payment_data.append(
+                [
+                    Paragraph(
+                        "<b>Payment Method</b>",
+                        normal_style,
+                    ),
+                    Paragraph(
+                        str(payment_method),
+                        normal_style,
+                    ),
+                ]
+            )
+
+        if payment_status:
+
+            status_text = (
+                payment_status.value
+                if hasattr(
+                    payment_status,
+                    "value",
+                )
+                else str(payment_status)
+            )
+
+            payment_data.append(
+                [
+                    Paragraph(
+                        "<b>Status</b>",
+                        normal_style,
+                    ),
+                    Paragraph(
+                        status_text.upper(),
+                        normal_style,
+                    ),
+                ]
+            )
+
+        payment_table = Table(
+            payment_data,
+            colWidths=[
+                40 * mm,
+                32 * mm,
+            ],
+        )
+
+        payment_table.setStyle(
+            TableStyle([
+                (
+                    "ALIGN",
+                    (1, 0),
+                    (1, -1),
+                    "RIGHT",
+                ),
+                (
+                    "LEFTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    0,
+                ),
+                (
+                    "RIGHTPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    0,
+                ),
+                (
+                    "TOPPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    2,
+                ),
+                (
+                    "BOTTOMPADDING",
+                    (0, 0),
+                    (-1, -1),
+                    2,
+                ),
+            ])
+        )
+
+        elements.append(
+            payment_table
+        )
+
+        # =================================================
+        # FOOTER
+        # =================================================
+
+        elements.append(
+            Spacer(
+                1,
+                8,
+            )
+        )
+
+        footer_line = Table(
+            [[""]],
+            colWidths=[72 * mm],
+            rowHeights=[0.5],
+        )
+
+        footer_line.setStyle(
+            TableStyle([
+                (
+                    "LINEABOVE",
+                    (0, 0),
+                    (-1, -1),
+                    0.5,
+                    colors.grey,
+                ),
+            ])
+        )
+
+        elements.append(
+            footer_line
+        )
+
+        elements.append(
+            Spacer(
+                1,
+                5,
+            )
+        )
+
+        footer_message = (
+            getattr(
+                bill,
+                "footer_message",
+                None,
+            )
+            or "Thank you for dining with us!"
+        )
+
+        elements.append(
+            Paragraph(
+                str(footer_message),
+                footer_style,
+            )
+        )
+
+        # =================================================
+        # BUILD
+        # =================================================
+
+        doc.build(elements)
+
+        buffer.seek(0)
+
+        return buffer
+

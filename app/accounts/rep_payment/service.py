@@ -84,7 +84,7 @@ async def payment_report_service(
         revenue_credit
     )
 
-    return {
+    result = {
         "cards": {
             "cash_orders": cash_orders,
             "upi_orders": upi_orders,

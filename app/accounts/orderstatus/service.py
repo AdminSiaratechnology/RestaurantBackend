@@ -132,6 +132,23 @@ async def cancel_order_service(
 
     order.status = "cancelled"
 
+    if order.customer_id:
+        from sqlalchemy import delete
+        from app.accounts.crm.customer_history.model import CustomerVisitHistory
+        from app.accounts.customer.service import recalculate_customer_crm
+
+        await db.execute(
+            delete(CustomerVisitHistory).where(
+                CustomerVisitHistory.order_id == order.id
+            )
+        )
+        await db.flush()
+        await recalculate_customer_crm(
+            db=db,
+            customer_id=order.customer_id,
+            branch_id=order.branch_id,
+        )
+
     await db.commit()
     await db.refresh(order)
 
