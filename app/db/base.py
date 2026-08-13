@@ -46,3 +46,4 @@ from app.accounts.crm.campaigns.model import (
 )
 from app.accounts.crm.rank_rules.model import CRMBranchRankRule
 from app.accounts.crm.loyalty.conversion_rule.model import LoyaltyConversionRule
+from app.accounts.crm.loyalty.wallet_discount_rule.model import WalletDiscountRule
