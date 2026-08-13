@@ -54,7 +54,7 @@ from app.accounts.crm.campaigns.router import router as campaigns_router
 from app.accounts.crm.rank_rules.router import router as rank_rules_router
 from app.accounts.settings.router import router as settings_router
 from app.accounts.crm.loyalty.conversion_rule.router import router as conversion_rule_router
-
+from app.accounts.crm.loyalty.wallet_discount_rule.router import router as wallet_discount_rule_router
 
 app = FastAPI()
 
@@ -191,3 +191,4 @@ app.include_router(campaigns_router)
 app.include_router(rank_rules_router)
 app.include_router(settings_router)
 app.include_router(conversion_rule_router)
+app.include_router(wallet_discount_rule_router)

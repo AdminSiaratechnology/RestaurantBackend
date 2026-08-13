@@ -47,7 +47,7 @@ async def list_audit_logs(
     status: Optional[str] = Query(None, description="Filter by status (success/failed)"),
     from_date: Optional[datetime] = Query(None, description="Filter by from date"),
     to_date: Optional[datetime] = Query(None, description="Filter by to date"),
-    sort: str = Query("newest", regex="^(newest|oldest)$", description="Sort order: newest or oldest")
+    sort: str = Query("newest", pattern="^(newest|oldest)$", description="Sort order: newest or oldest")
 ) -> Any:
     """
     List audit logs matching search filters with pagination and scoping.
