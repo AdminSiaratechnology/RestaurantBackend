@@ -1,24 +1,24 @@
+from datetime import datetime
+
 from sqlalchemy import (
+    Boolean,
     Column,
-    Integer,
-    String,
+    DateTime,
     Float,
     ForeignKey,
-    DateTime,
+    Integer,
+    String,
     Text,
-    Boolean
 )
 
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.orm import relationship
 
-from datetime import datetime
-
 from app.db.base import Base
 from app.accounts.bill.enum import PaymentStatus
 
-class Bill(Base):
 
+class Bill(Base):
     __tablename__ = "bills"
 
     # =====================================================
@@ -28,7 +28,7 @@ class Bill(Base):
     id = Column(
         Integer,
         primary_key=True,
-        index=True
+        index=True,
     )
 
     # =====================================================
@@ -39,19 +39,29 @@ class Bill(Base):
         Integer,
         ForeignKey("orders.id"),
         nullable=False,
-        unique=True
+        unique=True,
+        index=True,
     )
 
     client_id = Column(
         Integer,
         ForeignKey("clients.id"),
-        nullable=False
+        nullable=False,
+        index=True,
     )
 
     branch_id = Column(
         Integer,
         ForeignKey("branches.id"),
-        nullable=False
+        nullable=False,
+        index=True,
+    )
+
+    customer_id = Column(
+        Integer,
+        ForeignKey("customers.id"),
+        nullable=True,
+        index=True,
     )
 
     # =====================================================
@@ -61,36 +71,41 @@ class Bill(Base):
     invoice_no = Column(
         String,
         unique=True,
-        nullable=False
+        nullable=False,
+        index=True,
     )
 
     order_type = Column(
         String,
-        nullable=False
+        nullable=False,
     )
 
     customer_name = Column(
         String,
-        nullable=True
+        nullable=True,
     )
 
     customer_phone = Column(
         String,
-        nullable=True
+        nullable=True,
     )
 
+    # =====================================================
+    # PAYMENT
+    # =====================================================
+
     payment_status = Column(
-    PgEnum(
-        PaymentStatus,
-        name="paymentstatus"
-    ),
-    default=PaymentStatus.pending,
-    nullable=False
+        PgEnum(
+            PaymentStatus,
+            name="paymentstatus",
+        ),
+        default=PaymentStatus.pending,
+        nullable=False,
     )
 
     payment_method = Column(
         String,
-        nullable=True
+        nullable=True,
     )
 
     # =====================================================
@@ -99,87 +114,102 @@ class Bill(Base):
 
     subtotal = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
     cgst_percent = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
     cgst_amount = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
     sgst_percent = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
     sgst_amount = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
     service_charge_percent = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
     service_charge_amount = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
     tax_total = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
+    # General/manual discount
     discount_amount = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
     round_off_amount = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
+    # Total before offer
     grand_total = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
-    paid_amount = Column(
-        Float,
-        default=0
-    )
-
-    due_amount = Column(
-        Float,
-        default=0
-    )
-
-    # =====================================================
-    # OFFER & FINAL AMOUNT FIELDS
-    # =====================================================
-
+    # Offer
     offer_id = Column(
         Integer,
         ForeignKey("offers.id"),
-        nullable=True
+        nullable=True,
     )
 
     offer_discount = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
+    # Final amount customer should pay
     final_amount = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
+    )
+
+    paid_amount = Column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )
+
+    due_amount = Column(
+        Float,
+        default=0.0,
+        nullable=False,
     )
 
     # =====================================================
@@ -188,12 +218,12 @@ class Bill(Base):
 
     notes = Column(
         Text,
-        nullable=True
+        nullable=True,
     )
 
     footer_message = Column(
         Text,
-        nullable=True
+        nullable=True,
     )
 
     # =====================================================
@@ -202,24 +232,27 @@ class Bill(Base):
 
     billed_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=datetime.utcnow,
+        nullable=False,
     )
 
     created_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=datetime.utcnow,
+        nullable=False,
     )
 
     updated_at = Column(
         DateTime,
         default=datetime.utcnow,
-        onupdate=datetime.utcnow
+        onupdate=datetime.utcnow,
+        nullable=False,
     )
 
     is_edited = Column(
         Boolean,
         default=False,
-        nullable=False
+        nullable=False,
     )
 
     # =====================================================
@@ -227,29 +260,26 @@ class Bill(Base):
     # =====================================================
 
     order = relationship(
-        "Order"
+        "Order",
+        lazy="selectin",
     )
 
     client = relationship(
-        "Client"
+        "Client",
+        lazy="selectin",
     )
 
     branch = relationship(
-        "Branch"
+        "Branch",
+        lazy="selectin",
     )
 
     offer = relationship(
-        "Offer"
-    )
-
-
-    customer_id = Column(
-        Integer,
-        ForeignKey("customers.id"),
-        nullable=True,
-        index=True
+        "Offer",
+        lazy="selectin",
     )
 
     customer = relationship(
-        "Customer"
+        "Customer",
+        lazy="selectin",
     )

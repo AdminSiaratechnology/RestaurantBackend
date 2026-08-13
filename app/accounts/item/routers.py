@@ -1,14 +1,21 @@
-from fastapi import APIRouter, Depends, File, UploadFile
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Query,
+    UploadFile,
+)
 
 from app.accounts.deps import (
     access_four,
-    get_current_user
+    get_current_user,
 )
 
 from app.accounts.item.schema import (
     ItemCreate,
     ItemUpdate,
-    ItemOut
+    ItemOut,
 )
 
 from app.accounts.item.service import (
@@ -17,32 +24,43 @@ from app.accounts.item.service import (
     update_item_service,
     delete_item_service,
     upload_image_service,
-    update_image_service
+    update_image_service,
 )
-from app.accounts.item.enum import FoodType, ItemSort
+
+from app.accounts.item.enum import (
+    FoodType,
+    ItemSort,
+)
 
 from app.db.config import SessionDep
 
+
 router = APIRouter(
     prefix="/items",
-    tags=["Items"]
+    tags=["Items"],
 )
 
 
+# ============================================================
+# GET ITEMS
+# ============================================================
 
-
-@router.get("/get_items", response_model=list[ItemOut])
+@router.get(
+    "/get_items",
+    response_model=list[ItemOut],
+)
 async def get_items(
     db: SessionDep,
     branch_id: int | None = None,
     limit: int | None = None,
     cursor: int | None = None,
     search: str | None = None,
-    category_id: int |None = None,
+    category_id: int | None = None,
     food_type: FoodType | None = None,
     sort_by: ItemSort | None = None,
     current=Depends(get_current_user),
 ):
+
     return await get_items_service(
         db=db,
         current=current,
@@ -55,68 +73,113 @@ async def get_items(
         sort_by=sort_by,
     )
 
-@router.post("/", response_model=ItemOut)
+
+# ============================================================
+# CREATE ITEM
+# ============================================================
+
+@router.post(
+    "/",
+    response_model=ItemOut,
+)
 async def create_item(
     payload: ItemCreate,
     db: SessionDep,
-    current=Depends(access_four)
+    branch_id: int = Query(...),
+    client_id: int | None = Query(None),
+    current=Depends(access_four),
 ):
+
     return await create_item_service(
-        payload,
-        db,
-        current
+        payload=payload,
+        db=db,
+        current=current,
+        branch_id=branch_id,
+        client_id=client_id,
     )
 
 
-@router.put("/{item_id}", response_model=ItemOut)
+# ============================================================
+# UPDATE ITEM
+# ============================================================
+
+@router.put(
+    "/{item_id}",
+    response_model=ItemOut,
+)
 async def update_item(
     item_id: int,
     payload: ItemUpdate,
     db: SessionDep,
-    current=Depends(get_current_user)
+    current=Depends(get_current_user),
 ):
+
     return await update_item_service(
         item_id,
         payload,
         db,
-        current
+        current,
     )
 
 
-@router.delete("/{item_id}")
+# ============================================================
+# DELETE ITEM
+# ============================================================
+
+@router.delete(
+    "/{item_id}",
+)
 async def delete_item(
     item_id: int,
     db: SessionDep,
-    current=Depends(access_four)
+    current=Depends(access_four),
 ):
+
     return await delete_item_service(
         item_id,
         db,
-        current
+        current,
     )
 
 
-@router.post("/{item_id}/upload-image")
+# ============================================================
+# UPLOAD IMAGE
+# ============================================================
+
+@router.post(
+    "/{item_id}/upload-image",
+)
 async def upload_image(
     item_id: int,
     db: SessionDep,
-    image: UploadFile = File(...)
+    image: UploadFile = File(...),
+    current=Depends(access_four),
 ):
+
     return await upload_image_service(
         item_id,
         image,
-        db
+        db,
     )
 
 
-@router.put("/{item_id}/update-image")
+# ============================================================
+# UPDATE IMAGE
+# ============================================================
+
+@router.put(
+    "/{item_id}/update-image",
+)
 async def update_image(
     item_id: int,
     db: SessionDep,
-    image: UploadFile = File(...)
+    image: UploadFile = File(...),
+    current=Depends(access_four),
 ):
+
     return await update_image_service(
         item_id,
         image,
-        db
+        db,
     )
+

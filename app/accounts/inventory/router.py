@@ -2,7 +2,7 @@
 from datetime import datetime
 import traceback
 from fastapi import Depends, HTTPException, status, APIRouter
-from sqlalchemy import select
+from sqlalchemy import select, func, case
 from sqlalchemy.exc import SQLAlchemyError
 from app.accounts.deps import calculate_status
 # , get_client_if_accessible
@@ -375,35 +375,22 @@ async def inventory_stats(
         if not branch_id:
             raise HTTPException(400, "branch_id is required")
 
-        result = await db.execute(
-            select(InventoryItem).where(
-                InventoryItem.branch_id == branch_id
-            )
+        stat_query = await db.execute(
+            select(
+                func.count(InventoryItem.id).label("total_items"),
+                func.coalesce(func.sum(InventoryItem.stock_qty * InventoryItem.cost_per_unit), 0.0).label("stock_value"),
+                func.coalesce(func.sum(case((InventoryItem.status == "low_stock", 1), else_=0)), 0).label("low_stock"),
+                func.coalesce(func.sum(case((InventoryItem.status == "out_of_stock", 1), else_=0)), 0).label("out_of_stock")
+            ).where(InventoryItem.branch_id == branch_id)
         )
 
-        items = result.scalars().all()
-
-        total_items = len(items)
-        stock_value = sum(
-            item.stock_qty * item.cost_per_unit
-            for item in items
-        )
-
-        low_stock = sum(
-            1 for item in items
-            if item.status == "low_stock"
-        )
-
-        out_of_stock = sum(
-            1 for item in items
-            if item.status == "out_of_stock"
-        )
+        row = stat_query.first()
 
         return {
-            "total_items": total_items,
-            "stock_value": stock_value,
-            "low_stock": low_stock,
-            "out_of_stock": out_of_stock
+            "total_items": row.total_items or 0,
+            "stock_value": float(row.stock_value or 0.0),
+            "low_stock": row.low_stock or 0,
+            "out_of_stock": row.out_of_stock or 0
         }
 
     except SQLAlchemyError:

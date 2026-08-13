@@ -15,6 +15,15 @@ from app.accounts.pricing.model import Pricing
 from app.core.cache import Cache
 from fastapi.encoders import jsonable_encoder
 from app.accounts.item.enum import FoodType
+from pathlib import Path
+from uuid import uuid4
+
+from app.accounts.item.schema import ItemOut
+from app.core.s3 import (
+    upload_file_to_s3,
+    delete_file_from_s3,
+    get_s3_object_key,
+)
 
 async def get_items_service(
     db,
@@ -187,9 +196,11 @@ async def get_items_service(
     # CACHE
     # =====================================================
 
+    items_out = [ItemOut.model_validate(item).model_dump(mode="json") for item in items]
+
     await Cache.set(
         cache_key,
-        jsonable_encoder(items),
+        items_out,
         expire=600
     )
 
@@ -199,29 +210,46 @@ async def get_items_service(
 async def create_item_service(
     payload,
     db,
-    current
+    current,
+    branch_id: int,
+    client_id: int | None = None,
 ):
+    effective_client_id = client_id or getattr(payload, "client_id", None)
+
+    if not effective_client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="client_id is required"
+        )
+
+    if not branch_id:
+        raise HTTPException(
+            status_code=400,
+            detail="branch_id is required"
+        )
+
     client = await get_client_if_accessible(
-        client_id=payload.client_id,
+        client_id=effective_client_id,
         db=db,
         current=current
     )
 
-    result = await db.execute(
-        select(Category).where(
-            Category.id == payload.category_id,
-            Category.client_id == client.id
+    if payload.category_id:
+        result = await db.execute(
+            select(Category).where(
+                Category.id == payload.category_id,
+                Category.client_id == client.id
+            )
         )
-    )
 
-    category = result.scalar_one_or_none()
+        category = result.scalar_one_or_none()
 
-    if not category or category.branch_id != payload.branch_id:
-        raise HTTPException(400, "Invalid category for this branch")
+        if not category or category.branch_id != branch_id:
+            raise HTTPException(400, "Invalid category for this branch")
 
     result = await db.execute(
         select(Branch).where(
-            Branch.id == payload.branch_id,
+            Branch.id == branch_id,
             Branch.client_id == client.id
         )
     )
@@ -234,7 +262,7 @@ async def create_item_service(
     result = await db.execute(
         select(Item).where(
             Item.name == payload.name,
-            Item.branch_id == payload.branch_id,
+            Item.branch_id == branch_id,
             Item.client_id == client.id
         )
     )
@@ -245,15 +273,34 @@ async def create_item_service(
             "Item already exists in this branch"
         )
 
+    item_food_type = getattr(payload, "food_type", None) or FoodType.veg
+
     item = Item(
         name=payload.name,
         client_id=client.id,
         category_id=payload.category_id,
-        branch_id=payload.branch_id,
-        food_type=payload.food_type
+        branch_id=branch_id,
+        image=payload.image_url,
+        is_active=payload.is_active if payload.is_active is not None else True,
+        food_type=item_food_type,
     )
 
     db.add(item)
+    await db.flush()
+
+    if payload.price is not None:
+        pricing = Pricing(
+            item_id=item.id,
+            client_id=client.id,
+            branch_id=branch_id,
+            price=payload.price,
+            is_active=(
+                payload.pricing_is_active
+                if payload.pricing_is_active is not None
+                else True
+            )
+        )
+        db.add(pricing)
 
     await db.commit()
 
@@ -263,8 +310,8 @@ async def create_item_service(
         .where(Item.id == item.id)
     )
 
-    await Cache.delete_pattern(f"products:branch:{payload.branch_id}:*")
-    await Cache.delete(f"menu:branch:{payload.branch_id}")
+    await Cache.delete_pattern(f"products:branch:{branch_id}:*")
+    await Cache.delete(f"menu:branch:{branch_id}")
 
     return result.scalar_one()
 
@@ -398,107 +445,263 @@ async def delete_item_service(
     return {"message": "Item deleted"}
 
 
+
+
+# ============================================================
+# UPLOAD ITEM IMAGE
+# ============================================================
+
 async def upload_image_service(
-    item_id,
+    item_id: int,
     image: UploadFile,
-    db
+    db,
 ):
-    item = await db.get(Item, item_id)
+
+    # --------------------------------------------------------
+    # FIND ITEM
+    # --------------------------------------------------------
+
+    item = await db.get(
+        Item,
+        item_id,
+    )
 
     if not item:
-        raise HTTPException(404, "Item not found")
 
-    ext = Path(image.filename).suffix.lower()
-    filename = f"{uuid4()}{ext}"
+        raise HTTPException(
+            status_code=404,
+            detail="Item not found",
+        )
 
-    upload_dir = (
-        Path("uploads")
-        / "items"
-        / f"branch_{item.branch_id}"
-        / f"item_{item.id}"
+    # --------------------------------------------------------
+    # FILE EXTENSION
+    # --------------------------------------------------------
+
+    extension = Path(
+        image.filename or ""
+    ).suffix.lower()
+
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+    }
+
+    if extension not in allowed_extensions:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only JPG, JPEG, PNG and WEBP "
+                "images are allowed"
+            ),
+        )
+
+    # --------------------------------------------------------
+    # UNIQUE FILE NAME
+    # --------------------------------------------------------
+
+    filename = (
+        f"{uuid4()}"
+        f"{extension}"
     )
 
-    upload_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    # --------------------------------------------------------
+    # S3 OBJECT KEY
+    # --------------------------------------------------------
 
-    file_path = upload_dir / filename
-
-    with open(file_path, "wb") as buffer:
-        buffer.write(await image.read())
-
-    image_url = (
-        f"/uploads/items/"
+    object_key = (
+        f"items/"
         f"branch_{item.branch_id}/"
         f"item_{item.id}/"
         f"{filename}"
     )
 
-    item.image = image_url
+    # --------------------------------------------------------
+    # UPLOAD TO S3
+    # --------------------------------------------------------
 
-    await db.commit()
+    image_url = await upload_file_to_s3(
+        file=image,
+        object_key=object_key,
+    )
 
-    await Cache.delete_pattern(f"products:branch:{item.branch_id}:*")
-    await Cache.delete(f"menu:branch:{item.branch_id}")
+    # --------------------------------------------------------
+    # SAVE URL TO DATABASE WITH ROLLBACK SAFETY
+    # --------------------------------------------------------
+
+    try:
+        item.image = image_url
+        await db.commit()
+        await db.refresh(item)
+    except Exception as exc:
+        await db.rollback()
+        try:
+            await delete_file_from_s3(object_key)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database update failed after S3 upload: {exc}",
+        ) from exc
+
+    # --------------------------------------------------------
+    # CACHE INVALIDATION
+    # --------------------------------------------------------
+
+    await Cache.delete_pattern(
+        f"products:branch:{item.branch_id}:*"
+    )
+
+    await Cache.delete(
+        f"menu:branch:{item.branch_id}"
+    )
 
     return {
-        "image_url": image_url
+        "message": "Image uploaded successfully",
+        "image_url": image_url,
     }
 
 
+# ============================================================
+# UPDATE ITEM IMAGE
+# ============================================================
+
 async def update_image_service(
-    item_id,
+    item_id: int,
     image: UploadFile,
-    db
+    db,
 ):
-    item = await db.get(Item, item_id)
+
+    # --------------------------------------------------------
+    # FIND ITEM
+    # --------------------------------------------------------
+
+    item = await db.get(
+        Item,
+        item_id,
+    )
 
     if not item:
-        raise HTTPException(404, "Item not found")
 
-    if item.image:
-        old_path = Path(item.image.lstrip("/"))
+        raise HTTPException(
+            status_code=404,
+            detail="Item not found",
+        )
 
-        if old_path.exists():
-            old_path.unlink()
+    # --------------------------------------------------------
+    # FILE EXTENSION
+    # --------------------------------------------------------
 
-    ext = Path(image.filename).suffix.lower()
-    filename = f"{uuid4()}{ext}"
+    extension = Path(
+        image.filename or ""
+    ).suffix.lower()
 
-    upload_dir = (
-        Path("uploads")
-        / "items"
-        / f"branch_{item.branch_id}"
-        / f"item_{item.id}"
+    allowed_extensions = {
+        ".jpg",
+        ".jpeg",
+        ".png",
+        ".webp",
+    }
+
+    if extension not in allowed_extensions:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Only JPG, JPEG, PNG and WEBP "
+                "images are allowed"
+            ),
+        )
+
+    # --------------------------------------------------------
+    # CREATE NEW FILE NAME
+    # --------------------------------------------------------
+
+    filename = (
+        f"{uuid4()}"
+        f"{extension}"
     )
 
-    upload_dir.mkdir(
-        parents=True,
-        exist_ok=True
-    )
+    # --------------------------------------------------------
+    # NEW S3 KEY
+    # --------------------------------------------------------
 
-    file_path = upload_dir / filename
-
-    with open(file_path, "wb") as buffer:
-        buffer.write(await image.read())
-
-    image_url = (
-        f"/uploads/items/"
+    object_key = (
+        f"items/"
         f"branch_{item.branch_id}/"
         f"item_{item.id}/"
         f"{filename}"
     )
 
-    item.image = image_url
+    # --------------------------------------------------------
+    # KEEP OLD IMAGE KEY (S3 ONLY, RETURNS NONE FOR LOCAL /uploads/...)
+    # --------------------------------------------------------
 
-    await db.commit()
-    await db.refresh(item)
+    old_object_key = None
 
-    await Cache.delete_pattern(f"products:branch:{item.branch_id}:*")
-    await Cache.delete(f"menu:branch:{item.branch_id}")
+    if item.image:
+
+        old_object_key = get_s3_object_key(
+            item.image
+        )
+
+    # --------------------------------------------------------
+    # UPLOAD NEW IMAGE FIRST
+    # --------------------------------------------------------
+
+    new_image_url = await upload_file_to_s3(
+        file=image,
+        object_key=object_key,
+    )
+
+    # --------------------------------------------------------
+    # UPDATE DATABASE WITH ROLLBACK SAFETY
+    # --------------------------------------------------------
+
+    try:
+        item.image = new_image_url
+        await db.commit()
+        await db.refresh(item)
+    except Exception as exc:
+        await db.rollback()
+        try:
+            await delete_file_from_s3(object_key)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=500,
+            detail=f"Database update failed: {exc}",
+        ) from exc
+
+    # --------------------------------------------------------
+    # DELETE OLD S3 OBJECT (ONLY AFTER DB COMMIT SUCCEEDS)
+    # --------------------------------------------------------
+
+    if old_object_key:
+
+        try:
+            await delete_file_from_s3(
+                old_object_key
+            )
+        except Exception as delete_err:
+            print(f"[update_image_service] Warning: Failed to delete old S3 object '{old_object_key}': {delete_err}")
+
+    # --------------------------------------------------------
+    # CACHE INVALIDATION
+    # --------------------------------------------------------
+
+    await Cache.delete_pattern(
+        f"products:branch:{item.branch_id}:*"
+    )
+
+    await Cache.delete(
+        f"menu:branch:{item.branch_id}"
+    )
 
     return {
         "message": "Image updated successfully",
-        "image_url": image_url
+        "image_url": new_image_url,
     }
+

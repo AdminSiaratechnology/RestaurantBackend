@@ -93,3 +93,14 @@ class Client(Base):
         "TaxBillingSetting",
         back_populates="client"
     )
+
+    # client = relationship(
+    #     "Client",
+    #     back_populates="crm_rank_rules"
+    # )
+
+    crm_rank_rules = relationship(
+        "CRMBranchRankRule",
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
