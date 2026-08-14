@@ -37,7 +37,7 @@ from typing import Optional
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.accounts.crm.customer.model import Customer
+from app.accounts.customer.model import Customer
 from app.accounts.crm.customer_history.model import (
     CustomerVisitHistory,
 )
