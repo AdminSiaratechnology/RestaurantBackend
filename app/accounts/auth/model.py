@@ -30,9 +30,9 @@ async def authenticate_user(data, db, request, response, allowed_roles: list):
     client_ip = request.client.host if request and request.client else "unknown"
     rate_limit_key = f"login:{client_ip}"
     
-    attempts = await redis_client.get(rate_limit_key)
-    if attempts and int(attempts) >= 5:
-        raise HTTPException(429, "Too many login attempts. Please try again later.")
+    # attempts = await redis_client.get(rate_limit_key)
+    # if attempts and int(attempts) >= 5:
+    #     raise HTTPException(429, "Too many login attempts. Please try again later.")
 
     # 🔍 Search user in all tables
     user = None
