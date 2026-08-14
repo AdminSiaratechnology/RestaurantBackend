@@ -109,9 +109,12 @@ from app.db.base import Base
 # ============================================================
 # IMPORT ALL MODELS
 # ============================================================
-from app.accounts.table.model import Table
-from app.accounts.branch.model import Branch
-from app.accounts.client.model import Client
+# from app.accounts.table.model import Table
+# from app.accounts.branch.model import Branch
+# from app.accounts.client.model import Client
+# from app.accounts.category.model import Category
+# from app.accounts.item.model import Item
+
 
 # ============================================================
 # SETTINGS

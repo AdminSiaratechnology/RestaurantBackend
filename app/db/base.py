@@ -21,7 +21,7 @@ from app.accounts.staff.model import Staff
 from app.accounts.order.model import Order, OrderItem
 from app.accounts.customer.model import Customer
 from app.accounts.permission.model import StaffPermission
-from app.accounts.inventory.model import InventoryItem
+from app.accounts.inventory.model import InventoryItem, Godown
 from app.accounts.auditlog.model import AuditLog
 from app.accounts.bill.model import Bill
 from app.accounts.payment.model import Payment
@@ -30,8 +30,6 @@ from app.accounts.tax.model import TaxBillingSetting
 from app.accounts.legaldetails.model import LegalCompliance
 from app.accounts.ingredient.model import ItemIngredient
 from app.accounts.forget_password.model import PasswordResetOTP
-from app.accounts.inventory.model import InventoryItem
-from app.accounts.inventory.model import Godown
 from app.accounts.purchaseorder.model import PurchaseOrder, PurchaseOrderItem
 from app.accounts.bom.model import MenuItemBOM
 from app.accounts.vendor.model import Vendor
