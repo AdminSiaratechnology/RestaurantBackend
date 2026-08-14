@@ -1,9 +1,7 @@
-
-
-
-from pydantic import BaseModel
-from typing import Optional, List
 from datetime import datetime
+from typing import Optional, List
+
+from pydantic import BaseModel, Field
 
 from app.accounts.payment.enum import PaymentMethod
 
@@ -12,7 +10,10 @@ class PaymentItem(BaseModel):
 
     payment_method: PaymentMethod
 
-    payment_amount: float
+    payment_amount: float = Field(
+        gt=0,
+        description="Payment amount",
+    )
 
 
 class PaymentCreate(BaseModel):
@@ -27,9 +28,8 @@ class PaymentCreate(BaseModel):
 
     offer_id: Optional[int] = None
 
-    # offer_discount: Optional[float] = 0.0
-
-    # final_amount: Optional[float] = None
+    # CRM wallet special discount
+    use_wallet: bool = False
 
 
 class PaymentItemOut(BaseModel):
@@ -70,6 +70,8 @@ class PaymentOut(BaseModel):
     offer_id: Optional[int] = None
 
     offer_discount: Optional[float] = 0.0
+
+    wallet_discount: float = 0.0
 
     class Config:
         from_attributes = True

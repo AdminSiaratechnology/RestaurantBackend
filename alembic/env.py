@@ -126,9 +126,13 @@ config = context.config
 
 DATABASE_URL = settings.DATABASE_URL
 
+# config.set_main_option(
+#     "sqlalchemy.url",
+#     DATABASE_URL,
+# )
 config.set_main_option(
     "sqlalchemy.url",
-    DATABASE_URL,
+    settings.DATABASE_URL.replace("%", "%%")
 )
 
 

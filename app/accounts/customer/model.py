@@ -327,3 +327,9 @@ class Customer(Base):
         back_populates="customer",
         cascade="all, delete-orphan",
     )
+
+    wallet_balance = Column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )

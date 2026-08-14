@@ -1,15 +1,15 @@
+from datetime import datetime
+
 from sqlalchemy import (
     Column,
-    Integer,
-    String,
+    DateTime,
     Float,
     ForeignKey,
-    DateTime,
-    Text
+    Integer,
+    String,
+    Text,
+    JSON,
 )
-
-from datetime import datetime
-from sqlalchemy import JSON
 
 from app.db.base import Base
 
@@ -21,91 +21,96 @@ class Payment(Base):
     id = Column(
         Integer,
         primary_key=True,
-        index=True
+        index=True,
     )
 
     bill_id = Column(
         Integer,
         ForeignKey("bills.id"),
-        nullable=False
-    )
-
-    payment_method = Column(
-        String,
-        nullable=False
-    )
-
-
-    payment_breakdown = Column(
-        JSON,
-        nullable=True
+        nullable=False,
     )
 
     order_id = Column(
         Integer,
         ForeignKey("orders.id"),
-        nullable=False
+        nullable=False,
     )
 
     branch_id = Column(
         Integer,
         ForeignKey("branches.id"),
-        nullable=False
+        nullable=False,
     )
 
     payment_method = Column(
         String,
-        nullable=False
+        nullable=False,
+    )
+
+    payment_breakdown = Column(
+        JSON,
+        nullable=True,
     )
 
     bill_amount = Column(
         Float,
-        nullable=False
+        nullable=False,
     )
 
     receive_amount = Column(
         Float,
-        nullable=False
+        nullable=False,
     )
 
     paid_amount = Column(
         Float,
-        nullable=False
+        nullable=False,
     )
 
     change_amount = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
     )
 
     payment_reference = Column(
         String,
-        nullable=True
+        nullable=True,
     )
 
     notes = Column(
         Text,
-        nullable=True
+        nullable=True,
     )
 
-    # Offer information
+    # Offer
     offer_id = Column(
         Integer,
         ForeignKey("offers.id"),
-        nullable=True
+        nullable=True,
     )
 
     offer_discount = Column(
         Float,
-        default=0
+        default=0.0,
+        nullable=False,
+    )
+
+    # CRM Wallet Special Discount
+    wallet_discount = Column(
+        Float,
+        default=0.0,
+        nullable=False,
     )
 
     payment_date = Column(
         DateTime,
-        default=datetime.utcnow
+        default=datetime.utcnow,
+        nullable=False,
     )
 
     created_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=datetime.utcnow,
+        nullable=False,
     )
