@@ -1,5 +1,3 @@
-# app/accounts/payment/service.py
-
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -13,24 +11,30 @@ from app.accounts.payment.schema import PaymentCreate
 from app.accounts.offer.model import Offer
 from app.accounts.offer.helper import (
     validate_and_calculate_offer,
-    calculate_final_amount
+    calculate_final_amount,
+)
+
+from app.accounts.crm.wallet.service import (
+    calculate_wallet_discount,
+    debit_wallet,
 )
 
 from app.core.cache import Cache
 
 
-# =====================================
-# HELPERS
-# =====================================
+# =========================================================
+# BILL
+# =========================================================
 
 async def get_bill_or_404(
     db,
-    bill_id: int
+    bill_id: int,
 ) -> Bill:
+
     result = await db.execute(
-        select(Bill).where(
-            Bill.id == bill_id
-        )
+        select(Bill)
+        .where(Bill.id == bill_id)
+        .with_for_update()
     )
 
     bill = result.scalar_one_or_none()
@@ -38,20 +42,24 @@ async def get_bill_or_404(
     if not bill:
         raise HTTPException(
             status_code=404,
-            detail="Bill not found"
+            detail="Bill not found",
         )
 
     return bill
 
 
+# =========================================================
+# OFFER
+# =========================================================
+
 async def get_offer_or_404(
     db,
-    offer_id: int
+    offer_id: int,
 ) -> Offer:
+
     result = await db.execute(
-        select(Offer).where(
-            Offer.id == offer_id
-        )
+        select(Offer)
+        .where(Offer.id == offer_id)
     )
 
     offer = result.scalar_one_or_none()
@@ -59,33 +67,29 @@ async def get_offer_or_404(
     if not offer:
         raise HTTPException(
             status_code=404,
-            detail="Offer not found"
+            detail="Offer not found",
         )
 
     return offer
 
 
-# =====================================
-# OFFER PREVIEW (READ-ONLY)
-# =====================================
+# =========================================================
+# OFFER PREVIEW
+# =========================================================
 
 async def apply_offer_service(
     db,
     bill_id: int,
-    offer_id: int | None = None
+    offer_id: int | None = None,
 ):
-    """
-    Pure preview. Reads Bill + Offer, validates, calculates the discount,
-    and returns numbers. Does NOT touch the database in any writable way —
-    no db.add(), no db.commit(), no attribute mutation on persistent objects.
-    """
 
     bill = await get_bill_or_404(
         db,
-        bill_id
+        bill_id,
     )
 
     if not offer_id:
+
         return {
             "bill_id": bill.id,
             "offer_id": None,
@@ -93,22 +97,22 @@ async def apply_offer_service(
             "offer_discount": 0.0,
             "final_amount": bill.grand_total,
             "due_amount": bill.grand_total,
-            "message": "No offer applied"
+            "message": "No offer applied",
         }
 
     offer = await get_offer_or_404(
         db,
-        offer_id
+        offer_id,
     )
 
     discount = validate_and_calculate_offer(
         offer,
-        bill.grand_total
+        bill.grand_total,
     )
 
     final_amount = calculate_final_amount(
         bill.grand_total,
-        discount
+        discount,
     )
 
     return {
@@ -118,84 +122,170 @@ async def apply_offer_service(
         "offer_discount": discount,
         "final_amount": final_amount,
         "due_amount": final_amount,
-        "message": "Offer applied successfully"
+        "message": "Offer applied successfully",
     }
 
 
-# =====================================
-# MAKE PAYMENT (ONLY PLACE THAT WRITES)
-# =====================================
+# =========================================================
+# MAKE PAYMENT
+# =========================================================
 
 async def make_payment_service(
     db,
-    data: PaymentCreate
+    data: PaymentCreate,
 ):
-    # =====================================
-    # VALIDATE PAYMENT LIST
-    # =====================================
+
+    # =====================================================
+    # VALIDATE PAYMENTS
+    # =====================================================
 
     if not data.payments:
         raise HTTPException(
             status_code=400,
-            detail="At least one payment method is required"
+            detail="At least one payment method is required",
         )
+
+    # =====================================================
+    # GET BILL + LOCK
+    # =====================================================
 
     bill = await get_bill_or_404(
         db,
-        data.bill_id
+        data.bill_id,
     )
 
     if bill.payment_status == PaymentStatus.complete:
         raise HTTPException(
             status_code=400,
-            detail="Bill is already paid"
+            detail="Bill is already paid",
         )
 
-    # =====================================
-    # RE-VALIDATE OFFER SERVER-SIDE
-    # (never trust discount/final_amount from frontend)
-    # =====================================
+    # =====================================================
+    # OFFER
+    # =====================================================
 
     offer = None
+
     offer_id = data.offer_id
+
     offer_discount = 0.0
 
     if offer_id:
+
         offer = await get_offer_or_404(
             db,
-            offer_id
+            offer_id,
         )
 
         offer_discount = validate_and_calculate_offer(
             offer,
-            bill.grand_total
+            bill.grand_total,
         )
 
-    final_amount = calculate_final_amount(
+    # =====================================================
+    # AMOUNT AFTER OFFER
+    # =====================================================
+
+    amount_after_offer = calculate_final_amount(
         bill.grand_total,
-        offer_discount
+        offer_discount,
     )
 
-    # =====================================
-    # RECEIVED AMOUNT / CHANGE
-    # =====================================
+    # =====================================================
+    # CRM WALLET SPECIAL DISCOUNT
+    # =====================================================
+
+    wallet_discount = 0.0
+
+    wallet_info = {
+        "wallet_balance": 0.0,
+        "wallet_percent": 0.0,
+        "max_wallet_discount": 0.0,
+        "wallet_discount": 0.0,
+    }
+
+    if data.use_wallet:
+
+        # -------------------------------------------------
+        # CUSTOMER REQUIRED
+        # -------------------------------------------------
+
+        if not bill.customer_id:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "CRM customer is required "
+                    "to use wallet discount"
+                ),
+            )
+
+        # -------------------------------------------------
+        # CALCULATE WALLET DISCOUNT
+        # -------------------------------------------------
+
+        wallet_info = await calculate_wallet_discount(
+            db=db,
+            customer_id=bill.customer_id,
+            client_id=bill.client_id,
+            branch_id=bill.branch_id,
+            amount=amount_after_offer,
+        )
+
+        wallet_discount = wallet_info[
+            "wallet_discount"
+        ]
+
+    # =====================================================
+    # FINAL PAYABLE
+    # =====================================================
+
+    final_amount = round(
+        amount_after_offer - wallet_discount,
+        2,
+    )
+
+    if final_amount < 0:
+        final_amount = 0.0
+
+    # =====================================================
+    # RECEIVED AMOUNT
+    # =====================================================
 
     total_received = round(
-        sum(p.payment_amount for p in data.payments),
-        2
+        sum(
+            p.payment_amount
+            for p in data.payments
+        ),
+        2,
     )
 
+    # =====================================================
+    # VALIDATE PAYMENT
+    # =====================================================
+
     if total_received < final_amount:
+
         raise HTTPException(
             status_code=400,
-            detail=f"Insufficient amount received. Amount due: {final_amount}"
+            detail=(
+                f"Insufficient amount received. "
+                f"Amount due: {final_amount}"
+            ),
         )
 
-    change_amount = round(total_received - final_amount, 2)
+    # =====================================================
+    # CHANGE
+    # =====================================================
 
-    # =====================================
+    change_amount = round(
+        total_received - final_amount,
+        2,
+    )
+
+    # =====================================================
     # PAYMENT METHOD
-    # =====================================
+    # =====================================================
 
     payment_method = (
         "split"
@@ -203,62 +293,113 @@ async def make_payment_service(
         else data.payments[0].payment_method.value
     )
 
+    # =====================================================
+    # PAYMENT BREAKDOWN
+    # =====================================================
+
     payment_breakdown = [
         {
             "payment_method": p.payment_method.value,
-            "payment_amount": p.payment_amount,
+            "payment_amount": round(
+                p.payment_amount,
+                2,
+            ),
         }
         for p in data.payments
     ]
 
-    # =====================================
+    # =====================================================
     # CREATE PAYMENT
-    # =====================================
+    # =====================================================
 
     payment = Payment(
         bill_id=bill.id,
         order_id=bill.order_id,
         branch_id=bill.branch_id,
+
         payment_method=payment_method,
+
         payment_breakdown=payment_breakdown,
+
         bill_amount=bill.grand_total,
+
         receive_amount=total_received,
+
         paid_amount=final_amount,
+
         change_amount=change_amount,
+
         payment_reference=data.payment_reference,
+
         notes=data.notes,
+
         offer_id=offer_id,
+
         offer_discount=offer_discount,
+
+        wallet_discount=wallet_discount,
     )
 
     db.add(payment)
 
     try:
-        # =====================================
-        # UPDATE OFFER USAGE
-        # =====================================
+
+        # =================================================
+        # WALLET DEBIT
+        # =================================================
+
+        if wallet_discount > 0:
+
+            await debit_wallet(
+                db=db,
+                customer_id=bill.customer_id,
+                client_id=bill.client_id,
+                branch_id=bill.branch_id,
+                amount=wallet_discount,
+                reference_type="BILL",
+                reference_id=bill.id,
+                notes="CRM wallet special discount",
+            )
+
+        # =================================================
+        # OFFER USAGE
+        # =================================================
 
         if offer:
+
             offer.no_used += 1
 
-        # =====================================
+        # =================================================
         # UPDATE BILL
-        # =====================================
+        # =================================================
 
         bill.paid_amount = final_amount
-        bill.due_amount = 0
+
+        bill.due_amount = 0.0
+
         bill.payment_status = PaymentStatus.complete
+
         bill.payment_method = payment_method
+
         bill.offer_id = offer_id
+
         bill.offer_discount = offer_discount
+
+        bill.wallet_discount = wallet_discount
+
         bill.final_amount = final_amount
 
+        # =================================================
+        # COMMIT
+        # =================================================
+
         await db.commit()
+
         await db.refresh(payment)
 
-        # =====================================
-        # CLEAR CACHE
-        # =====================================
+        # =================================================
+        # CACHE
+        # =================================================
 
         await Cache.delete_pattern(
             f"dashboard:*:branch:{bill.branch_id}"
@@ -271,9 +412,12 @@ async def make_payment_service(
         return payment
 
     except SQLAlchemyError as e:
+
         await db.rollback()
 
         raise HTTPException(
             status_code=500,
-            detail=f"Payment processing failed: {str(e)}"
+            detail=(
+                f"Payment processing failed: {str(e)}"
+            ),
         )

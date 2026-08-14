@@ -283,3 +283,10 @@ class Bill(Base):
         "Customer",
         lazy="selectin",
     )
+
+
+    wallet_discount = Column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )

@@ -1,10 +1,3 @@
-"""
-app/accounts/crm/wallet/model.py
-
-SQLAlchemy Models for Customer Wallet Accounts
-and Wallet Transaction History.
-"""
-
 from datetime import datetime
 
 from sqlalchemy import (
@@ -15,24 +8,34 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
-from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
 
-# ============================================================
-# CUSTOMER WALLET ACCOUNT
-# ============================================================
-
-
 class CustomerWalletAccount(Base):
+    """
+    One wallet account per CRM customer.
+
+    Example:
+
+        customer_id = 25
+        balance = ₹500
+    """
 
     __tablename__ = "customer_wallet_accounts"
 
-    # ========================================================
+    __table_args__ = (
+        UniqueConstraint(
+            "customer_id",
+            name="uq_customer_wallet_account_customer",
+        ),
+    )
+
+    # =====================================================
     # PRIMARY KEY
-    # ========================================================
+    # =====================================================
 
     id = Column(
         Integer,
@@ -40,9 +43,9 @@ class CustomerWalletAccount(Base):
         index=True,
     )
 
-    # ========================================================
+    # =====================================================
     # CUSTOMER
-    # ========================================================
+    # =====================================================
 
     customer_id = Column(
         Integer,
@@ -55,9 +58,9 @@ class CustomerWalletAccount(Base):
         index=True,
     )
 
-    # ========================================================
+    # =====================================================
     # CLIENT
-    # ========================================================
+    # =====================================================
 
     client_id = Column(
         Integer,
@@ -69,39 +72,30 @@ class CustomerWalletAccount(Base):
         index=True,
     )
 
-    # ========================================================
+    # =====================================================
     # WALLET BALANCE
-    # ========================================================
+    # =====================================================
 
     balance = Column(
         Float,
-        default=0.0,
         nullable=False,
+        default=0.0,
     )
 
-    # Money manually recharged into wallet.
-    #
-    # Loyalty conversion does NOT increase this.
-    # ========================================================
+    # =====================================================
+    # STATUS
+    # =====================================================
 
-    total_recharged = Column(
-        Float,
-        default=0.0,
+    is_active = Column(
+        # Boolean import karna ho to add karo
+        # currently keeping integer-style compatibility
         nullable=False,
+        default=True,
     )
 
-    # Money spent from wallet.
-    # ========================================================
-
-    total_spent = Column(
-        Float,
-        default=0.0,
-        nullable=False,
-    )
-
-    # ========================================================
+    # =====================================================
     # DATES
-    # ========================================================
+    # =====================================================
 
     created_at = Column(
         DateTime,
@@ -116,33 +110,19 @@ class CustomerWalletAccount(Base):
         nullable=False,
     )
 
-    # ========================================================
-    # RELATIONSHIPS
-    # ========================================================
-
-    customer = relationship(
-        "Customer",
-    )
-
-    transactions = relationship(
-        "WalletTransaction",
-        back_populates="account",
-        cascade="all, delete-orphan",
-    )
-
-
-# ============================================================
-# WALLET TRANSACTION
-# ============================================================
-
 
 class WalletTransaction(Base):
+    """
+    CRM Wallet ledger.
+
+    Every wallet movement is recorded here.
+
+    CREDIT -> wallet balance increases
+    DEBIT  -> wallet balance decreases
+    REFUND -> wallet balance increases
+    """
 
     __tablename__ = "wallet_transactions"
-
-    # ========================================================
-    # PRIMARY KEY
-    # ========================================================
 
     id = Column(
         Integer,
@@ -150,23 +130,9 @@ class WalletTransaction(Base):
         index=True,
     )
 
-    # ========================================================
-    # WALLET ACCOUNT
-    # ========================================================
-
-    account_id = Column(
-        Integer,
-        ForeignKey(
-            "customer_wallet_accounts.id",
-            ondelete="CASCADE",
-        ),
-        nullable=False,
-        index=True,
-    )
-
-    # ========================================================
+    # =====================================================
     # CUSTOMER
-    # ========================================================
+    # =====================================================
 
     customer_id = Column(
         Integer,
@@ -178,85 +144,111 @@ class WalletTransaction(Base):
         index=True,
     )
 
-    # ========================================================
-    # BILL
-    # ========================================================
+    # =====================================================
+    # WALLET ACCOUNT
+    # =====================================================
 
-    bill_id = Column(
+    wallet_account_id = Column(
         Integer,
         ForeignKey(
-            "bills.id",
-            ondelete="SET NULL",
+            "customer_wallet_accounts.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    # =====================================================
+    # CLIENT
+    # =====================================================
+
+    client_id = Column(
+        Integer,
+        ForeignKey(
+            "clients.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    # =====================================================
+    # BRANCH
+    # =====================================================
+
+    branch_id = Column(
+        Integer,
+        ForeignKey(
+            "branches.id",
+            ondelete="CASCADE",
         ),
         nullable=True,
         index=True,
     )
 
-    # ========================================================
-    # TRANSACTION TYPE
-    # ========================================================
+    # =====================================================
+    # TRANSACTION
+    # =====================================================
 
-    # CREDIT
-    # DEBIT
-    # CASHBACK
-    # REFUND
-    # LOYALTY_CONVERSION
-    #
     transaction_type = Column(
-        String(50),
+        String,
         nullable=False,
     )
 
-    # ========================================================
-    # AMOUNT
-    # ========================================================
+    # CREDIT
+    # DEBIT
+    # REFUND
 
     amount = Column(
         Float,
         nullable=False,
     )
 
-    # ========================================================
-    # BALANCE AFTER
-    # ========================================================
+    balance_before = Column(
+        Float,
+        nullable=False,
+    )
 
     balance_after = Column(
         Float,
         nullable=False,
     )
 
-    # ========================================================
-    # REMARKS
-    # ========================================================
+    # =====================================================
+    # REFERENCE
+    # =====================================================
 
-    remarks = Column(
+    reference_type = Column(
+        String,
+        nullable=True,
+    )
+
+    # BILL
+    # PAYMENT
+    # MANUAL
+    # REFUND
+
+    reference_id = Column(
+        Integer,
+        nullable=True,
+        index=True,
+    )
+
+    # =====================================================
+    # NOTES
+    # =====================================================
+
+    notes = Column(
         Text,
         nullable=True,
     )
 
-    # ========================================================
+    # =====================================================
     # DATE
-    # ========================================================
+    # =====================================================
 
     created_at = Column(
         DateTime,
         default=datetime.utcnow,
         nullable=False,
-    )
-
-    # ========================================================
-    # RELATIONSHIPS
-    # ========================================================
-
-    account = relationship(
-        "CustomerWalletAccount",
-        back_populates="transactions",
-    )
-
-    customer = relationship(
-        "Customer",
-    )
-
-    bill = relationship(
-        "Bill",
     )
