@@ -1,6 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     Column,
     DateTime,
     Float,
@@ -89,6 +90,7 @@ class CustomerWalletAccount(Base):
     is_active = Column(
         # Boolean import karna ho to add karo
         # currently keeping integer-style compatibility
+        Boolean,
         nullable=False,
         default=True,
     )
