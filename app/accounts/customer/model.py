@@ -248,8 +248,8 @@ class Customer(Base):
 
     last_order_id = Column(
         Integer,
-        ForeignKey("orders.id"),
-        # ForeignKey("orders.id", use_alter=True),
+        # ForeignKey("orders.id"),
+        ForeignKey("orders.id", use_alter=True),
         nullable=True,
     )
 
