@@ -10,7 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.accounts.branch.model import Branch
-from app.accounts.crm.customer.model import Customer
+from app.accounts.customer.model import Customer
 from app.accounts.crm.rank_rules.model import CRMBranchRankRule
 from app.accounts.crm.rank_rules.repository import RankRuleRepository
 from app.accounts.crm.rank_rules.schema import (

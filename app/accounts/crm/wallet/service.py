@@ -5,7 +5,7 @@ from app.accounts.crm.wallet.model import WalletTransaction
 from app.accounts.crm.loyalty.wallet_discount_rule.model import (
     WalletDiscountRule,
 )
-from app.accounts.crm.customer.model import Customer
+from app.accounts.customer.model import Customer
 
 
 async def get_customer_wallet(
