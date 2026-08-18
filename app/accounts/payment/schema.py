@@ -6,14 +6,24 @@ from pydantic import BaseModel, Field
 from app.accounts.payment.enum import PaymentMethod
 
 
+# ============================================================
+# PAYMENT ITEM
+# ============================================================
+
+
 class PaymentItem(BaseModel):
 
     payment_method: PaymentMethod
 
     payment_amount: float = Field(
         gt=0,
-        description="Payment amount",
+        description="Actual amount received through payment method",
     )
+
+
+# ============================================================
+# PAYMENT CREATE
+# ============================================================
 
 
 class PaymentCreate(BaseModel):
@@ -28,8 +38,32 @@ class PaymentCreate(BaseModel):
 
     offer_id: Optional[int] = None
 
-    # CRM wallet special discount
+    # ========================================================
+    # WALLET
+    # ========================================================
+    #
+    # Wallet is NOT a payment method.
+    #
+    # True means:
+    #
+    # Bill total
+    #     ↓
+    # Offer discount
+    #     ↓
+    # Wallet contribution
+    #     ↓
+    # Final payable
+    #     ↓
+    # Cash/Card/UPI
+    #
+    # ========================================================
+
     use_wallet: bool = False
+
+
+# ============================================================
+# PAYMENT ITEM OUT
+# ============================================================
 
 
 class PaymentItemOut(BaseModel):
@@ -37,6 +71,11 @@ class PaymentItemOut(BaseModel):
     payment_method: str
 
     payment_amount: float
+
+
+# ============================================================
+# PAYMENT OUT
+# ============================================================
 
 
 class PaymentOut(BaseModel):
@@ -69,8 +108,9 @@ class PaymentOut(BaseModel):
 
     offer_id: Optional[int] = None
 
-    offer_discount: Optional[float] = 0.0
+    offer_discount: float = 0.0
 
+    # Actual wallet contribution
     wallet_discount: float = 0.0
 
     class Config:

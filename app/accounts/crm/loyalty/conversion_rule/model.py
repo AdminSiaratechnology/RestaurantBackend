@@ -1,6 +1,4 @@
 """
-app/accounts/crm/loyalty/conversion_rule/model.py
-
 Branch-wise Loyalty Point -> Rupee Conversion Rules.
 """
 
@@ -14,7 +12,6 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
 )
-from sqlalchemy.orm import relationship
 
 from app.db.base import Base
 
@@ -23,19 +20,11 @@ class LoyaltyConversionRule(Base):
 
     __tablename__ = "loyalty_conversion_rules"
 
-    # ============================================================
-    # PRIMARY KEY
-    # ============================================================
-
     id = Column(
         Integer,
         primary_key=True,
         index=True,
     )
-
-    # ============================================================
-    # CLIENT
-    # ============================================================
 
     client_id = Column(
         Integer,
@@ -46,19 +35,6 @@ class LoyaltyConversionRule(Base):
         nullable=False,
         index=True,
     )
-
-    # ============================================================
-    # BRANCH
-    # ============================================================
-
-    # One conversion rule per branch.
-    #
-    # Example:
-    #
-    # Branch A -> 10 points = ₹5
-    # Branch B -> 20 points = ₹5
-    #
-    # ============================================================
 
     branch_id = Column(
         Integer,
@@ -71,21 +47,6 @@ class LoyaltyConversionRule(Base):
         index=True,
     )
 
-    # ============================================================
-    # CONVERSION RATE
-    # ============================================================
-
-    # Example:
-    #
-    # points_required = 10
-    # rupee_value = 5
-    #
-    # Means:
-    #
-    # 10 loyalty points = ₹5
-    #
-    # ============================================================
-
     points_required = Column(
         Float,
         nullable=False,
@@ -96,20 +57,13 @@ class LoyaltyConversionRule(Base):
         nullable=False,
     )
 
-    # ============================================================
-    # STATUS
-    # ============================================================
-
     is_active = Column(
         Boolean,
-        default=True,
         nullable=False,
+        default=True,
+        server_default="true",
         index=True,
     )
-
-    # ============================================================
-    # DATES
-    # ============================================================
 
     created_at = Column(
         DateTime,
@@ -122,16 +76,4 @@ class LoyaltyConversionRule(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
         nullable=False,
-    )
-
-    # ============================================================
-    # RELATIONSHIPS
-    # ============================================================
-
-    branch = relationship(
-        "Branch",
-    )
-
-    client = relationship(
-        "Client",
     )

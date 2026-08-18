@@ -1,5 +1,5 @@
 
-from datetime import datetime
+from datetime import datetime, timezone
 import traceback
 from fastapi import Depends, HTTPException, status, APIRouter
 from sqlalchemy import select, func, case
@@ -454,6 +454,330 @@ async def update_inventory_item(
     }
 
 
+# @router.patch("/update_stock/{item_id}")
+# async def update_stock(
+#     item_id: int,
+#     data: StockUpdate,
+#     db: SessionDep,
+#     current=Depends(access_one)
+# ):
+#     item = await db.get(
+#         InventoryItem,
+#         item_id
+#     )
+
+#     if not item:
+#         raise HTTPException(
+#             404,
+#             "Item not found"
+#         )
+
+#     normalize_inventory_item_unit(item)
+
+#     display_unit_value = data.unit or item.display_unit or item.unit
+#     quantity = data.quantity
+
+#     if quantity is None:
+#         quantity = data.stock_qty
+
+#     if quantity is None:
+#         raise HTTPException(
+#             400,
+#             "quantity or stock_qty is required"
+#         )
+
+#     unit, qty, factor = convert_to_base_unit(
+#         display_unit_value,
+#         quantity
+#     )
+
+#     if unit != item.unit:
+#         raise HTTPException(
+#             400,
+#             f"Unit mismatch. Inventory unit is {item.unit}"
+#         )
+
+#     if data.name is not None:
+#         item.name = data.name
+
+#     if data.row_category is not None:
+#         item.row_category = data.row_category
+
+#     if data.godown_id is not None:
+#         item.godown_id = data.godown_id
+
+#     if data.cost_per_unit is not None:
+#         item.cost_per_unit = data.cost_per_unit
+
+#     if data.vendor_name is not None:
+#         item.vendor_name = data.vendor_name
+
+#     if data.vendor_phone is not None:
+#         item.vendor_phone = data.vendor_phone
+
+#     item.display_unit = display_unit_value
+#     item.conversion_factor = factor
+
+#     if data.reorder_level is not None:
+#         _, reorder_level, _ = convert_to_base_unit(
+#             display_unit_value,
+#             data.reorder_level
+#         )
+#         item.reorder_level = reorder_level
+
+#     if data.operation == "add":
+#         item.stock_qty += qty
+
+#     elif data.operation == "subtract":
+#         if item.stock_qty < qty:
+#             raise HTTPException(
+#                 400,
+#                 "Insufficient stock"
+#             )
+
+#         item.stock_qty -= qty
+
+#     else:
+#         item.stock_qty = qty
+
+#     item.status = calculate_status(
+#         item.stock_qty,
+#         item.reorder_level
+#     )
+
+#     item.last_restocked = datetime.utcnow()
+
+#     if data.last_restocked is not None:
+#         item.last_restocked = data.last_restocked
+
+#     await db.commit()
+
+#     await Cache.delete_pattern(f"report:{item.branch_id}:inventory:*")
+
+#     return {
+#         "message": "Stock updated successfully",
+#         "current_stock": item.stock_qty,
+#         "unit": item.unit
+#     }
+
+
+# @router.patch("/update_stock/{item_id}")
+# async def update_stock(
+#     item_id: int,
+#     data: StockUpdate,
+#     db: SessionDep,
+#     current=Depends(access_one)
+# ):
+#     item = await db.get(InventoryItem, item_id)
+
+#     if not item:
+#         raise HTTPException(
+#             status_code=404,
+#             detail="Item not found"
+#         )
+
+#     role = current["role"]
+#     user = current["user"]
+
+#     # ---------------------------------------------------------
+#     # STAFF CAN ONLY UPDATE THEIR OWN BRANCH
+#     # ---------------------------------------------------------
+#     if role == UserRole.STAFF:
+#         if item.branch_id != user.branch_id:
+#             raise HTTPException(
+#                 status_code=403,
+#                 detail="You cannot update inventory from another branch"
+#             )
+
+#     # ---------------------------------------------------------
+#     # NORMALIZE EXISTING ITEM
+#     # ---------------------------------------------------------
+#     normalize_inventory_item_unit(item)
+
+#     display_unit_value = (
+#         data.unit
+#         or item.display_unit
+#         or item.unit
+#     )
+
+#     quantity = (
+#         data.quantity
+#         if data.quantity is not None
+#         else data.stock_qty
+#     )
+
+#     if quantity is None:
+#         raise HTTPException(
+#             status_code=400,
+#             detail="quantity or stock_qty is required"
+#         )
+
+#     # ---------------------------------------------------------
+#     # CONVERT INPUT TO BASE UNIT
+#     # ---------------------------------------------------------
+#     unit, qty, factor = convert_to_base_unit(
+#         display_unit_value,
+#         quantity
+#     )
+
+#     # Inventory must remain in same base unit
+#     if unit != item.unit:
+#         raise HTTPException(
+#             status_code=400,
+#             detail=(
+#                 f"Unit mismatch. Inventory uses "
+#                 f"{item.unit}, but received {unit}"
+#             )
+#         )
+
+#     # ---------------------------------------------------------
+#     # VALIDATE GODOWN
+#     # ---------------------------------------------------------
+#     if data.godown_id is not None:
+
+#         godown = await db.get(
+#             Godown,
+#             data.godown_id
+#         )
+
+#         if not godown:
+#             raise HTTPException(
+#                 status_code=404,
+#                 detail="Godown not found"
+#             )
+
+#         if godown.branch_id != item.branch_id:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail="Godown does not belong to item branch"
+#             )
+
+#         item.godown_id = data.godown_id
+
+#     # ---------------------------------------------------------
+#     # UPDATE BASIC INFORMATION
+#     # ---------------------------------------------------------
+#     if data.name is not None:
+#         item.name = data.name.strip()
+
+#     if data.row_category is not None:
+#         item.row_category = data.row_category
+
+#     if data.vendor_name is not None:
+#         item.vendor_name = data.vendor_name
+
+#     if data.vendor_phone is not None:
+#         item.vendor_phone = data.vendor_phone
+
+#     # ---------------------------------------------------------
+#     # STOCK
+#     # ---------------------------------------------------------
+#     if data.operation == "add":
+
+#         item.stock_qty += qty
+
+#     elif data.operation == "subtract":
+
+#         if item.stock_qty < qty:
+#             raise HTTPException(
+#                 status_code=400,
+#                 detail=(
+#                     f"Insufficient stock. "
+#                     f"Available: {item.stock_qty / factor:g} "
+#                     f"{display_unit_value}, "
+#                     f"Requested: {quantity:g} "
+#                     f"{display_unit_value}"
+#                 )
+#             )
+
+#         item.stock_qty -= qty
+
+#     elif data.operation == "set":
+
+#         item.stock_qty = qty
+
+#     else:
+#         raise HTTPException(
+#             status_code=400,
+#             detail="operation must be add, subtract or set"
+#         )
+
+#     # ---------------------------------------------------------
+#     # REORDER LEVEL
+#     # ---------------------------------------------------------
+#     if data.reorder_level is not None:
+
+#         _, reorder_level, _ = convert_to_base_unit(
+#             display_unit_value,
+#             data.reorder_level
+#         )
+
+#         item.reorder_level = reorder_level
+
+#     # ---------------------------------------------------------
+#     # COST PER UNIT
+#     #
+#     # Frontend sends display-unit cost:
+#     #
+#     # ₹500/kg
+#     #
+#     # DB stores:
+#     #
+#     # ₹0.50/gm
+#     # ---------------------------------------------------------
+#     if data.cost_per_unit is not None:
+
+#         item.cost_per_unit = (
+#             data.cost_per_unit / factor
+#         )
+
+#     # ---------------------------------------------------------
+#     # DISPLAY UNIT
+#     # ---------------------------------------------------------
+#     item.display_unit = display_unit_value
+#     item.conversion_factor = factor
+
+#     # ---------------------------------------------------------
+#     # STATUS
+#     # ---------------------------------------------------------
+#     item.status = calculate_status(
+#         item.stock_qty,
+#         item.reorder_level
+#     )
+
+#     # ---------------------------------------------------------
+#     # RESTOCK TIME
+#     # ---------------------------------------------------------
+#     if data.last_restocked is not None:
+
+#         item.last_restocked = data.last_restocked
+
+#     elif data.operation == "add":
+
+#         item.last_restocked = datetime.now(
+#             timezone.utc
+#         )
+
+#     # ---------------------------------------------------------
+#     # SAVE
+#     # ---------------------------------------------------------
+#     await db.commit()
+#     await db.refresh(item)
+
+#     await Cache.delete_pattern(
+#         f"report:{item.branch_id}:inventory:*"
+#     )
+
+#     return {
+#         "message": "Stock updated successfully",
+#         "id": item.id,
+#         "current_stock": item.stock_qty / factor,
+#         "base_stock": item.stock_qty,
+#         "unit": item.display_unit,
+#         "base_unit": item.unit,
+#         "status": item.status,
+#         "cost_per_unit": item.cost_per_unit * factor
+#     }
 @router.patch("/update_stock/{item_id}")
 async def update_stock(
     item_id: int,
@@ -461,53 +785,99 @@ async def update_stock(
     db: SessionDep,
     current=Depends(access_one)
 ):
-    item = await db.get(
-        InventoryItem,
-        item_id
-    )
+    item = await db.get(InventoryItem, item_id)
 
     if not item:
         raise HTTPException(
-            404,
-            "Item not found"
+            status_code=404,
+            detail="Item not found"
         )
 
+    role = current["role"]
+    user = current["user"]
+
+    # ---------------------------------------------------------
+    # STAFF CAN ONLY UPDATE THEIR OWN BRANCH
+    # ---------------------------------------------------------
+    if role == UserRole.STAFF:
+        if item.branch_id != user.branch_id:
+            raise HTTPException(
+                status_code=403,
+                detail="You cannot update inventory from another branch"
+            )
+
+    # ---------------------------------------------------------
+    # NORMALIZE EXISTING ITEM
+    # ---------------------------------------------------------
     normalize_inventory_item_unit(item)
 
-    display_unit_value = data.unit or item.display_unit or item.unit
-    quantity = data.quantity
+    display_unit_value = (
+        data.unit
+        or item.display_unit
+        or item.unit
+    )
 
-    if quantity is None:
-        quantity = data.stock_qty
+    quantity = (
+        data.quantity
+        if data.quantity is not None
+        else data.stock_qty
+    )
 
     if quantity is None:
         raise HTTPException(
-            400,
-            "quantity or stock_qty is required"
+            status_code=400,
+            detail="quantity or stock_qty is required"
         )
 
+    # ---------------------------------------------------------
+    # CONVERT INPUT TO BASE UNIT
+    # ---------------------------------------------------------
     unit, qty, factor = convert_to_base_unit(
         display_unit_value,
         quantity
     )
 
+    # Inventory must remain in same base unit
     if unit != item.unit:
         raise HTTPException(
-            400,
-            f"Unit mismatch. Inventory unit is {item.unit}"
+            status_code=400,
+            detail=(
+                f"Unit mismatch. Inventory uses "
+                f"{item.unit}, but received {unit}"
+            )
         )
 
+    # ---------------------------------------------------------
+    # VALIDATE GODOWN
+    # ---------------------------------------------------------
+    if data.godown_id is not None:
+        godown = await db.get(
+            Godown,
+            data.godown_id
+        )
+
+        if not godown:
+            raise HTTPException(
+                status_code=404,
+                detail="Godown not found"
+            )
+
+        if godown.branch_id != data.branch_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Godown does not belong to selected branch"
+            )
+
+        item.godown_id = data.godown_id
+
+    # ---------------------------------------------------------
+    # UPDATE BASIC INFORMATION
+    # ---------------------------------------------------------
     if data.name is not None:
-        item.name = data.name
+        item.name = data.name.strip()
 
     if data.row_category is not None:
         item.row_category = data.row_category
-
-    if data.godown_id is not None:
-        item.godown_id = data.godown_id
-
-    if data.cost_per_unit is not None:
-        item.cost_per_unit = data.cost_per_unit
 
     if data.vendor_name is not None:
         item.vendor_name = data.vendor_name
@@ -515,50 +885,117 @@ async def update_stock(
     if data.vendor_phone is not None:
         item.vendor_phone = data.vendor_phone
 
-    item.display_unit = display_unit_value
-    item.conversion_factor = factor
-
-    if data.reorder_level is not None:
-        _, reorder_level, _ = convert_to_base_unit(
-            display_unit_value,
-            data.reorder_level
-        )
-        item.reorder_level = reorder_level
-
+    # ---------------------------------------------------------
+    # STOCK
+    # ---------------------------------------------------------
     if data.operation == "add":
+
         item.stock_qty += qty
 
     elif data.operation == "subtract":
+
         if item.stock_qty < qty:
             raise HTTPException(
-                400,
-                "Insufficient stock"
+                status_code=400,
+                detail=(
+                    f"Insufficient stock. "
+                    f"Available: {item.stock_qty / factor:g} "
+                    f"{display_unit_value}, "
+                    f"Requested: {quantity:g} "
+                    f"{display_unit_value}"
+                )
             )
 
         item.stock_qty -= qty
 
-    else:
+    elif data.operation == "set":
+
         item.stock_qty = qty
 
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="operation must be add, subtract or set"
+        )
+
+    # ---------------------------------------------------------
+    # REORDER LEVEL
+    # ---------------------------------------------------------
+    if data.reorder_level is not None:
+
+        _, reorder_level, _ = convert_to_base_unit(
+            display_unit_value,
+            data.reorder_level
+        )
+
+        item.reorder_level = reorder_level
+
+    # ---------------------------------------------------------
+    # COST PER UNIT
+    #
+    # Frontend sends display-unit cost:
+    #
+    # ₹500/kg
+    #
+    # DB stores:
+    #
+    # ₹0.50/gm
+    # ---------------------------------------------------------
+    if data.cost_per_unit is not None:
+
+        item.cost_per_unit = (
+            data.cost_per_unit / factor
+        )
+
+    # ---------------------------------------------------------
+    # DISPLAY UNIT
+    # ---------------------------------------------------------
+    item.display_unit = display_unit_value
+    item.conversion_factor = factor
+
+    # ---------------------------------------------------------
+    # STATUS
+    # ---------------------------------------------------------
     item.status = calculate_status(
         item.stock_qty,
         item.reorder_level
     )
 
-    item.last_restocked = datetime.utcnow()
-
+    # ---------------------------------------------------------
+    # RESTOCK TIME
+    # ---------------------------------------------------------
     if data.last_restocked is not None:
+
         item.last_restocked = data.last_restocked
 
-    await db.commit()
+    elif data.operation == "add":
 
-    await Cache.delete_pattern(f"report:{item.branch_id}:inventory:*")
+        item.last_restocked = datetime.now(
+            timezone.utc
+        )
+
+    # ---------------------------------------------------------
+    # SAVE
+    # ---------------------------------------------------------
+    await db.commit()
+    await db.refresh(item)
+
+    await Cache.delete_pattern(
+        f"report:{item.branch_id}:inventory:*"
+    )
 
     return {
         "message": "Stock updated successfully",
-        "current_stock": item.stock_qty,
-        "unit": item.unit
+        "id": item.id,
+        "current_stock": item.stock_qty / factor,
+        "base_stock": item.stock_qty,
+        "unit": item.display_unit,
+        "base_unit": item.unit,
+        "status": item.status,
+        "cost_per_unit": item.cost_per_unit * factor
     }
+
+
 
 
 @router.post("/creategodown", response_model=GodownOut, status_code=status.HTTP_201_CREATED)

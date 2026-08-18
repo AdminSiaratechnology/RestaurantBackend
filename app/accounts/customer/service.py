@@ -420,8 +420,19 @@ async def get_customers_service(
     )
 
     result = await db.execute(query)
+    customers = result.scalars().all()
 
-    return result.scalars().all()
+    from app.accounts.crm.loyalty.model import CustomerLoyaltyAccount
+    for customer in customers:
+        loyalty_res = await db.execute(
+            select(CustomerLoyaltyAccount.current_points_balance)
+            .where(CustomerLoyaltyAccount.customer_id == customer.id)
+        )
+        points_bal = loyalty_res.scalar_one_or_none()
+        if points_bal is not None:
+            customer.loyalty_points = float(points_bal)
+
+    return customers
 
 
 # =========================================================

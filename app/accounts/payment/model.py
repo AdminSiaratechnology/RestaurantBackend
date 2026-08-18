@@ -42,30 +42,59 @@ class Payment(Base):
         nullable=False,
     )
 
+    # ========================================================
+    # ACTUAL PAYMENT METHOD
+    # ========================================================
+
     payment_method = Column(
         String,
         nullable=False,
     )
 
+    # Example:
+    #
+    # [
+    #   {
+    #       "payment_method": "cash",
+    #       "payment_amount": 4492.80
+    #   }
+    # ]
+    #
     payment_breakdown = Column(
         JSON,
         nullable=True,
     )
+
+    # ========================================================
+    # ORIGINAL BILL AMOUNT
+    # ========================================================
 
     bill_amount = Column(
         Float,
         nullable=False,
     )
 
+    # ========================================================
+    # ACTUAL MONEY RECEIVED
+    # ========================================================
+
     receive_amount = Column(
         Float,
         nullable=False,
     )
 
+    # ========================================================
+    # FINAL PAYABLE AFTER DISCOUNTS
+    # ========================================================
+
     paid_amount = Column(
         Float,
         nullable=False,
     )
+
+    # ========================================================
+    # CHANGE
+    # ========================================================
 
     change_amount = Column(
         Float,
@@ -83,7 +112,10 @@ class Payment(Base):
         nullable=True,
     )
 
-    # Offer
+    # ========================================================
+    # OFFER
+    # ========================================================
+
     offer_id = Column(
         Integer,
         ForeignKey("offers.id"),
@@ -96,12 +128,26 @@ class Payment(Base):
         nullable=False,
     )
 
-    # CRM Wallet Special Discount
+    # ========================================================
+    # CRM WALLET
+    # ========================================================
+    #
+    # NOT A PAYMENT METHOD.
+    #
+    # This stores the amount deducted
+    # from customer's CRM wallet.
+    #
+    # ========================================================
+
     wallet_discount = Column(
         Float,
         default=0.0,
         nullable=False,
     )
+
+    # ========================================================
+    # DATES
+    # ========================================================
 
     payment_date = Column(
         DateTime,

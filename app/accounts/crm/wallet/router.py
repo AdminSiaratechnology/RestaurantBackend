@@ -1,7 +1,5 @@
 """
-app/accounts/crm/wallet/router.py
-
-FastAPI router for Customer Wallet.
+FastAPI router for CRM Wallet.
 """
 
 from typing import List
@@ -39,20 +37,26 @@ router = APIRouter(
 )
 async def get_account(
     customer_id: int,
+    client_id: int,
     db: SessionDep,
 ):
-
     account = await service.get_wallet_account(
         db,
-        customer_id,
+        customer_id=customer_id,
+        client_id=client_id,
     )
 
     if account is None:
-
-        raise HTTPException(
-            status_code=404,
-            detail="Wallet account not found",
+        # Don't treat missing wallet as an error.
+        # Return a zero wallet instead.
+        account = await service.get_or_create_wallet_account(
+            db,
+            customer_id=customer_id,
+            client_id=client_id,
         )
+
+        await db.commit()
+        await db.refresh(account)
 
     return account
 
@@ -81,40 +85,45 @@ async def list_transactions(
 # LOYALTY -> WALLET CONVERSION
 # ============================================================
 
-
 @router.post(
     "/convert-loyalty/{customer_id}",
     response_model=LoyaltyToWalletConversionOut,
 )
 async def convert_loyalty_to_wallet(
     customer_id: int,
+    branch_id: int,
     db: SessionDep,
 ):
-
     try:
-
-        result = (
-            await service.convert_loyalty_points_to_wallet(
-                db,
-                customer_id=customer_id,
-            )
+        result = await service.convert_loyalty_points_to_wallet(
+            db,
+            customer_id=customer_id,
+            branch_id=branch_id,
         )
 
         return result
 
     except ValueError as exc:
+        await db.rollback()
 
         raise HTTPException(
             status_code=400,
             detail=str(exc),
         )
 
-    except Exception:
+    except HTTPException:
+        await db.rollback()
+        raise
+
+    except Exception as exc:
+        await db.rollback()
+
+        print(
+            "LOYALTY TO WALLET ERROR:",
+            repr(exc),
+        )
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to convert loyalty points "
-                "into wallet balance"
-            ),
+            detail="Failed to convert loyalty points into wallet balance",
         )
