@@ -7,6 +7,7 @@ from app.accounts.order.model import Order, OrderItem
 from app.accounts.item.model import Item
 from sqlalchemy.orm import selectinload
 from app.accounts.pricing.model import Pricing
+from app.accounts.table.model import Table
 
 
 
@@ -14,141 +15,367 @@ from app.accounts.pricing.model import Pricing
 
 
 
-async def get_orders_all_branches(db, client_id: int):
+async def get_orders_all_branches(
+    db,
+    client_id: int,
+):
 
-    # =====================================
-    # Get all branches
-    # =====================================
+    # =====================================================
+    # 1. GET BRANCHES
+    # =====================================================
+
     branches_result = await db.execute(
-        select(Branch).where(
+        select(Branch)
+        .where(
             Branch.client_id == client_id
         )
     )
-    branches = branches_result.scalars().all()
 
-    branch_ids = [b.id for b in branches]
+    branches = (
+        branches_result
+        .scalars()
+        .all()
+    )
+
+    branch_ids = [
+        branch.id
+        for branch in branches
+    ]
 
     if not branch_ids:
+
         return {
             "total_orders": 0,
-            "branches": []
+            "branches": [],
         }
 
-    # =====================================
-    # Get all orders
-    # =====================================
+    # =====================================================
+    # 2. GET ORDERS
+    # =====================================================
+
     orders_result = await db.execute(
-        select(Order).where(
+        select(Order)
+        .where(
             Order.branch_id.in_(branch_ids)
         )
-    )
-    orders = orders_result.scalars().all()
-
-    order_ids = [o.id for o in orders]
-
-    if not order_ids:
-        return {
-            "total_orders": 0,
-            "branches": [
-                {
-                    "branch_id": b.id,
-                    "branch_name": b.name,
-                    "total_orders": 0,
-                    "orders": []
-                }
-                for b in branches
-            ]
-        }
-
-    # =====================================
-    # Get all order items
-    # =====================================
-    items_result = await db.execute(
-        select(OrderItem).where(
-            OrderItem.order_id.in_(order_ids)
+        .order_by(
+            Order.id.desc()
         )
     )
-    order_items = items_result.scalars().all()
 
-    # =====================================
-    # Create order_id -> items mapping
-    # =====================================
+    orders = (
+        orders_result
+        .scalars()
+        .all()
+    )
+
+    order_ids = [
+        order.id
+        for order in orders
+    ]
+
+    if not order_ids:
+
+        return {
+            "total_orders": 0,
+
+            "branches": [
+                {
+                    "branch_id": branch.id,
+                    "branch_name": branch.name,
+                    "total_orders": 0,
+                    "orders": [],
+                }
+                for branch in branches
+            ],
+        }
+
+    # =====================================================
+    # 3. GET ORDER ITEMS
+    # =====================================================
+
+    items_result = await db.execute(
+        select(OrderItem)
+        .where(
+            OrderItem.order_id.in_(
+                order_ids
+            )
+        )
+    )
+
+    order_items = (
+        items_result
+        .scalars()
+        .all()
+    )
+
+    # =====================================================
+    # 4. ORDER -> ITEMS MAP
+    # =====================================================
+
     items_map = {}
 
-    for item in order_items:
-        items_map.setdefault(item.order_id, []).append(item)
+    for order_item in order_items:
 
-    # =====================================
-    # Get item names
-    # =====================================
-    item_ids = list({item.item_id for item in order_items})
+        items_map.setdefault(
+            order_item.order_id,
+            [],
+        ).append(
+            order_item
+        )
+
+    # =====================================================
+    # 5. GET ITEM NAMES
+    # =====================================================
+
+    item_ids = list(
+        {
+            order_item.item_id
+            for order_item in order_items
+        }
+    )
 
     item_map = {}
 
     if item_ids:
+
         item_result = await db.execute(
-            select(Item).where(
+            select(Item)
+            .where(
                 Item.id.in_(item_ids)
             )
         )
 
         item_map = {
             item.id: item.name
-            for item in item_result.scalars().all()
+            for item in (
+                item_result
+                .scalars()
+                .all()
+            )
         }
 
-    # =====================================
-    # Build Response
-    # =====================================
+    # =====================================================
+    # 6. GET TABLES
+    #
+    # tables.id
+    # tables.name
+    #
+    # Order:
+    # order.table_id
+    #
+    # API:
+    # table_id
+    # table_name
+    # =====================================================
+
+    table_ids = list(
+        {
+            order.table_id
+            for order in orders
+            if order.table_id is not None
+        }
+    )
+
+    table_map = {}
+
+    if table_ids:
+
+        table_result = await db.execute(
+            select(Table)
+            .where(
+                Table.id.in_(table_ids)
+            )
+        )
+
+        tables = (
+            table_result
+            .scalars()
+            .all()
+        )
+
+        table_map = {
+            table.id: table
+            for table in tables
+        }
+
+    # =====================================================
+    # 7. RESPONSE
+    # =====================================================
+
     response = {
         "total_orders": len(orders),
-        "branches": []
+        "branches": [],
     }
 
     for branch in branches:
 
         branch_orders = [
-            order for order in orders
+            order
+            for order in orders
             if order.branch_id == branch.id
         ]
 
-        response["branches"].append({
-            "branch_id": branch.id,
-            "branch_name": branch.name,
-            "total_orders": len(branch_orders),
+        final_orders = []
 
-            "orders": [
+        for order in branch_orders:
+
+            # =================================================
+            # TABLE
+            # =================================================
+
+            table_name = None
+
+            if order.table_id is not None:
+
+                table = table_map.get(
+                    order.table_id
+                )
+
+                if table:
+
+                    table_name = table.name
+
+                    if table.floor:
+
+                        table_name = (
+                            f"{table.name} "
+                            f"({table.floor})"
+                        )
+
+            # =================================================
+            # ITEMS
+            # =================================================
+
+            final_items = []
+
+            for order_item in (
+                items_map.get(
+                    order.id,
+                    [],
+                )
+            ):
+
+                item_name = (
+                    item_map.get(
+                        order_item.item_id
+                    )
+                )
+
+                final_items.append(
+                    {
+                        "id": (
+                            order_item.id
+                        ),
+
+                        "item_id": (
+                            order_item.item_id
+                        ),
+
+                        "item_name": (
+                            item_name
+                        ),
+
+                        "name": (
+                            item_name
+                        ),
+
+                        "quantity": (
+                            order_item.quantity
+                        ),
+
+                        "unit_price": (
+                            order_item.unit_price
+                        ),
+
+                        "price": (
+                            order_item.unit_price
+                        ),
+
+                        "order_status": (
+                            order_item.order_status
+                        ),
+                    }
+                )
+
+            # =================================================
+            # ORDER
+            # =================================================
+
+            final_orders.append(
                 {
                     "order_id": order.id,
-                    "id": order.id,
-                    "branch_id": branch.id,
-                    "branch_name": branch.name,
-                    "table_id": order.table_id,
-                    "order_type": order.order_type,
-                    "customer_name": order.customer_name,
-                    "customer_phone": order.customer_phone,
-                    "notes": order.notes,
-                    "status": order.status,
-                    "total_amount": order.total_amount,
-                    "created_at": order.created_at,
 
-                    "items": [
-                        {
-                            "id": oi.id,
-                            "item_id": oi.item_id,
-                            "item_name": item_map.get(oi.item_id),
-                            "name": item_map.get(oi.item_id),
-                            "quantity": oi.quantity,
-                            "unit_price": oi.unit_price,
-                            "price": oi.unit_price,
-                            "order_status": oi.order_status,
-                        }
-                        for oi in items_map.get(order.id, [])
-                    ]
+                    "id": order.id,
+
+                    "branch_id": (
+                        branch.id
+                    ),
+
+                    "branch_name": (
+                        branch.name
+                    ),
+
+                    "table_id": (
+                        order.table_id
+                    ),
+
+                    # IMPORTANT
+                    "table_name": (
+                        table_name
+                    ),
+
+                    "order_type": (
+                        order.order_type
+                    ),
+
+                    "customer_name": (
+                        order.customer_name
+                    ),
+
+                    "customer_phone": (
+                        order.customer_phone
+                    ),
+
+                    "notes": (
+                        order.notes
+                    ),
+
+                    "status": (
+                        order.status
+                    ),
+
+                    "total_amount": (
+                        order.total_amount
+                    ),
+
+                    "created_at": (
+                        order.created_at
+                    ),
+
+                    "items": (
+                        final_items
+                    ),
                 }
-                for order in branch_orders
-            ]
-        })
+            )
+
+        response["branches"].append(
+            {
+                "branch_id": branch.id,
+
+                "branch_name": (
+                    branch.name
+                ),
+
+                "total_orders": (
+                    len(branch_orders)
+                ),
+
+                "orders": (
+                    final_orders
+                ),
+            }
+        )
 
     return response
 

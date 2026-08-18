@@ -1,38 +1,25 @@
-"""
-app/accounts/crm/wallet/schema.py
-
-Pydantic schemas for Customer Wallet.
-"""
-
 from datetime import datetime
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-)
+from pydantic import BaseModel, ConfigDict
 
 
 # ============================================================
 # WALLET ACCOUNT
 # ============================================================
-
-
 class WalletAccountOut(BaseModel):
-
     id: int
 
     customer_id: int
-
     client_id: int
 
     balance: float
 
     total_recharged: float
-
     total_spent: float
 
-    created_at: datetime
+    is_active: bool
 
+    created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(
@@ -44,24 +31,22 @@ class WalletAccountOut(BaseModel):
 # WALLET TRANSACTION
 # ============================================================
 
-
 class WalletTransactionOut(BaseModel):
-
     id: int
-
-    account_id: int
-
     customer_id: int
-
-    bill_id: int | None = None
+    wallet_account_id: int
+    client_id: int
+    branch_id: int | None = None
 
     transaction_type: str
 
     amount: float
-
+    balance_before: float
     balance_after: float
 
-    remarks: str | None = None
+    reference_type: str | None = None
+    reference_id: int | None = None
+    notes: str | None = None
 
     created_at: datetime
 
@@ -71,9 +56,8 @@ class WalletTransactionOut(BaseModel):
 
 
 # ============================================================
-# LOYALTY -> WALLET CONVERSION RESPONSE
+# LOYALTY -> WALLET CONVERSION
 # ============================================================
-
 
 class LoyaltyToWalletConversionOut(BaseModel):
 

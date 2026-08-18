@@ -1,6 +1,5 @@
-from datetime import datetime
 from typing import Any
-
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
@@ -908,9 +907,7 @@ async def get_all_orders(
 
 @router.get(
     "/orders_paginated",
-    response_model=CursorPaginatedResponse[
-        OrderResponse
-    ],
+    response_model=CursorPaginatedResponse[OrderResponse],
 )
 async def get_orders_paginated(
     db: SessionDep,
@@ -926,11 +923,13 @@ async def get_orders_paginated(
     search: str | None = None,
     current=Depends(access_one),
 ):
-
     try:
-
         role = current["role"]
         user = current["user"]
+
+        # ====================================================
+        # ORDER QUERY
+        # ====================================================
 
         query = select(Order)
 
@@ -938,24 +937,29 @@ async def get_orders_paginated(
         # Filters
         # ----------------------------------------------------
 
-        if client_id:
+        if client_id is not None:
             query = query.where(
-                Order.client_id
-                == client_id
+                Order.client_id == client_id
             )
 
-        if branch_id:
+        if branch_id is not None:
             query = query.where(
-                Order.branch_id
-                == branch_id
+                Order.branch_id == branch_id
             )
+
+        # ----------------------------------------------------
+        # CLIENT ACCESS
+        # ----------------------------------------------------
 
         if role.name == "CLIENT":
 
             query = query.where(
-                Order.client_id
-                == user.id
+                Order.client_id == user.id
             )
+
+        # ----------------------------------------------------
+        # PARTNER ACCESS
+        # ----------------------------------------------------
 
         elif role.name == "PARTNER":
 
@@ -963,20 +967,25 @@ async def get_orders_paginated(
                 query
                 .join(
                     Client,
-                    Client.id
-                    == Order.client_id,
+                    Client.id == Order.client_id,
                 )
                 .where(
-                    Client.partner_id
-                    == user.id
+                    Client.partner_id == user.id
                 )
             )
 
-        if status:
+        # ----------------------------------------------------
+        # STATUS FILTER
+        # ----------------------------------------------------
 
+        if status:
             query = query.where(
                 Order.status == status
             )
+
+        # ----------------------------------------------------
+        # SEARCH
+        # ----------------------------------------------------
 
         if search:
 
@@ -999,49 +1008,56 @@ async def get_orders_paginated(
             )
 
         # ----------------------------------------------------
-        # Cursor
+        # CURSOR
         # ----------------------------------------------------
 
-        if cursor:
+        if cursor is not None:
 
             query = query.where(
                 Order.id < cursor
             )
 
+        # ----------------------------------------------------
+        # ORDER BY
+        # ----------------------------------------------------
+
         query = query.order_by(
             Order.id.desc()
         )
 
-        # ----------------------------------------------------
-        # Count
-        # ----------------------------------------------------
+        # ====================================================
+        # COUNT QUERY
+        # ====================================================
 
-        count_query = (
-            select(
-                func.count(Order.id)
-            )
+        count_query = select(
+            func.count(Order.id)
         )
 
-        if client_id:
+        if client_id is not None:
 
             count_query = count_query.where(
-                Order.client_id
-                == client_id
+                Order.client_id == client_id
             )
 
-        if branch_id:
+        if branch_id is not None:
 
             count_query = count_query.where(
-                Order.branch_id
-                == branch_id
+                Order.branch_id == branch_id
             )
+
+        # ----------------------------------------------------
+        # CLIENT COUNT ACCESS
+        # ----------------------------------------------------
 
         if role.name == "CLIENT":
 
             count_query = count_query.where(
-                Order.client_id
-                == user.id
+                Order.client_id == user.id
             )
+
+        # ----------------------------------------------------
+        # PARTNER COUNT ACCESS
+        # ----------------------------------------------------
 
         elif role.name == "PARTNER":
 
@@ -1049,20 +1065,26 @@ async def get_orders_paginated(
                 count_query
                 .join(
                     Client,
-                    Client.id
-                    == Order.client_id,
+                    Client.id == Order.client_id,
                 )
                 .where(
-                    Client.partner_id
-                    == user.id
+                    Client.partner_id == user.id
                 )
             )
+
+        # ----------------------------------------------------
+        # STATUS COUNT
+        # ----------------------------------------------------
 
         if status:
 
             count_query = count_query.where(
                 Order.status == status
             )
+
+        # ----------------------------------------------------
+        # SEARCH COUNT
+        # ----------------------------------------------------
 
         if search:
 
@@ -1088,18 +1110,18 @@ async def get_orders_paginated(
             count_query
         )
 
-        total_count = (
-            count_result.scalar_one()
-        )
+        total_count = count_result.scalar_one()
 
-        # ----------------------------------------------------
-        # Fetch limit + 1
-        # ----------------------------------------------------
+        # ====================================================
+        # FETCH ORDERS
+        # ====================================================
 
         query = query.limit(
             limit + 1
         )
 
+        # IMPORTANT:
+        # Load OrderItem + Item
         query = query.options(
             selectinload(
                 Order.order_items
@@ -1114,9 +1136,11 @@ async def get_orders_paginated(
 
         orders = result.scalars().all()
 
-        has_more = (
-            len(orders) > limit
-        )
+        # ====================================================
+        # PAGINATION
+        # ====================================================
+
+        has_more = len(orders) > limit
 
         items = orders[:limit]
 
@@ -1126,42 +1150,87 @@ async def get_orders_paginated(
 
             next_cursor = items[-1].id
 
-        # ----------------------------------------------------
-        # Tables
-        # ----------------------------------------------------
+        # ====================================================
+        # LOAD TABLES
+        #
+        # Table model:
+        #
+        # class Table:
+        #     id
+        #     name
+        #     floor
+        #
+        # So we MUST use table.name
+        # ====================================================
 
         tables_query = select(Table)
 
-        if branch_id:
+        # ----------------------------------------------------
+        # If branch filter is provided, only load that branch
+        # ----------------------------------------------------
 
-            tables_query = (
-                tables_query.where(
-                    Table.branch_id
-                    == branch_id
-                )
+        if branch_id is not None:
+
+            tables_query = tables_query.where(
+                Table.branch_id == branch_id
             )
+
+        # ----------------------------------------------------
+        # IMPORTANT:
+        # If branch_id is NOT provided, load tables for all
+        # order branches.
+        # ----------------------------------------------------
+
+        else:
+
+            order_branch_ids = list(
+                {
+                    order.branch_id
+                    for order in items
+                    if order.branch_id is not None
+                }
+            )
+
+            if order_branch_ids:
+
+                tables_query = tables_query.where(
+                    Table.branch_id.in_(
+                        order_branch_ids
+                    )
+                )
 
         tables_result = await db.execute(
             tables_query
         )
 
-        tables = {
-            t.id: t
-            for t
-            in tables_result.scalars().all()
-        }
+        table_list = (
+            tables_result.scalars().all()
+        )
 
         # ----------------------------------------------------
-        # Response
+        # Create table_id -> Table mapping
         # ----------------------------------------------------
+
+        tables = {
+            table.id: table
+            for table in table_list
+        }
+
+        # ====================================================
+        # BUILD RESPONSE
+        # ====================================================
 
         final_orders = []
 
         for order in items:
 
+            # ------------------------------------------------
+            # TABLE NAME
+            # ------------------------------------------------
+
             table_name = None
 
-            if order.table_id:
+            if order.table_id is not None:
 
                 table = tables.get(
                     order.table_id
@@ -1169,48 +1238,65 @@ async def get_orders_paginated(
 
                 if table:
 
-                    table_name = (
-                        f"{table.name}"
-                        f"{f' ({table.floor})' if table.floor else ''}"
-                    )
+                    # Your Table model has:
+                    #
+                    # name = Column(String)
+                    #
+                    # So use table.name
+                    table_name = table.name
+
+                    # Optional floor
+                    if table.floor:
+
+                        table_name = (
+                            f"{table.name} "
+                            f"({table.floor})"
+                        )
+
+            # ------------------------------------------------
+            # ORDER ITEMS
+            # ------------------------------------------------
 
             enriched_items = []
 
-            for item in order.order_items:
+            for order_item in order.order_items:
 
-                item_name = (
-                    item.item.name
-                    if item.item
-                    else None
-                )
+                item_name = None
+
+                if order_item.item:
+
+                    item_name = (
+                        order_item.item.name
+                    )
 
                 enriched_items.append(
                     {
-                        "id": item.id,
+                        "id": order_item.id,
 
                         "item_id":
-                            item.item_id,
+                            order_item.item_id,
 
                         "item_name":
                             item_name,
 
-                        "name":
-                            item_name,
-
                         "quantity":
-                            item.quantity,
+                            order_item.quantity,
 
                         "price":
                             getattr(
-                                item,
+                                order_item,
                                 "price",
                                 None,
                             ),
 
                         "order_status":
-                            item.order_status,
+                            order_item.order_status,
                     }
                 )
+
+            # ------------------------------------------------
+            # ORDER RESPONSE
+            # ------------------------------------------------
 
             final_orders.append(
                 {
@@ -1225,6 +1311,12 @@ async def get_orders_paginated(
 
                     "table_id":
                         order.table_id,
+
+                    # IMPORTANT:
+                    # Schema expects table_name
+                    # NOT table_number
+                    "table_name":
+                        table_name,
 
                     "order_type":
                         order.order_type,
@@ -1242,18 +1334,21 @@ async def get_orders_paginated(
                         order.status,
 
                     "total_amount":
-                        order.total_amount,
+                        float(
+                            order.total_amount or 0
+                        ),
 
                     "created_at":
                         order.created_at,
 
                     "items":
                         enriched_items,
-
-                    "table_number":
-                        table_name,
                 }
             )
+
+        # ====================================================
+        # FINAL RESPONSE
+        # ====================================================
 
         return {
             "items":
@@ -1272,10 +1367,13 @@ async def get_orders_paginated(
                 total_count,
         }
 
+    except HTTPException:
+        raise
+
     except SQLAlchemyError as e:
 
         print(
-            "PAGINATED ORDERS ERROR:",
+            "PAGINATED ORDERS DB ERROR:",
             str(e),
         )
 
@@ -1287,6 +1385,19 @@ async def get_orders_paginated(
             ),
         )
 
+    except Exception as e:
+
+        print(
+            "PAGINATED ORDERS ERROR:",
+            str(e),
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"Unexpected error: {str(e)}"
+            ),
+        )
 
 # ============================================================
 # CREATE ORDER
@@ -1343,20 +1454,52 @@ async def create_order(
         )
 
         # =================================================
-        # ORDER TYPE
+        # ORDER TYPE & TABLE VALIDATION
         # =================================================
 
         if data.order_type == OrderType.DINE_IN:
 
-            if data.table_id is None:
+            if not data.table_id or data.table_id == 0:
+
+                raise HTTPException(
+                    status_code=400,
+                    detail="Please select a table for dine-in orders.",
+                )
+
+            table = await db.get(
+                Table,
+                data.table_id,
+            )
+
+            if not table:
+
+                raise HTTPException(
+                    status_code=400,
+                    detail="Selected table does not exist.",
+                )
+
+            if table.branch_id != data.branch_id:
 
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Table is required "
-                        "for Dine-In orders."
+                        "Selected table does not "
+                        "belong to this branch."
                     ),
                 )
+
+            if table.status == TableStatus.occupied:
+
+                raise HTTPException(
+                    status_code=400,
+                    detail="Table is already occupied.",
+                )
+
+            table.status = TableStatus.occupied
+
+            await Cache.delete(
+                f"tables:branch:{table.branch_id}"
+            )
 
         else:
 
@@ -1387,49 +1530,6 @@ async def create_order(
         db.add(order)
 
         await db.flush()
-
-        # =================================================
-        # TABLE
-        # =================================================
-
-        if order.order_type == OrderType.DINE_IN:
-
-            table = await db.get(
-                Table,
-                order.table_id,
-            )
-
-            if not table:
-
-                raise HTTPException(
-                    status_code=404,
-                    detail="Table not found",
-                )
-
-            if table.branch_id != order.branch_id:
-
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        "Selected table does not "
-                        "belong to this branch."
-                    ),
-                )
-
-            if table.status == TableStatus.occupied:
-
-                raise HTTPException(
-                    status_code=400,
-                    detail="Table is already occupied.",
-                )
-
-            table.status = TableStatus.occupied
-
-            await Cache.delete(
-                f"tables:branch:{table.branch_id}"
-            )
-
-            await db.flush()
 
         # =================================================
         # ITEMS REQUIRED
@@ -1760,34 +1860,28 @@ async def update_order(
     db: SessionDep,
     current=Depends(access_one),
 ):
-
     try:
 
-        # ----------------------------------------------------
+        # ====================================================
         # GET ORDER
-        # ----------------------------------------------------
+        # ====================================================
 
         result = await db.execute(
             select(Order)
-            .where(
-                Order.id == order_id
-            )
+            .where(Order.id == order_id)
         )
 
-        order = (
-            result.scalar_one_or_none()
-        )
+        order = result.scalar_one_or_none()
 
         if not order:
-
             raise HTTPException(
                 status_code=404,
                 detail="Order not found",
             )
 
-        # ----------------------------------------------------
+        # ====================================================
         # ACCESS
-        # ----------------------------------------------------
+        # ====================================================
 
         await get_client_if_accessible(
             order.client_id,
@@ -1796,13 +1890,9 @@ async def update_order(
         )
 
         if (
-            current["role"]
-            == UserRole.STAFF
-            and
-            order.branch_id
-            != current["user"].branch_id
+            current["role"] == UserRole.STAFF
+            and order.branch_id != current["user"].branch_id
         ):
-
             raise HTTPException(
                 status_code=403,
                 detail=(
@@ -1811,65 +1901,227 @@ async def update_order(
                 ),
             )
 
-        # ----------------------------------------------------
-        # ONLY PENDING
-        # ----------------------------------------------------
+        # ====================================================
+        # ONLY PENDING ORDERS CAN BE EDITED
+        # ====================================================
 
-        if (
-            str(order.status).lower()
-            != "pending"
-        ):
-
+        if str(order.status).lower() != "pending":
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "Only pending orders "
-                    "can be edited."
-                ),
+                detail="Only pending orders can be edited.",
             )
 
-        # ----------------------------------------------------
+        # ====================================================
         # BASIC FIELDS
-        # ----------------------------------------------------
+        # ====================================================
 
         if data.notes is not None:
-
             order.notes = data.notes
 
-        if data.order_type is not None:
+        old_order_type = order.order_type
+        old_table_id = order.table_id
 
-            order.order_type = (
-                data.order_type
+        if data.order_type is not None:
+            order.order_type = data.order_type
+
+        # ====================================================
+        # TABLE HANDLING
+        # ====================================================
+
+        # If order type is DINE-IN
+        if order.order_type == OrderType.DINE_IN:
+
+            # ------------------------------------------------
+            # Determine requested table
+            # ------------------------------------------------
+
+            requested_table_id = (
+                data.table_id
+                if data.table_id is not None
+                else order.table_id
             )
 
+            # ------------------------------------------------
+            # Table is mandatory for dine-in
+            # ------------------------------------------------
+
+            if not requested_table_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Please select a table "
+                        "for dine-in orders."
+                    ),
+                )
+
+            # ------------------------------------------------
+            # Get requested table
+            # ------------------------------------------------
+
+            new_table = await db.get(
+                Table,
+                requested_table_id,
+            )
+
+            if not new_table:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Selected table does not exist.",
+                )
+
+            # ------------------------------------------------
+            # Branch validation
+            # ------------------------------------------------
+
+            if new_table.branch_id != order.branch_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Selected table does not "
+                        "belong to this branch."
+                    ),
+                )
+
+            # ------------------------------------------------
+            # If changing table
+            # ------------------------------------------------
+
             if (
-                data.order_type
-                != OrderType.DINE_IN
+                old_table_id != requested_table_id
             ):
 
-                order.table_id = None
+                # --------------------------------------------
+                # Check new table availability
+                # --------------------------------------------
 
-        # ----------------------------------------------------
-        # ITEMS
-        # ----------------------------------------------------
+                if (
+                    new_table.status
+                    == TableStatus.occupied
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Selected table is "
+                            "already occupied."
+                        ),
+                    )
+
+                # --------------------------------------------
+                # Release old table
+                # --------------------------------------------
+
+                if old_table_id:
+
+                    old_table = await db.get(
+                        Table,
+                        old_table_id,
+                    )
+
+                    if old_table:
+
+                        old_table.status = (
+                            TableStatus.available
+                        )
+
+                        await Cache.delete(
+                            f"tables:branch:"
+                            f"{old_table.branch_id}"
+                        )
+
+                # --------------------------------------------
+                # Occupy new table
+                # --------------------------------------------
+
+                new_table.status = (
+                    TableStatus.occupied
+                )
+
+                await Cache.delete(
+                    f"tables:branch:"
+                    f"{new_table.branch_id}"
+                )
+
+                order.table_id = (
+                    requested_table_id
+                )
+
+            else:
+
+                # Same table
+                # Make sure it remains occupied.
+
+                if (
+                    new_table.status
+                    != TableStatus.occupied
+                ):
+                    new_table.status = (
+                        TableStatus.occupied
+                    )
+
+                    await Cache.delete(
+                        f"tables:branch:"
+                        f"{new_table.branch_id}"
+                    )
+
+                order.table_id = (
+                    requested_table_id
+                )
+
+        # ====================================================
+        # NON DINE-IN
+        # ====================================================
+
+        else:
+
+            # If changing from dine-in to takeaway/
+            # delivery/etc., release previous table.
+
+            if old_table_id:
+
+                old_table = await db.get(
+                    Table,
+                    old_table_id,
+                )
+
+                if old_table:
+
+                    old_table.status = (
+                        TableStatus.available
+                    )
+
+                    await Cache.delete(
+                        f"tables:branch:"
+                        f"{old_table.branch_id}"
+                    )
+
+            order.table_id = None
+
+        # ====================================================
+        # UPDATE ITEMS
+        # ====================================================
 
         if data.items is not None:
 
+            # ------------------------------------------------
             # Delete existing items
+            # ------------------------------------------------
+
             await db.execute(
                 delete(OrderItem)
                 .where(
-                    OrderItem.order_id
-                    == order.id
+                    OrderItem.order_id == order.id
                 )
             )
 
             total = 0.0
 
+            # ------------------------------------------------
+            # Recreate items
+            # ------------------------------------------------
+
             for item in data.items:
 
                 if item.quantity <= 0:
-
                     raise HTTPException(
                         status_code=400,
                         detail=(
@@ -1878,13 +2130,16 @@ async def update_order(
                         ),
                     )
 
+                # --------------------------------------------
+                # GET ITEM
+                # --------------------------------------------
+
                 db_item = await db.get(
                     Item,
                     item.item_id,
                 )
 
                 if not db_item:
-
                     raise HTTPException(
                         status_code=404,
                         detail=(
@@ -1893,11 +2148,14 @@ async def update_order(
                         ),
                     )
 
+                # --------------------------------------------
+                # CLIENT VALIDATION
+                # --------------------------------------------
+
                 if (
                     db_item.client_id
                     != order.client_id
                 ):
-
                     raise HTTPException(
                         status_code=403,
                         detail=(
@@ -1906,27 +2164,48 @@ async def update_order(
                         ),
                     )
 
-                pricing = (
-                    await resolve_pricing(
-                        db=db,
-                        db_item=db_item,
-                        client_id=(
-                            order.client_id
-                        ),
-                        branch_id=(
-                            order.branch_id
+                # --------------------------------------------
+                # BRANCH VALIDATION
+                # --------------------------------------------
+
+                if (
+                    db_item.branch_id is not None
+                    and db_item.branch_id
+                    != order.branch_id
+                ):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            "Item does not belong "
+                            "to this branch."
                         ),
                     )
+
+                # --------------------------------------------
+                # PRICING
+                # --------------------------------------------
+
+                pricing = await resolve_pricing(
+                    db=db,
+                    db_item=db_item,
+                    client_id=order.client_id,
+                    branch_id=order.branch_id,
                 )
 
-                snap = (
-                    order_item_line_snapshot(
-                        pricing,
-                        item.quantity,
-                    )
+                # --------------------------------------------
+                # PRICE SNAPSHOT
+                # --------------------------------------------
+
+                snap = order_item_line_snapshot(
+                    pricing,
+                    item.quantity,
                 )
 
                 total += snap["total_price"]
+
+                # --------------------------------------------
+                # CREATE ORDER ITEM
+                # --------------------------------------------
 
                 db.add(
                     build_order_item(
@@ -1937,23 +2216,24 @@ async def update_order(
                     )
                 )
 
+            # ------------------------------------------------
+            # UPDATE TOTAL
+            # ------------------------------------------------
+
             order.total_amount = round(
                 total,
                 2,
             )
 
-        # ----------------------------------------------------
-        # COMMIT ORDER
-        # ----------------------------------------------------
+        # ====================================================
+        # FLUSH
+        # ====================================================
 
         await db.flush()
 
-        # ----------------------------------------------------
-        # IMPORTANT CRM FIX
-        #
-        # If order amount changed, recalculate
-        # customer CRM from all active orders.
-        # ----------------------------------------------------
+        # ====================================================
+        # CRM
+        # ====================================================
 
         customer = None
 
@@ -1972,31 +2252,26 @@ async def update_order(
                     branch_id=order.branch_id,
                 )
 
-                # Update history
-                history_result = (
-                    await db.execute(
-                        select(
-                            CustomerVisitHistory
-                        )
-                        .where(
-                            CustomerVisitHistory.order_id
-                            == order.id
-                        )
+                # ------------------------------------------------
+                # UPDATE CUSTOMER VISIT HISTORY
+                # ------------------------------------------------
+
+                history_result = await db.execute(
+                    select(CustomerVisitHistory)
+                    .where(
+                        CustomerVisitHistory.order_id
+                        == order.id
                     )
                 )
 
                 history = (
-                    history_result
-                    .scalar_one_or_none()
+                    history_result.scalar_one_or_none()
                 )
 
                 if history:
 
-                    history.total_amount = (
-                        float(
-                            order.total_amount
-                            or 0.0
-                        )
+                    history.total_amount = float(
+                        order.total_amount or 0.0
                     )
 
                     history.branch_id = (
@@ -2008,31 +2283,53 @@ async def update_order(
                         or datetime.utcnow()
                     )
 
+                    history.visit_type = (
+                        order.order_type.value
+                        if hasattr(
+                            order.order_type,
+                            "value",
+                        )
+                        else str(
+                            order.order_type
+                        )
+                    )
+
+        # ====================================================
+        # COMMIT
+        # ====================================================
+
         await db.commit()
+
+        # ====================================================
+        # REFRESH
+        # ====================================================
 
         await db.refresh(order)
 
         if customer:
             await db.refresh(customer)
 
-        # ----------------------------------------------------
+        # ====================================================
         # CACHE
-        # ----------------------------------------------------
+        # ====================================================
 
         await Cache.delete(
-            f"kitchen:branch:"
-            f"{order.branch_id}"
+            f"kitchen:branch:{order.branch_id}"
         )
 
-        # ----------------------------------------------------
-        # ITEMS FOR RESPONSE
-        # ----------------------------------------------------
+        # ====================================================
+        # LOAD ORDER ITEMS
+        # ====================================================
 
         items_result = await db.execute(
             select(OrderItem)
+            .options(
+                selectinload(
+                    OrderItem.item
+                )
+            )
             .where(
-                OrderItem.order_id
-                == order.id
+                OrderItem.order_id == order.id
             )
         )
 
@@ -2040,63 +2337,92 @@ async def update_order(
             items_result.scalars().all()
         )
 
-        return {
-            "id":
-                order.id,
+        # ====================================================
+        # TABLE NAME
+        # ====================================================
 
-            "client_id":
-                order.client_id,
+        table_name = None
 
-            "branch_id":
-                order.branch_id,
+        if order.table_id:
 
-            "table_id":
+            table = await db.get(
+                Table,
                 order.table_id,
+            )
 
-            "order_type":
-                order.order_type,
+            if table:
 
-            "customer_name":
-                order.customer_name,
+                table_name = table.name
 
-            "customer_phone":
-                order.customer_phone,
+                if table.floor:
 
-            "notes":
-                order.notes,
+                    table_name = (
+                        f"{table.name} "
+                        f"({table.floor})"
+                    )
 
-            "status":
-                order.status,
+        # ====================================================
+        # RESPONSE
+        # ====================================================
 
-            "total_amount":
-                order.total_amount,
+        return {
+            "id": order.id,
 
-            "created_at":
-                order.created_at,
+            "client_id": order.client_id,
+
+            "branch_id": order.branch_id,
+
+            "table_id": order.table_id,
+
+            "table_name": table_name,
+
+            "order_type": order.order_type,
+
+            "customer_name": order.customer_name,
+
+            "customer_phone": order.customer_phone,
+
+            "notes": order.notes,
+
+            "status": order.status,
+
+            "total_amount": float(
+                order.total_amount or 0.0
+            ),
+
+            "created_at": order.created_at,
 
             "items": [
                 {
-                    "id": i.id,
-                    "item_id": i.item_id,
-                    "quantity": i.quantity,
+                    "id": item.id,
+
+                    "item_id": item.item_id,
+
+                    "item_name": (
+                        item.item.name
+                        if item.item
+                        else None
+                    ),
+
+                    "quantity": item.quantity,
 
                     "price": getattr(
-                        i,
+                        item,
                         "price",
                         None,
                     ),
 
-                    "order_status":
-                        i.order_status,
+                    "order_status": (
+                        item.order_status
+                    ),
                 }
-                for i in order_items
+                for item in order_items
             ],
         }
 
     except HTTPException:
 
         await db.rollback()
-
         raise
 
     except SQLAlchemyError as e:

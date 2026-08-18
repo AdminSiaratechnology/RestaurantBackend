@@ -3,6 +3,8 @@ from fastapi import (
     HTTPException,
 )
 
+from sqlalchemy import select
+
 from app.db.config import SessionDep
 
 from app.accounts.payment.schema import (
@@ -13,6 +15,7 @@ from app.accounts.payment.schema import (
 from app.accounts.payment.service import (
     make_payment_service,
     apply_offer_service,
+    resolve_bill_customer,
 )
 
 from app.accounts.bill.model import Bill
@@ -28,13 +31,16 @@ from app.accounts.offer.helper import (
     calculate_final_amount,
 )
 
-from sqlalchemy import select
-
 
 router = APIRouter(
     prefix="/payment",
     tags=["Payment"],
 )
+
+
+# ============================================================
+# MAKE PAYMENT
+# ============================================================
 
 
 @router.post(
@@ -69,6 +75,11 @@ async def make_payment(
         )
 
 
+# ============================================================
+# APPLY OFFER
+# ============================================================
+
+
 @router.patch(
     "/apply-offer/{bill_id}",
 )
@@ -92,15 +103,18 @@ async def apply_offer(
 
     except Exception:
 
+        await db.rollback()
+
         raise HTTPException(
             status_code=500,
             detail="Failed to apply offer",
         )
 
 
-# =========================================================
+# ============================================================
 # WALLET PREVIEW
-# =========================================================
+# ============================================================
+
 
 @router.get(
     "/wallet-preview/{bill_id}",
@@ -111,9 +125,15 @@ async def wallet_preview(
     offer_id: int | None = None,
 ):
 
+    # ========================================================
+    # GET BILL
+    # ========================================================
+
     result = await db.execute(
         select(Bill)
-        .where(Bill.id == bill_id)
+        .where(
+            Bill.id == bill_id
+        )
     )
 
     bill = result.scalar_one_or_none()
@@ -125,27 +145,62 @@ async def wallet_preview(
             detail="Bill not found",
         )
 
-    if not bill.customer_id:
+    # ========================================================
+    # RESOLVE CUSTOMER
+    # ========================================================
+
+    customer_id = await resolve_bill_customer(
+        db,
+        bill,
+    )
+
+    # ========================================================
+    # ORIGINAL LEDGER AMOUNT
+    # ========================================================
+
+    original_amount = round(
+        float(bill.grand_total or 0),
+        2,
+    )
+
+    # ========================================================
+    # NO CUSTOMER
+    # ========================================================
+
+    if not customer_id:
 
         return {
             "bill_id": bill.id,
+
             "customer_id": None,
+
             "wallet_available": False,
+
             "wallet_balance": 0.0,
+
             "wallet_percent": 0.0,
+
             "max_wallet_discount": 0.0,
+
             "wallet_discount": 0.0,
-            "amount_after_offer": bill.grand_total,
-            "final_amount": bill.grand_total,
+
+            "original_amount": original_amount,
+
+            "offer_discount": 0.0,
+
+            "amount_after_offer": original_amount,
+
+            "final_amount": original_amount,
+
             "message": (
                 "CRM customer is not attached "
-                "to this bill"
+                "to this order/bill"
             ),
         }
 
-    # =====================================================
+    # ========================================================
     # OFFER
-    # =====================================================
+    # ========================================================
 
     offer_discount = 0.0
 
@@ -153,7 +208,9 @@ async def wallet_preview(
 
         result = await db.execute(
             select(Offer)
-            .where(Offer.id == offer_id)
+            .where(
+                Offer.id == offer_id
+            )
         )
 
         offer = result.scalar_one_or_none()
@@ -165,74 +222,109 @@ async def wallet_preview(
                 detail="Offer not found",
             )
 
-        offer_discount = validate_and_calculate_offer(
-            offer,
-            bill.grand_total,
+        offer_discount = (
+            validate_and_calculate_offer(
+                offer,
+                original_amount,
+            )
         )
 
-    # =====================================================
+        offer_discount = round(
+            float(offer_discount or 0),
+            2,
+        )
+
+    # ========================================================
     # AMOUNT AFTER OFFER
-    # =====================================================
+    # ========================================================
 
-    amount_after_offer = calculate_final_amount(
-        bill.grand_total,
-        offer_discount,
-    )
-
-    # =====================================================
-    # WALLET
-    # =====================================================
-
-    wallet_info = await calculate_wallet_discount(
-        db=db,
-        customer_id=bill.customer_id,
-        client_id=bill.client_id,
-        branch_id=bill.branch_id,
-        amount=amount_after_offer,
-    )
-
-    wallet_discount = wallet_info[
-        "wallet_discount"
-    ]
-
-    final_amount = round(
-        amount_after_offer - wallet_discount,
+    amount_after_offer = round(
+        calculate_final_amount(
+            original_amount,
+            offer_discount,
+        ),
         2,
     )
 
+    # ========================================================
+    # WALLET
+    # ========================================================
+
+    wallet_info = (
+        await calculate_wallet_discount(
+            db=db,
+            customer_id=customer_id,
+            client_id=bill.client_id,
+            branch_id=bill.branch_id,
+            amount=amount_after_offer,
+        )
+    )
+
+    wallet_discount = round(
+        wallet_info["wallet_discount"],
+        2,
+    )
+
+    # ========================================================
+    # FINAL PAYABLE
+    # ========================================================
+
+    final_amount = round(
+        amount_after_offer
+        - wallet_discount,
+        2,
+    )
+
+    if final_amount < 0:
+        final_amount = 0.0
+
+    # ========================================================
+    # RESPONSE
+    # ========================================================
+
     return {
+
         "bill_id": bill.id,
-        "customer_id": bill.customer_id,
+
+        "customer_id": customer_id,
 
         "wallet_available": (
-            wallet_discount > 0
+            wallet_info["wallet_available"]
         ),
 
-        "wallet_balance": wallet_info[
-            "wallet_balance"
-        ],
+        "wallet_balance": round(
+            wallet_info["wallet_balance"],
+            2,
+        ),
 
-        "wallet_percent": wallet_info[
-            "wallet_percent"
-        ],
+        "wallet_percent": round(
+            wallet_info["wallet_percent"],
+            2,
+        ),
 
-        "max_wallet_discount": wallet_info[
-            "max_wallet_discount"
-        ],
+        "max_wallet_discount": round(
+            wallet_info["max_wallet_discount"],
+            2,
+        ),
 
         "wallet_discount": wallet_discount,
 
-        "original_amount": bill.grand_total,
+        "original_amount": original_amount,
 
-        "offer_discount": offer_discount,
+        "offer_discount": round(
+            offer_discount,
+            2,
+        ),
 
-        "amount_after_offer": amount_after_offer,
+        "amount_after_offer": (
+            amount_after_offer
+        ),
 
         "final_amount": final_amount,
 
         "message": (
-            "Wallet discount available"
+            "Wallet contribution available"
             if wallet_discount > 0
-            else "No wallet discount available"
+            else "No wallet contribution available"
         ),
     }

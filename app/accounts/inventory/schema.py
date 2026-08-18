@@ -19,8 +19,12 @@ UNIT_MAPPING = {
 VALID_UNITS = list(UNIT_MAPPING.keys())
 
 
+
+
 class InventoryCreate(BaseModel):
+
     branch_id: int
+
     godown_id: Optional[int] = None
 
     name: str
@@ -28,20 +32,39 @@ class InventoryCreate(BaseModel):
     row_category: Optional[str] = "other"
 
     unit: str
+
     display_unit: Optional[str] = None
+
     conversion_factor: Optional[float] = None
 
     stock_qty: float
+
     reorder_level: float
+
     cost_per_unit: float
 
     vendor_name: Optional[str] = None
+
     vendor_phone: Optional[str] = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value):
+
+        value = value.strip()
+
+        if not value:
+            raise ValueError(
+                "Inventory item name is required"
+            )
+
+        return value
 
     @field_validator("unit")
     @classmethod
     def validate_unit(cls, value):
-        value = value.lower()
+
+        value = value.lower().strip()
 
         if value not in VALID_UNITS:
             raise ValueError(
@@ -49,6 +72,49 @@ class InventoryCreate(BaseModel):
             )
 
         return value
+
+    @field_validator("stock_qty", "reorder_level", "cost_per_unit")
+    @classmethod
+    def validate_positive_values(cls, value):
+
+        if value < 0:
+            raise ValueError(
+                "Value cannot be negative"
+            )
+
+        return value
+
+
+# class InventoryCreate(BaseModel):
+#     branch_id: int
+#     godown_id: Optional[int] = None
+
+#     name: str
+
+#     row_category: Optional[str] = "other"
+
+#     unit: str
+#     display_unit: Optional[str] = None
+#     conversion_factor: Optional[float] = None
+
+#     stock_qty: float
+#     reorder_level: float
+#     cost_per_unit: float
+
+#     vendor_name: Optional[str] = None
+#     vendor_phone: Optional[str] = None
+
+#     @field_validator("unit")
+#     @classmethod
+#     def validate_unit(cls, value):
+#         value = value.lower()
+
+#         if value not in VALID_UNITS:
+#             raise ValueError(
+#                 f"Unit must be one of {VALID_UNITS}"
+#             )
+
+#         return value
 
 class InventoryResponse(BaseModel):
     id: int
@@ -102,27 +168,85 @@ class GodownOut(BaseModel):
 
 
 
+# class StockUpdate(BaseModel):
+#     quantity: Optional[float] = None
+#     unit: Optional[str] = None
+#     operation: Optional[str] = "set"
+#     name: Optional[str] = None
+#     row_category: Optional[str] = None
+#     stock_qty: Optional[float] = None
+#     reorder_level: Optional[float] = None
+#     cost_per_unit: Optional[float] = None
+#     vendor_name: Optional[str] = None
+#     vendor_phone: Optional[str] = None
+#     godown_id: Optional[int] = None
+#     last_restocked: Optional[datetime] = None
+
+#     @field_validator("unit")
+#     @classmethod
+#     def validate_unit(cls, value):
+#         if value is None:
+#             return value
+
+#         value = value.lower()
+
+#         if value not in VALID_UNITS:
+#             raise ValueError(
+#                 f"Unit must be one of {VALID_UNITS}"
+#             )
+
+#         return value
+
+#     @field_validator("operation")
+#     @classmethod
+#     def validate_operation(cls, value):
+#         if value is None:
+#             return value
+
+#         value = value.lower()
+
+#         if value not in ["add", "subtract", "set"]:
+#             raise ValueError(
+#                 "operation must be add, subtract or set"
+#             )
+
+#         return value
+
+
 class StockUpdate(BaseModel):
+
     quantity: Optional[float] = None
+
     unit: Optional[str] = None
+
     operation: Optional[str] = "set"
+
     name: Optional[str] = None
+
     row_category: Optional[str] = None
+
     stock_qty: Optional[float] = None
+
     reorder_level: Optional[float] = None
+
     cost_per_unit: Optional[float] = None
+
     vendor_name: Optional[str] = None
+
     vendor_phone: Optional[str] = None
+
     godown_id: Optional[int] = None
+
     last_restocked: Optional[datetime] = None
 
     @field_validator("unit")
     @classmethod
     def validate_unit(cls, value):
+
         if value is None:
             return value
 
-        value = value.lower()
+        value = value.lower().strip()
 
         if value not in VALID_UNITS:
             raise ValueError(
@@ -134,16 +258,35 @@ class StockUpdate(BaseModel):
     @field_validator("operation")
     @classmethod
     def validate_operation(cls, value):
+
         if value is None:
             return value
 
-        value = value.lower()
+        value = value.lower().strip()
 
-        if value not in ["add", "subtract", "set"]:
+        if value not in {
+            "add",
+            "subtract",
+            "set"
+        }:
             raise ValueError(
                 "operation must be add, subtract or set"
             )
 
         return value
 
+    @field_validator(
+        "quantity",
+        "stock_qty",
+        "reorder_level",
+        "cost_per_unit"
+    )
+    @classmethod
+    def validate_non_negative(cls, value):
 
+        if value is not None and value < 0:
+            raise ValueError(
+                "Value cannot be negative"
+            )
+
+        return value

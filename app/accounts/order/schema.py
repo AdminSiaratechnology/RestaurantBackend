@@ -80,6 +80,7 @@ class OrderItemUpdate(BaseModel):
 class OrderUpdate(BaseModel):
     notes: str | None = None
     order_type: OrderType | None = None
+    table_id: int | None = None
     items: list[OrderItemUpdate] | None = None
 
 

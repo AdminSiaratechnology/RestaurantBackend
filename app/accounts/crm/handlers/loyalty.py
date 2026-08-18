@@ -61,6 +61,7 @@ class LoyaltyHandler(BaseCRMHandler):
         # Update account balances
         account.total_points_earned += points_earned
         account.current_points_balance += points_earned
+        customer.loyalty_points = account.current_points_balance
         await context.db.flush()
 
         # Insert transaction log
