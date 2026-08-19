@@ -1,7 +1,4 @@
-from fastapi import (
-    APIRouter,
-    HTTPException,
-)
+from fastapi import APIRouter, HTTPException
 
 from sqlalchemy import select
 
@@ -123,6 +120,7 @@ async def wallet_preview(
     bill_id: int,
     db: SessionDep,
     offer_id: int | None = None,
+    use_wallet: bool = False,
 ):
 
     # ========================================================
@@ -155,13 +153,16 @@ async def wallet_preview(
     )
 
     # ========================================================
-    # ORIGINAL LEDGER AMOUNT
+    # ORIGINAL BILL AMOUNT
     # ========================================================
 
     original_amount = round(
         float(bill.grand_total or 0),
         2,
     )
+
+    if original_amount < 0:
+        original_amount = 0.0
 
     # ========================================================
     # NO CUSTOMER
@@ -190,7 +191,13 @@ async def wallet_preview(
 
             "amount_after_offer": original_amount,
 
+            # Wallet is not selected.
             "final_amount": original_amount,
+
+            # No wallet available.
+            "wallet_final_amount": original_amount,
+
+            "use_wallet": False,
 
             "message": (
                 "CRM customer is not attached "
@@ -246,8 +253,20 @@ async def wallet_preview(
         2,
     )
 
+    if amount_after_offer < 0:
+        amount_after_offer = 0.0
+
     # ========================================================
-    # WALLET
+    # WALLET INFORMATION
+    # ========================================================
+    #
+    # IMPORTANT:
+    #
+    # This calculation DOES NOT debit wallet.
+    #
+    # It only tells us how much wallet contribution
+    # is available.
+    #
     # ========================================================
 
     wallet_info = (
@@ -260,23 +279,96 @@ async def wallet_preview(
         )
     )
 
-    wallet_discount = round(
-        wallet_info["wallet_discount"],
+    wallet_balance = round(
+        float(
+            wallet_info.get(
+                "wallet_balance",
+                0.0,
+            )
+        ),
         2,
     )
 
+    wallet_percent = round(
+        float(
+            wallet_info.get(
+                "wallet_percent",
+                0.0,
+            )
+        ),
+        2,
+    )
+
+    max_wallet_discount = round(
+        float(
+            wallet_info.get(
+                "max_wallet_discount",
+                0.0,
+            )
+        ),
+        2,
+    )
+
+    available_wallet_discount = round(
+        float(
+            wallet_info.get(
+                "wallet_discount",
+                0.0,
+            )
+        ),
+        2,
+    )
+
+    if available_wallet_discount < 0:
+        available_wallet_discount = 0.0
+
+    # Never allow wallet contribution
+    # above amount after offer.
+
+    if available_wallet_discount > amount_after_offer:
+        available_wallet_discount = amount_after_offer
+
     # ========================================================
-    # FINAL PAYABLE
+    # WALLET FINAL AMOUNT
+    # ========================================================
+    #
+    # This is only the hypothetical amount if wallet
+    # is selected.
+    #
+    # It DOES NOT debit wallet.
+    #
     # ========================================================
 
-    final_amount = round(
+    wallet_final_amount = round(
         amount_after_offer
-        - wallet_discount,
+        - available_wallet_discount,
         2,
     )
 
-    if final_amount < 0:
-        final_amount = 0.0
+    if wallet_final_amount < 0:
+        wallet_final_amount = 0.0
+
+    # ========================================================
+    # ACTUAL PREVIEW FINAL AMOUNT
+    # ========================================================
+    #
+    # If frontend has NOT selected wallet:
+    #
+    #     final_amount = amount_after_offer
+    #
+    # If frontend selected wallet:
+    #
+    #     final_amount = wallet_final_amount
+    #
+    # ========================================================
+
+    if use_wallet is True:
+
+        final_amount = wallet_final_amount
+
+    else:
+
+        final_amount = amount_after_offer
 
     # ========================================================
     # RESPONSE
@@ -289,25 +381,24 @@ async def wallet_preview(
         "customer_id": customer_id,
 
         "wallet_available": (
-            wallet_info["wallet_available"]
+            bool(
+                wallet_info.get(
+                    "wallet_available",
+                    False,
+                )
+            )
+            and available_wallet_discount > 0
         ),
 
-        "wallet_balance": round(
-            wallet_info["wallet_balance"],
-            2,
-        ),
+        "wallet_balance": wallet_balance,
 
-        "wallet_percent": round(
-            wallet_info["wallet_percent"],
-            2,
-        ),
+        "wallet_percent": wallet_percent,
 
-        "max_wallet_discount": round(
-            wallet_info["max_wallet_discount"],
-            2,
-        ),
+        "max_wallet_discount": max_wallet_discount,
 
-        "wallet_discount": wallet_discount,
+        # This is AVAILABLE wallet contribution.
+        # It is NOT deducted here.
+        "wallet_discount": available_wallet_discount,
 
         "original_amount": original_amount,
 
@@ -320,11 +411,24 @@ async def wallet_preview(
             amount_after_offer
         ),
 
+        # Actual amount based on current
+        # use_wallet selection.
         "final_amount": final_amount,
 
+        # Amount if wallet is selected.
+        "wallet_final_amount": (
+            wallet_final_amount
+        ),
+
+        "use_wallet": use_wallet,
+
         "message": (
-            "Wallet contribution available"
-            if wallet_discount > 0
-            else "No wallet contribution available"
+            "Wallet contribution selected"
+            if use_wallet and available_wallet_discount > 0
+            else (
+                "Wallet contribution available"
+                if available_wallet_discount > 0
+                else "No wallet contribution available"
+            )
         ),
     }

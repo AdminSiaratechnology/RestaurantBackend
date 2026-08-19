@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional, List
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 from app.accounts.payment.enum import PaymentMethod
 
@@ -12,7 +12,6 @@ from app.accounts.payment.enum import PaymentMethod
 
 
 class PaymentItem(BaseModel):
-
     payment_method: PaymentMethod
 
     payment_amount: float = Field(
@@ -44,17 +43,25 @@ class PaymentCreate(BaseModel):
     #
     # Wallet is NOT a payment method.
     #
-    # True means:
+    # False:
+    #     Bill
+    #       ↓
+    #     Offer
+    #       ↓
+    #     Cash/Card/UPI
     #
-    # Bill total
-    #     ↓
-    # Offer discount
-    #     ↓
-    # Wallet contribution
-    #     ↓
-    # Final payable
-    #     ↓
-    # Cash/Card/UPI
+    # True:
+    #     Bill
+    #       ↓
+    #     Offer
+    #       ↓
+    #     Wallet Contribution
+    #       ↓
+    #     Cash/Card/UPI
+    #
+    # IMPORTANT:
+    # Wallet is deducted ONLY during successful payment
+    # when this value is True.
     #
     # ========================================================
 
@@ -110,8 +117,12 @@ class PaymentOut(BaseModel):
 
     offer_discount: float = 0.0
 
-    # Actual wallet contribution
+    # Actual wallet contribution used during payment.
+    #
+    # This MUST remain 0 when use_wallet=False.
+    #
     wallet_discount: float = 0.0
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True
+    )

@@ -1,35 +1,4 @@
-"""
-app/accounts/crm/customer_history/service.py
-
-Customer Visit History + Customer Spend Statistics
-
-BUSINESS RULES
---------------
-
-1. total_spend
-   - Customer ka lifetime spend.
-   - Kabhi reset nahi hoga.
-   - Loyalty redemption ka total_spend par koi effect nahi.
-
-2. current_spend
-   - Last successful redemption ke baad ka spend.
-   - New successful bill par increase hoga.
-   - Successful redemption par 0 ho jayega.
-
-3. redeem_count
-   - Customer ke successful full redemptions ka count.
-   - Initial value = 0.
-   - Sirf tab +1 hoga jab current_spend > 0.
-   - Successful redemption ke baad current_spend = 0.
-
-4. CustomerVisitHistory.current_spend
-   - Visit ke time ka historical snapshot hai.
-   - Redemption ke baad old history rows modify nahi hongi.
-
-5. total_spend
-   - Redemption ke waqt kabhi subtract/reset nahi hoga.
-"""
-
+# app/accounts/crm/customer_history/service.py
 
 from datetime import datetime
 from typing import Optional
@@ -78,21 +47,25 @@ async def create_visit_history(
             or datetime.utcnow()
         ),
 
-        total_amount=float(
-            total_amount or 0
+        total_amount=max(
+            float(total_amount or 0),
+            0.0,
         ),
 
-        discount=float(
-            discount or 0
+        discount=max(
+            float(discount or 0),
+            0.0,
         ),
 
-        tax=float(
-            tax or 0
+        tax=max(
+            float(tax or 0),
+            0.0,
         ),
 
-        # Historical snapshot only.
-        current_spend=float(
-            current_spend or 0
+        # Historical snapshot.
+        current_spend=max(
+            float(current_spend or 0),
+            0.0,
         ),
 
         payment_method=payment_method,
@@ -134,7 +107,8 @@ async def get_customer_visits(
     stmt = (
         stmt
         .order_by(
-            CustomerVisitHistory.visit_date.desc()
+            CustomerVisitHistory.visit_date.desc(),
+            CustomerVisitHistory.id.desc(),
         )
         .offset(offset)
         .limit(limit)
@@ -146,7 +120,7 @@ async def get_customer_visits(
 
 
 # ==========================================================
-# VISIT STATISTICS
+# GET CUSTOMER VISIT STATS
 # ==========================================================
 
 async def get_visit_stats(
@@ -154,27 +128,31 @@ async def get_visit_stats(
     customer_id: int,
 ) -> dict:
     """
-    Return customer visit statistics.
+    Customer statistics.
 
     total_spend:
         Customer.total_spend
+        Lifetime spend. NEVER reset by redemption.
 
     current_spend:
         Customer.current_spend
+        Accumulated spend since last successful redemption.
 
     redeem_count:
         Customer.redeem_count
+        Successful full redemption count.
 
     IMPORTANT:
-    current_spend is NEVER calculated by summing
-    visit-history snapshots.
+        current_spend is NOT calculated from history rows.
+
+        History current_spend is only a historical snapshot.
     """
 
     # ======================================================
     # HISTORY STATISTICS
     # ======================================================
 
-    stmt = select(
+    history_stmt = select(
         func.count(
             CustomerVisitHistory.id
         ),
@@ -208,7 +186,9 @@ async def get_visit_stats(
         == customer_id
     )
 
-    result = await db.execute(stmt)
+    history_result = await db.execute(
+        history_stmt
+    )
 
     (
         total_visits,
@@ -216,7 +196,7 @@ async def get_visit_stats(
         average_spend,
         highest_bill,
         last_visit,
-    ) = result.one()
+    ) = history_result.one()
 
     # ======================================================
     # CUSTOMER LIVE VALUES
@@ -277,6 +257,8 @@ async def get_visit_stats(
             2,
         ),
 
+        "redeem_count": redeem_count,
+
         "average_spend": round(
             float(average_spend or 0),
             2,
@@ -288,13 +270,11 @@ async def get_visit_stats(
         ),
 
         "last_visit": last_visit,
-
-        "redeem_count": redeem_count,
     }
 
 
 # ==========================================================
-# UPDATE CUSTOMER STATISTICS AFTER BILL
+# UPDATE CUSTOMER STATISTICS AFTER SUCCESSFUL BILL
 # ==========================================================
 
 async def update_customer_stats(
@@ -303,9 +283,9 @@ async def update_customer_stats(
     visit: CustomerVisitHistory,
 ):
     """
-    Update customer statistics after successful bill.
+    Called ONLY after a successful bill.
 
-    BILL LOGIC:
+    Rules:
 
         total_spend
             += bill amount
@@ -313,22 +293,47 @@ async def update_customer_stats(
         current_spend
             += bill amount
 
-    redeem_count is NOT changed here.
+        redeem_count
+            unchanged
 
-    redeem_count changes ONLY during
-    successful redemption.
+        history.current_spend
+            = post-bill customer.current_spend
+
+    Example:
+
+        Before bill:
+
+            current_spend = 2360
+
+        Bill:
+
+            amount = 2832
+
+        After:
+
+            current_spend = 5192
+            total_spend += 2832
+
+        History row:
+
+            current_spend = 5192
     """
+
+    # ======================================================
+    # BILL AMOUNT
+    # ======================================================
 
     amount = float(
         visit.total_amount or 0
     )
 
-    # ======================================================
-    # SAFETY
-    # ======================================================
-
     if amount < 0:
         amount = 0.0
+
+    amount = round(
+        amount,
+        2,
+    )
 
     # ======================================================
     # TOTAL ORDERS
@@ -337,7 +342,8 @@ async def update_customer_stats(
     customer.total_orders = (
         int(
             customer.total_orders or 0
-        ) + 1
+        )
+        + 1
     )
 
     # ======================================================
@@ -347,17 +353,20 @@ async def update_customer_stats(
     customer.total_visits = (
         int(
             customer.total_visits or 0
-        ) + 1
+        )
+        + 1
     )
 
     # ======================================================
     # LIFETIME TOTAL SPEND
     # ======================================================
 
+    old_total_spend = float(
+        customer.total_spend or 0
+    )
+
     customer.total_spend = round(
-        float(
-            customer.total_spend or 0
-        ) + amount,
+        old_total_spend + amount,
         2,
     )
 
@@ -365,10 +374,12 @@ async def update_customer_stats(
     # CURRENT SPEND
     # ======================================================
 
+    old_current_spend = float(
+        customer.current_spend or 0
+    )
+
     customer.current_spend = round(
-        float(
-            customer.current_spend or 0
-        ) + amount,
+        old_current_spend + amount,
         2,
     )
 
@@ -418,17 +429,23 @@ async def update_customer_stats(
     # HISTORY SNAPSHOT
     # ======================================================
     #
-    # IMPORTANT:
+    # VERY IMPORTANT
     #
-    # Save current_spend AFTER this bill.
+    # This is NOT a live reference.
     #
-    # This is a historical value.
+    # We copy the current value into the history row.
     #
-    # If later:
+    # Example:
+    #
+    # customer.current_spend = 5192
+    #
+    # visit.current_spend = 5192
+    #
+    # Later redemption:
     #
     # customer.current_spend = 0
     #
-    # this history row remains unchanged.
+    # This history row MUST remain 5192.
     #
 
     visit.current_spend = round(
@@ -437,6 +454,17 @@ async def update_customer_stats(
         ),
         2,
     )
+
+    # ======================================================
+    # EXPLICITLY MARK BOTH OBJECTS DIRTY
+    # ======================================================
+
+    db.add(customer)
+    db.add(visit)
+
+    # ======================================================
+    # FLUSH
+    # ======================================================
 
     await db.flush()
 
@@ -454,42 +482,20 @@ async def redeem_current_spend(
     """
     FULL CURRENT SPEND REDEMPTION.
 
-    BUSINESS RULE:
+    Rules:
 
-    If current_spend > 0:
+        current_spend > 0
+            redeem_count += 1
+            current_spend = 0
 
-        redeem_count += 1
-        current_spend = 0
+        current_spend <= 0
+            reject redemption
 
-    If current_spend <= 0:
+        total_spend
+            NEVER changes
 
-        redemption is rejected
-        redeem_count remains unchanged
-
-    total_spend is NEVER changed.
-
-    Example:
-
-        current_spend = 5000
-        redeem_count = 0
-
-        Redeem
-
-        current_spend = 0
-        redeem_count = 1
-        total_spend = unchanged
-
-    Next:
-
-        bill = 2000
-
-        current_spend = 2000
-        redeem_count = 1
-
-    Redeem:
-
-        current_spend = 0
-        redeem_count = 2
+        CustomerVisitHistory
+            NEVER changes
     """
 
     # ======================================================
@@ -501,12 +507,8 @@ async def redeem_current_spend(
     )
 
     # ======================================================
-    # CONDITION
+    # VALIDATION
     # ======================================================
-    #
-    # Count MUST increase only when
-    # current_spend actually contains value.
-    #
 
     if current_spend <= 0:
 
@@ -515,33 +517,19 @@ async def redeem_current_spend(
         )
 
     # ======================================================
-    # STORE PREVIOUS COUNT
-    # ======================================================
-    #
-    # This guarantees that every successful
-    # redemption increments the previous value by 1.
-    #
-
-    previous_redeem_count = int(
-        customer.redeem_count or 0
-    )
-
-    # ======================================================
-    # INCREMENT REDEEM COUNT
+    # INCREMENT REDEMPTION COUNT
     # ======================================================
 
     customer.redeem_count = (
-        previous_redeem_count + 1
+        int(
+            customer.redeem_count or 0
+        )
+        + 1
     )
 
     # ======================================================
     # RESET CURRENT SPEND
     # ======================================================
-    #
-    # After successful redeem:
-    #
-    # current_spend -> 0
-    #
 
     customer.current_spend = 0.0
 
@@ -549,12 +537,16 @@ async def redeem_current_spend(
     # IMPORTANT
     # ======================================================
     #
-    # DO NOT CHANGE:
+    # DO NOT TOUCH:
     #
     # customer.total_spend
     #
-    # Lifetime spend must remain untouched.
+    # DO NOT TOUCH:
     #
+    # CustomerVisitHistory
+    #
+
+    db.add(customer)
 
     await db.flush()
 
@@ -562,7 +554,7 @@ async def redeem_current_spend(
 
 
 # ==========================================================
-# RESET CURRENT SPEND AFTER FULL REDEMPTION
+# MANUAL RESET
 # ==========================================================
 
 async def reset_current_spend_after_full_redemption(
@@ -570,20 +562,18 @@ async def reset_current_spend_after_full_redemption(
     customer: Customer,
 ):
     """
-    Backward-compatible helper.
+    Backward-compatible manual reset.
 
-    IMPORTANT:
-    Normal redemption should use
-    redeem_current_spend().
+    This does NOT increment redeem_count.
 
-    This function only resets current_spend.
-    It does NOT increment redeem_count.
+    Normal loyalty redemption MUST use:
 
-    Use this only when you intentionally need
-    a manual reset outside the redemption flow.
+        redeem_current_spend()
     """
 
     customer.current_spend = 0.0
+
+    db.add(customer)
 
     await db.flush()
 

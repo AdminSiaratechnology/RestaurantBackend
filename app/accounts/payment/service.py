@@ -69,9 +69,7 @@ async def resolve_bill_customer(
     If Bill.customer_id is missing,
     fallback to Order.customer_id.
 
-    This fixes old bills where the customer
-    was attached to the order but not copied
-    into the bill.
+    The bill is synchronized with the resolved customer.
     """
 
     if bill.customer_id:
@@ -90,8 +88,6 @@ async def resolve_bill_customer(
     customer_id = result.scalar_one_or_none()
 
     if customer_id:
-        # Keep bill and order/customer relationship
-        # synchronized for future operations.
         bill.customer_id = customer_id
 
     return customer_id
@@ -141,61 +137,80 @@ async def apply_offer_service(
         bill_id,
     )
 
+    original_amount = round(
+        float(bill.grand_total or 0),
+        2,
+    )
+
+    # ========================================================
+    # NO OFFER
+    # ========================================================
+
     if not offer_id:
 
         return {
             "bill_id": bill.id,
+
             "offer_id": None,
-            "original_amount": round(
-                bill.grand_total,
-                2,
-            ),
+
+            "original_amount": original_amount,
+
             "offer_discount": 0.0,
-            "final_amount": round(
-                bill.grand_total,
-                2,
-            ),
-            "due_amount": round(
-                bill.grand_total,
-                2,
-            ),
+
+            "final_amount": original_amount,
+
+            "due_amount": original_amount,
+
             "message": "No offer applied",
         }
+
+    # ========================================================
+    # GET OFFER
+    # ========================================================
 
     offer = await get_offer_or_404(
         db,
         offer_id,
     )
 
+    # ========================================================
+    # CALCULATE OFFER
+    # ========================================================
+
     discount = validate_and_calculate_offer(
         offer,
-        bill.grand_total,
+        original_amount,
     )
 
-    final_amount = calculate_final_amount(
-        bill.grand_total,
-        discount,
+    discount = round(
+        float(discount or 0),
+        2,
     )
+
+    final_amount = round(
+        calculate_final_amount(
+            original_amount,
+            discount,
+        ),
+        2,
+    )
+
+    if final_amount < 0:
+        final_amount = 0.0
 
     return {
         "bill_id": bill.id,
+
         "offer_id": offer.id,
-        "original_amount": round(
-            bill.grand_total,
-            2,
-        ),
-        "offer_discount": round(
-            discount,
-            2,
-        ),
-        "final_amount": round(
-            final_amount,
-            2,
-        ),
-        "due_amount": round(
-            final_amount,
-            2,
-        ),
+
+        "original_amount": original_amount,
+
+        "offer_discount": discount,
+
+        "final_amount": final_amount,
+
+        "due_amount": final_amount,
+
         "message": "Offer applied successfully",
     }
 
@@ -270,7 +285,7 @@ async def make_payment_service(
         )
 
     # ========================================================
-    # ORIGINAL LEDGER AMOUNT
+    # ORIGINAL BILL AMOUNT
     # ========================================================
 
     original_amount = round(
@@ -326,6 +341,22 @@ async def make_payment_service(
     # ========================================================
     # WALLET
     # ========================================================
+    #
+    # VERY IMPORTANT:
+    #
+    # Wallet is NEVER automatically applied.
+    #
+    # use_wallet=False:
+    #
+    #     wallet_discount = 0
+    #     final_amount = amount_after_offer
+    #
+    # use_wallet=True:
+    #
+    #     calculate wallet contribution
+    #     final_amount = amount_after_offer - wallet
+    #
+    # ========================================================
 
     wallet_discount = 0.0
 
@@ -337,7 +368,11 @@ async def make_payment_service(
         "wallet_discount": 0.0,
     }
 
-    if data.use_wallet:
+    # ========================================================
+    # ONLY CALCULATE WALLET WHEN USER SELECTED IT
+    # ========================================================
+
+    if data.use_wallet is True:
 
         # ----------------------------------------------------
         # CUSTOMER REQUIRED
@@ -349,14 +384,12 @@ async def make_payment_service(
                 status_code=400,
                 detail=(
                     "CRM customer is required "
-                    "to use wallet. "
-                    "Please attach a registered "
-                    "CRM customer to this order."
+                    "to use wallet."
                 ),
             )
 
         # ----------------------------------------------------
-        # CALCULATE WALLET
+        # CALCULATE WALLET CONTRIBUTION
         # ----------------------------------------------------
 
         wallet_info = (
@@ -371,17 +404,40 @@ async def make_payment_service(
         )
 
         wallet_discount = round(
-            wallet_info["wallet_discount"],
+            float(
+                wallet_info.get(
+                    "wallet_discount",
+                    0.0,
+                )
+            ),
             2,
         )
+
+        if wallet_discount < 0:
+            wallet_discount = 0.0
+
+        # Never allow wallet contribution
+        # to exceed payable amount.
+
+        if wallet_discount > amount_after_offer:
+            wallet_discount = amount_after_offer
 
     # ========================================================
     # FINAL PAYABLE
     # ========================================================
+    #
+    # If wallet is NOT selected:
+    #
+    #     final_amount = amount_after_offer
+    #
+    # If wallet IS selected:
+    #
+    #     final_amount = amount_after_offer - wallet_discount
+    #
+    # ========================================================
 
     final_amount = round(
-        amount_after_offer
-        - wallet_discount,
+        amount_after_offer - wallet_discount,
         2,
     )
 
@@ -410,7 +466,8 @@ async def make_payment_service(
             status_code=400,
             detail=(
                 f"Insufficient payment amount. "
-                f"Final payable after offer and wallet "
+                f"Final payable after offer"
+                f"{' and wallet' if data.use_wallet else ''} "
                 f"is ₹{final_amount:.2f}. "
                 f"Received ₹{total_received:.2f}."
             ),
@@ -424,6 +481,9 @@ async def make_payment_service(
         total_received - final_amount,
         2,
     )
+
+    if change_amount < 0:
+        change_amount = 0.0
 
     # ========================================================
     # PAYMENT METHOD
@@ -470,19 +530,18 @@ async def make_payment_service(
 
         branch_id=bill.branch_id,
 
-        # IMPORTANT:
-        # Wallet is NEVER payment_method.
+        # Wallet is NEVER a payment method.
         payment_method=payment_method,
 
         payment_breakdown=payment_breakdown,
 
-        # Original restaurant ledger amount
+        # Original bill amount.
         bill_amount=original_amount,
 
-        # Actual cash/card/UPI received
+        # Actual cash/card/UPI/etc received.
         receive_amount=total_received,
 
-        # Final payable after offer + wallet
+        # Actual final payable after selected discounts.
         paid_amount=final_amount,
 
         change_amount=change_amount,
@@ -500,7 +559,8 @@ async def make_payment_service(
             2,
         ),
 
-        # Wallet contribution only
+        # This remains ZERO unless
+        # user explicitly selected wallet.
         wallet_discount=round(
             wallet_discount,
             2,
@@ -514,8 +574,18 @@ async def make_payment_service(
         # ====================================================
         # WALLET DEBIT
         # ====================================================
+        #
+        # THIS IS THE ONLY PLACE WHERE WALLET
+        # IS ACTUALLY DEBITED.
+        #
+        # Preview NEVER debits wallet.
+        #
+        # ====================================================
 
-        if wallet_discount > 0:
+        if (
+            data.use_wallet is True
+            and wallet_discount > 0
+        ):
 
             if not customer_id:
 
@@ -562,7 +632,7 @@ async def make_payment_service(
 
         # ====================================================
         # UPDATE BILL CUSTOMER
-        # ====================================================
+        # ========================================================
 
         if customer_id:
 
@@ -589,6 +659,9 @@ async def make_payment_service(
             2,
         )
 
+        # IMPORTANT:
+        # This is zero when wallet was not selected.
+
         bill.wallet_discount = round(
             wallet_discount,
             2,
@@ -609,7 +682,7 @@ async def make_payment_service(
 
         # ====================================================
         # CACHE
-        # ====================================================
+        # ========================================================
 
         await Cache.delete_pattern(
             f"dashboard:*:branch:{bill.branch_id}"
@@ -622,7 +695,9 @@ async def make_payment_service(
         return payment
 
     except HTTPException:
+
         await db.rollback()
+
         raise
 
     except SQLAlchemyError as e:

@@ -1,9 +1,4 @@
-"""
-app/accounts/crm/customer_history/checkout_service.py
-
-Single entrypoint for customer identification and visit
-history creation during bill completion.
-"""
+# app/accounts/crm/customer_history/checkout_service.py
 
 import logging
 from typing import Optional
@@ -32,42 +27,36 @@ async def handle_customer_and_visit(
     client_id: int,
     branch_id: int,
     branch_name: str,
-
     order_id: Optional[int] = None,
     bill_id: Optional[int] = None,
-
     total_amount: float = 0,
     discount: float = 0,
     tax: float = 0,
-
     payment_method: Optional[str] = None,
-
     table_name: Optional[str] = None,
     visit_type: Optional[str] = None,
-
     customer_name: Optional[str] = None,
     customer_phone: Optional[str] = None,
     customer_email: Optional[str] = None,
 ):
     """
-    Resolve customer, create visit history
-    and update statistics.
+    Resolve customer, create visit history,
+    and update customer statistics.
 
-    Spending rules:
+    BUSINESS RULES:
 
-    total_spend:
-        Lifetime spend.
-        NEVER reset.
+        total_spend:
+            Lifetime spend.
+            NEVER reset.
 
-    current_spend:
-        Spend accumulated since last
-        successful loyalty redemption.
+        current_spend:
+            Accumulated spend after last redemption.
 
-    redeem_count:
-        Number of successful full redemptions.
+        redeem_count:
+            Successful full redemption count.
 
-    Redemption:
-        Handled separately by loyalty redemption service.
+        visit.current_spend:
+            Historical post-bill snapshot.
     """
 
     logger.info(
@@ -122,10 +111,10 @@ async def handle_customer_and_visit(
     # CREATE VISIT
     # ======================================================
     #
-    # Initial current_spend snapshot = 0.
+    # Temporary value.
     #
-    # update_customer_stats() will replace it
-    # with the actual post-bill current_spend.
+    # update_customer_stats() immediately replaces
+    # this with the POST-BILL current_spend.
     #
 
     visit = await create_visit_history(
@@ -134,18 +123,23 @@ async def handle_customer_and_visit(
         customer_id=customer.id,
 
         client_id=client_id,
+
         branch_id=branch_id,
 
         order_id=order_id,
+
         bill_id=bill_id,
 
         total_amount=total_amount,
+
         discount=discount,
+
         tax=tax,
 
         payment_method=payment_method,
 
         table_name=table_name,
+
         visit_type=visit_type,
 
         current_spend=0.0,
@@ -164,11 +158,24 @@ async def handle_customer_and_visit(
     logger.info(
         "[CheckoutService] Customer #%s statistics updated. "
         "Total Spend=₹%.2f, Current Spend=₹%.2f, "
-        "Redeem Count=%s",
+        "Redeem Count=%s, Visit Snapshot=₹%.2f",
         customer.id,
-        float(customer.total_spend or 0),
-        float(customer.current_spend or 0),
-        int(customer.redeem_count or 0),
+
+        float(
+            customer.total_spend or 0
+        ),
+
+        float(
+            customer.current_spend or 0
+        ),
+
+        int(
+            customer.redeem_count or 0
+        ),
+
+        float(
+            visit.current_spend or 0
+        ),
     )
 
     return customer
