@@ -44,7 +44,7 @@ async def get_items_service(
     # =====================================================
 
     if role == "staff":
-        final_branch_id = user.selected_branch_id
+        final_branch_id = getattr(user, "selected_branch_id", None) or getattr(user, "branch_id", None)
 
         if not final_branch_id:
             raise HTTPException(
@@ -52,14 +52,14 @@ async def get_items_service(
                 detail="Staff branch not assigned"
             )
 
-    elif role == "client":
-        if not branch_id:
+    elif role in ("client", "partner", "super_admin"):
+        final_branch_id = branch_id or getattr(user, "branch_id", None)
+
+        if not final_branch_id:
             raise HTTPException(
                 status_code=400,
                 detail="branch_id is required"
             )
-
-        final_branch_id = branch_id
 
     else:
         raise HTTPException(
@@ -97,7 +97,7 @@ async def get_items_service(
 
     cached_data = await Cache.get(cache_key)
 
-    if cached_data:
+    if cached_data is not None:
         return cached_data
 
     # =====================================================
@@ -106,18 +106,20 @@ async def get_items_service(
 
     query = (
         select(Item)
-        .outerjoin(
+        .join(
             Pricing,
             (Pricing.item_id == Item.id)
             & (Pricing.branch_id == final_branch_id)
-            & (Pricing.is_active == True)
+            & (Pricing.is_active.is_(True))
         )
         .options(
             selectinload(Item.pricings)
         )
         .where(
-            Item.branch_id == final_branch_id
+            Item.branch_id == final_branch_id,
+            Item.is_active.is_(True),
         )
+        .distinct()
     )
 
     # =====================================================
@@ -310,8 +312,7 @@ async def create_item_service(
         .where(Item.id == item.id)
     )
 
-    await Cache.delete_pattern(f"products:branch:{branch_id}:*")
-    await Cache.delete(f"menu:branch:{branch_id}")
+    await Cache.clear_menu_cache(branch_id, client.id)
 
     return result.scalar_one()
 
@@ -359,9 +360,6 @@ async def update_item_service(
                 400,
                 "Item already exists in this branch"
             )
-
-        # if result.scalar_one_or_none():
-        #     raise HTTPException(400, "Duplicate name")
 
     item_data = payload.model_dump(
         exclude_unset=True,
@@ -412,8 +410,7 @@ async def update_item_service(
         .where(Item.id == item.id)
     )
 
-    await Cache.delete_pattern(f"products:branch:{item.branch_id}:*")
-    await Cache.delete(f"menu:branch:{item.branch_id}")
+    await Cache.clear_menu_cache(item.branch_id, item.client_id)
 
     return result.scalar_one()
 
@@ -435,12 +432,12 @@ async def delete_item_service(
     )
 
     branch_id = item.branch_id
+    client_id = item.client_id
 
     await db.delete(item)
     await db.commit()
 
-    await Cache.delete_pattern(f"products:branch:{branch_id}:*")
-    await Cache.delete(f"menu:branch:{branch_id}")
+    await Cache.clear_menu_cache(branch_id, client_id)
 
     return {"message": "Item deleted"}
 
@@ -550,13 +547,7 @@ async def upload_image_service(
     # CACHE INVALIDATION
     # --------------------------------------------------------
 
-    await Cache.delete_pattern(
-        f"products:branch:{item.branch_id}:*"
-    )
-
-    await Cache.delete(
-        f"menu:branch:{item.branch_id}"
-    )
+    await Cache.clear_menu_cache(item.branch_id, item.client_id)
 
     return {
         "message": "Image uploaded successfully",
@@ -692,13 +683,7 @@ async def update_image_service(
     # CACHE INVALIDATION
     # --------------------------------------------------------
 
-    await Cache.delete_pattern(
-        f"products:branch:{item.branch_id}:*"
-    )
-
-    await Cache.delete(
-        f"menu:branch:{item.branch_id}"
-    )
+    await Cache.clear_menu_cache(item.branch_id, item.client_id)
 
     return {
         "message": "Image updated successfully",

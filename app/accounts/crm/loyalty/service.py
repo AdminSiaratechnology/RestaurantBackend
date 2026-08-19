@@ -232,12 +232,14 @@ async def recalculate_customer_crm(
 async def get_loyalty_account(
     db,
     customer_id: int,
+    lock: bool = False,
 ) -> CustomerLoyaltyAccount | None:
-    result = await db.execute(
-        select(CustomerLoyaltyAccount).where(
-            CustomerLoyaltyAccount.customer_id == customer_id
-        )
+    stmt = select(CustomerLoyaltyAccount).where(
+        CustomerLoyaltyAccount.customer_id == customer_id
     )
+    if lock:
+        stmt = stmt.with_for_update()
+    result = await db.execute(stmt)
     account = result.scalar_one_or_none()
 
     if not account:

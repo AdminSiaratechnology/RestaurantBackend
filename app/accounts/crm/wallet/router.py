@@ -37,20 +37,34 @@ router = APIRouter(
 )
 async def get_account(
     customer_id: int,
-    client_id: int,
     db: SessionDep,
+    client_id: int | None = None,
 ):
+    customer = await service.get_customer(db, customer_id)
+    if not customer:
+        raise HTTPException(
+            status_code=404,
+            detail="Customer not found",
+        )
+
+    target_client_id = client_id or customer.client_id
+    if not target_client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Customer is not associated with a client",
+        )
+
     account = await service.get_wallet_account(
         db,
         customer_id=customer_id,
-        client_id=client_id,
+        client_id=target_client_id,
     )
 
     if account is None:
         account = await service.get_or_create_wallet_account(
             db,
             customer_id=customer_id,
-            client_id=client_id,
+            client_id=target_client_id,
         )
 
         await db.commit()

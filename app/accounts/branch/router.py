@@ -24,6 +24,11 @@ from app.accounts.deps import (
 )
 
 
+from app.accounts.crm.loyalty.conversion_rule.service import (
+    get_or_create_loyalty_conversion_rule,
+)
+
+
 router = APIRouter(
     prefix="/branch",
     tags=["Branch"],
@@ -102,7 +107,7 @@ async def create_branch(
     await db.flush()
 
     # --------------------------------------------------------
-    # Generate branch code
+    # Generate branch code & Default Loyalty Conversion Rule
     # Example: BR001
     # --------------------------------------------------------
 
@@ -111,6 +116,13 @@ async def create_branch(
     await db.commit()
 
     await db.refresh(branch)
+
+    # Automatically create default loyalty conversion rule (10 pts = ₹5) for new branch
+    await get_or_create_loyalty_conversion_rule(
+        db,
+        client_id=branch.client_id,
+        branch_id=branch.id,
+    )
 
     return branch
 

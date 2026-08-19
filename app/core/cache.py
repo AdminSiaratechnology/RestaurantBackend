@@ -120,3 +120,18 @@ class Cache:
             logger.debug(f"CACHE EXPIRE | key={key} | ttl={seconds}s")
         except Exception as e:
             logger.error(f"Redis EXPIRE error | key={key} | error={e}")
+
+    @staticmethod
+    async def clear_menu_cache(branch_id: int, client_id: Optional[int] = None) -> None:
+        """
+        Invalidate all menu and product cache keys for a specific branch.
+        """
+        try:
+            await Cache.delete_pattern(f"products:branch:{branch_id}:*")
+            await Cache.delete_pattern(f"menu:branch:{branch_id}*")
+            await Cache.delete_pattern(f"menu:client:*:branch:{branch_id}*")
+            if client_id:
+                await Cache.delete_pattern(f"menu:client:{client_id}:branch:{branch_id}*")
+            logger.debug(f"CACHE CLEAR_MENU_CACHE | branch_id={branch_id} | client_id={client_id}")
+        except Exception as e:
+            logger.error(f"Redis CLEAR_MENU_CACHE error | branch_id={branch_id} | error={e}")

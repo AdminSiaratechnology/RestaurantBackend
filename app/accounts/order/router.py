@@ -556,7 +556,7 @@ async def get_menu(
         if role == UserRole.STAFF:
 
             client_id = user.client_id
-            branch_id = user.branch_id
+            branch_id = getattr(user, "selected_branch_id", None) or user.branch_id
 
         else:
 
@@ -587,11 +587,17 @@ async def get_menu(
             cache_key
         )
 
-        if cached_menu:
+        if cached_menu is not None:
             return cached_menu
 
         result = await db.execute(
             select(Item)
+            .join(
+                Pricing,
+                (Pricing.item_id == Item.id)
+                & (Pricing.branch_id == branch_id)
+                & (Pricing.is_active.is_(True))
+            )
             .options(
                 selectinload(Item.category),
                 selectinload(Item.pricings),
@@ -601,9 +607,11 @@ async def get_menu(
                 Item.branch_id == branch_id,
                 Item.is_active.is_(True),
             )
+            .distinct()
+            .order_by(Item.id.asc())
         )
 
-        items = result.scalars().all()
+        items = result.scalars().unique().all()
 
         menu: dict[str, list] = {}
 
