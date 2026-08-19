@@ -1,37 +1,46 @@
 """
 app/accounts/uploads/service.py
+
 Generic Bulk Upload Framework — Production Ready
 """
 
 from __future__ import annotations
-from app.accounts.order.model import Order, OrderItem
-from app.accounts.payment.model import Payment
-from app.accounts.bill.enum import PaymentStatus
+
 import io
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
-from app.accounts.item.enum import FoodType
+
 import pandas as pd
-from app.accounts.bill.model import Bill
+
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.accounts.item.model import Item
+from app.accounts.bill.enum import PaymentStatus
+from app.accounts.bill.model import Bill
+from app.accounts.branch.model import Branch
+from app.accounts.category.model import Category
 from app.accounts.ingredient.model import ItemIngredient
 from app.accounts.inventory.model import Godown, InventoryItem
-from app.accounts.category.model import Category
+from app.accounts.item.enum import FoodType
+from app.accounts.item.model import Item
+from app.accounts.order.model import Order, OrderItem
+from app.accounts.payment.model import Payment
 from app.accounts.pricing.model import Pricing
-from app.accounts.branch.model import Branch
 
 
-# ---------------------------------------------------------------------------
-# Template & Config Definitions
-# ---------------------------------------------------------------------------
+# ============================================================================
+# TEMPLATE & CONFIG DEFINITIONS
+# ============================================================================
 
 TEMPLATES: dict[str, dict[str, list[dict]]] = {
+
+    # ------------------------------------------------------------------------
+    # MENU
+    # ------------------------------------------------------------------------
     "menu": {
         "Menu_Items": [
             {
@@ -42,6 +51,7 @@ TEMPLATES: dict[str, dict[str, list[dict]]] = {
                 "Active": True,
             }
         ],
+
         "Pricing": [
             {
                 "Menu Item": "Veg Burger",
@@ -56,6 +66,7 @@ TEMPLATES: dict[str, dict[str, list[dict]]] = {
                 "Active": True,
             }
         ],
+
         "BOM": [
             {
                 "Menu Item": "Veg Burger",
@@ -71,8 +82,26 @@ TEMPLATES: dict[str, dict[str, list[dict]]] = {
                 "Godown": "Main Store",
                 "Quantity": 1,
             },
+            {
+                "Menu Item": "Veg Burger",
+                "Branch Code": "BR001",
+                "Inventory Item": "Mayonnaise",
+                "Godown": "Main Store",
+                "Quantity": 20,
+            },
+            {
+                "Menu Item": "Veg Burger",
+                "Branch Code": "BR001",
+                "Inventory Item": "Lettuce",
+                "Godown": "Main Store",
+                "Quantity": 15,
+            },
         ],
     },
+
+    # ------------------------------------------------------------------------
+    # INVENTORY
+    # ------------------------------------------------------------------------
     "inventory": {
         "Inventory_Items": [
             {
@@ -92,6 +121,10 @@ TEMPLATES: dict[str, dict[str, list[dict]]] = {
             }
         ]
     },
+
+    # ------------------------------------------------------------------------
+    # CATEGORY
+    # ------------------------------------------------------------------------
     "category": {
         "Categories": [
             {
@@ -101,12 +134,69 @@ TEMPLATES: dict[str, dict[str, list[dict]]] = {
             }
         ]
     },
+
+    # ------------------------------------------------------------------------
+    # BILL
+    # ------------------------------------------------------------------------
+    "bill": {
+        "Bills": [
+            {
+                "Invoice No": "INV-2025-001",
+                "Branch Code": "BR001",
+                "Order Type": "dine_in",
+                "Customer Name": "John Doe",
+                "Customer Phone": "9876543210",
+                "Payment Status": "paid",
+                "Payment Method": "cash",
+                "Subtotal": 240.0,
+                "CGST %": 2.5,
+                "CGST Amount": 6.0,
+                "SGST %": 2.5,
+                "SGST Amount": 6.0,
+                "Service Charge %": 5.0,
+                "Service Charge Amount": 12.0,
+                "Tax Total": 12.0,
+                "Discount Amount": 10.0,
+                "Round Off Amount": 0.5,
+                "Grand Total": 254.5,
+                "Paid Amount": 254.5,
+                "Due Amount": 0.0,
+                "Offer Discount": 0.0,
+                "Final Amount": 254.5,
+                "Notes": "Extra napkins requested",
+                "Footer Message": "Thank you for dining with us!",
+                "Billed At": "2025-06-27 13:00:00",
+            }
+        ]
+    },
 }
 
+
+# ============================================================================
+# VALID VALUES
+# ============================================================================
+
+# IMPORTANT:
+# This was missing in the old code and caused:
+# NameError: name '_VALID_STATUS' is not defined
+#
+# Keep these values synchronized with the InventoryItem.status column/enum.
+_VALID_STATUS = {
+    "in_stock",
+    "out_of_stock",
+    "low_stock",
+    "discontinued",
+}
+
+
+# ============================================================================
+# DATACLASSES
+# ============================================================================
 
 @dataclass
 class SheetConfig:
     """Describes a single sheet within a module's upload file."""
+
     name: str
     required_columns: list[str]
 
@@ -116,48 +206,103 @@ class ModuleConfig:
     """
     Full configuration for one uploadable module.
 
-    sheets   — ordered list of SheetConfig; all must be present in the file.
-    handler  — async callable that owns the module's business logic.
-               Signature: handler(db, sheets, client_id) -> UploadResult
+    sheets  — ordered list of SheetConfig; all must be present in the file.
+    handler — async callable that owns the module's business logic.
     """
+
     sheets: list[SheetConfig]
     handler: Callable
 
 
+# ============================================================================
+# UPLOAD CONFIGURATION
+# ============================================================================
+
 UPLOAD_CONFIG: dict[str, ModuleConfig] = {
+
+    # ------------------------------------------------------------------------
+    # MENU
+    # ------------------------------------------------------------------------
     "menu": ModuleConfig(
         sheets=[
-            SheetConfig("Menu_Items", ["Name", "Category", "Branch Code", "Food Type", "Active"]),
+            SheetConfig(
+                "Menu_Items",
+                [
+                    "Name",
+                    "Category",
+                    "Branch Code",
+                    "Food Type",
+                    "Active",
+                ],
+            ),
             SheetConfig(
                 "Pricing",
-                ["Menu Item", "Branch Code", "Price", "Cost Price",
-                 "Discount", "Tax", "CGST", "SGST", "Calories", "Active"],
+                [
+                    "Menu Item",
+                    "Branch Code",
+                    "Price",
+                    "Cost Price",
+                    "Discount",
+                    "Tax",
+                    "CGST",
+                    "SGST",
+                    "Calories",
+                    "Active",
+                ],
             ),
-            SheetConfig("BOM", ["Menu Item", "Branch Code", "Inventory Item", "Godown", "Quantity"]),
+            SheetConfig(
+                "BOM",
+                [
+                    "Menu Item",
+                    "Branch Code",
+                    "Inventory Item",
+                    "Godown",
+                    "Quantity",
+                ],
+            ),
         ],
-        handler=None,  # patched below
+        handler=None,
     ),
+
+    # ------------------------------------------------------------------------
+    # INVENTORY
+    # ------------------------------------------------------------------------
     "inventory": ModuleConfig(
         sheets=[
             SheetConfig(
                 "Inventory_Items",
-                ["Name", "Branch Code", "Unit"],
+                [
+                    "Name",
+                    "Branch Code",
+                    "Unit",
+                ],
             )
         ],
-        handler=None,  # patched below
+        handler=None,
     ),
+
+    # ------------------------------------------------------------------------
+    # CATEGORY
+    # ------------------------------------------------------------------------
     "category": ModuleConfig(
         sheets=[
-            SheetConfig("Categories", ["Name", "Branch Code", "Active"])
+            SheetConfig(
+                "Categories",
+                [
+                    "Name",
+                    "Branch Code",
+                    "Active",
+                ],
+            )
         ],
-        handler=None,  # patched below
+        handler=None,
     ),
 }
 
 
-# ---------------------------------------------------------------------------
-# Result type
-# ---------------------------------------------------------------------------
+# ============================================================================
+# RESULT TYPE
+# ============================================================================
 
 @dataclass
 class UploadResult:
@@ -165,132 +310,375 @@ class UploadResult:
     counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {"message": self.message, **self.counts}
+        return {
+            "message": self.message,
+            **self.counts,
+        }
 
 
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
+# ============================================================================
+# SHARED HELPERS
+# ============================================================================
 
 def _safe_str(val: Any) -> str:
+    """
+    Convert Excel cell value to a clean string.
+
+    NaN / None -> ""
+    """
     return str(val).strip() if pd.notna(val) else ""
 
 
 def _safe_float(val: Any, field_name: str) -> float:
+    """
+    Safely convert Excel value to float.
+    """
+
+    # Empty Excel values should use 0
+    if val is None or pd.isna(val) or str(val).strip() == "":
+        return 0.0
+
     try:
         result = float(val)
     except (TypeError, ValueError):
+
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid numeric value for '{field_name}': {val!r}",
+            detail=(
+                f"Invalid numeric value for '{field_name}': "
+                f"{val!r}"
+            ),
         )
+
     if result < 0:
         raise HTTPException(
             status_code=400,
-            detail=f"'{field_name}' cannot be negative. Got {result}.",
+            detail=(
+                f"'{field_name}' cannot be negative. "
+                f"Got {result}."
+            ),
         )
+
     return result
 
 
 def _safe_bool(val: Any) -> bool:
+
     if isinstance(val, bool):
         return val
-    return str(val).strip().lower() in ("true", "1", "yes")
+
+    if val is None or pd.isna(val):
+        return False
+
+    return str(val).strip().lower() in (
+        "true",
+        "1",
+        "yes",
+        "y",
+        "on",
+    )
 
 
-def _safe_food_type(val: Any, row_num: int) -> FoodType:
+def _safe_food_type(
+    val: Any,
+    row_num: int,
+) -> FoodType:
     """
     Safely convert a value to FoodType enum.
-    
-    Args:
-        val: The value from the Excel cell
-        row_num: The row number for error messages (1-indexed)
-    
-    Returns:
-        FoodType enum value
-    
-    Raises:
-        HTTPException: If the value is invalid
     """
+
     if pd.isna(val) or not str(val).strip():
         return FoodType.veg
-    
-    # Normalize: strip, lowercase, replace spaces with underscores
-    normalized = str(val).strip().lower().replace(" ", "_")
-    
-    # Handle common variations
-    if normalized in ["veg", "vegetarian"]:
+
+    normalized = (
+        str(val)
+        .strip()
+        .lower()
+        .replace(" ", "_")
+    )
+
+    if normalized in [
+        "veg",
+        "vegetarian",
+    ]:
         return FoodType.veg
-    elif normalized in ["non_veg", "nonveg", "non-veg", "non vegetarian", "non-vegetarian"]:
+
+    if normalized in [
+        "non_veg",
+        "nonveg",
+        "non-veg",
+        "non vegetarian",
+        "non-vegetarian",
+    ]:
         return FoodType.non_veg
-    elif normalized in ["egg", "eggetarian"]:
+
+    if normalized in [
+        "egg",
+        "eggetarian",
+    ]:
         return FoodType.egg
-    
-    # Try direct enum lookup
+
     try:
         return FoodType(normalized)
+
     except ValueError:
+
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Row {row_num}: Invalid Food Type '{val}'. "
-                "Allowed values: veg, non_veg, egg."
+                f"Row {row_num}: Invalid Food Type "
+                f"'{val}'. Allowed values: "
+                f"veg, non_veg, egg."
             ),
         )
 
 
-def _auto_width_excel(writer: pd.ExcelWriter, sheet_name: str) -> None:
+def _safe_inventory_status(
+    val: Any,
+    row_num: int,
+) -> str:
+    """
+    Normalize and validate inventory status.
+
+    Accepted examples:
+
+        in_stock
+        In Stock
+        IN STOCK
+        in-stock
+        instock
+
+        out_of_stock
+        Out Of Stock
+        out-of-stock
+        outofstock
+
+        low_stock
+        Low Stock
+        low-stock
+        lowstock
+
+        discontinued
+        Discontinued
+    """
+
+    # Empty status defaults to in_stock.
+    if val is None or pd.isna(val):
+        return "in_stock"
+
+    raw = str(val).strip()
+
+    if not raw:
+        return "in_stock"
+
+    normalized = (
+        raw
+        .lower()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
+
+    aliases = {
+        "instock": "in_stock",
+        "in_stock": "in_stock",
+
+        "outofstock": "out_of_stock",
+        "out_of_stock": "out_of_stock",
+
+        "lowstock": "low_stock",
+        "low_stock": "low_stock",
+
+        "discontinued": "discontinued",
+    }
+
+    normalized = aliases.get(
+        normalized,
+        normalized,
+    )
+
+    if normalized not in _VALID_STATUS:
+
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Row {row_num}: Invalid inventory Status "
+                f"'{raw}'. Allowed values: "
+                f"{sorted(_VALID_STATUS)}"
+            ),
+        )
+
+    return normalized
+
+
+def _auto_width_excel(
+    writer: pd.ExcelWriter,
+    sheet_name: str,
+) -> None:
+
     ws = writer.sheets[sheet_name]
+
     for col in ws.columns:
+
         max_len = max(
-            len(str(cell.value)) if cell.value is not None else 0
+            len(str(cell.value))
+            if cell.value is not None
+            else 0
             for cell in col
         )
-        ws.column_dimensions[col[0].column_letter].width = max_len + 5
+
+        ws.column_dimensions[
+            col[0].column_letter
+        ].width = max_len + 5
 
 
-# ---------------------------------------------------------------------------
-# Shared DB loaders
-# ---------------------------------------------------------------------------
+# ============================================================================
+# SHARED DB LOADERS
+# ============================================================================
 
-async def _load_branches(db: AsyncSession, client_id: int) -> dict[str, Branch]:
-    result = await db.execute(select(Branch).where(Branch.client_id == client_id))
-    return {b.branch_code.strip().upper(): b for b in result.scalars().all()}
+async def _load_branches(
+    db: AsyncSession,
+    client_id: int,
+) -> dict[str, Branch]:
 
+    result = await db.execute(
+        select(Branch).where(
+            Branch.client_id == client_id
+        )
+    )
 
-async def _load_categories(db: AsyncSession, client_id: int) -> dict[tuple[str, int], Category]:
-    result = await db.execute(select(Category).where(Category.client_id == client_id))
-    return {(c.name.strip().lower(), c.branch_id): c for c in result.scalars().all()}
-
-
-async def _load_existing_items(db: AsyncSession, client_id: int) -> dict[tuple[str, int], Item]:
-    result = await db.execute(select(Item).where(Item.client_id == client_id))
-    return {(i.name.strip().lower(), i.branch_id): i for i in result.scalars().all()}
-
-
-async def _load_inventory_items(db: AsyncSession, branch_ids: list[int]) -> dict[tuple[str, int], InventoryItem]:
-    result = await db.execute(select(InventoryItem).where(InventoryItem.branch_id.in_(branch_ids)))
-    return {(iv.name.strip().lower(), iv.branch_id): iv for iv in result.scalars().all()}
+    return {
+        b.branch_code.strip().upper(): b
+        for b in result.scalars().all()
+    }
 
 
-async def _load_godowns(db: AsyncSession, branch_ids: list[int]) -> dict[tuple[str, int], Godown]:
-    result = await db.execute(select(Godown).where(Godown.branch_id.in_(branch_ids)))
-    return {(g.name.strip().lower(), g.branch_id): g for g in result.scalars().all()}
+async def _load_categories(
+    db: AsyncSession,
+    client_id: int,
+) -> dict[tuple[str, int], Category]:
+
+    result = await db.execute(
+        select(Category).where(
+            Category.client_id == client_id
+        )
+    )
+
+    return {
+        (
+            c.name.strip().lower(),
+            c.branch_id,
+        ): c
+        for c in result.scalars().all()
+    }
 
 
-async def _load_existing_pricings(db: AsyncSession, client_id: int) -> dict[tuple[int, int], Pricing]:
-    result = await db.execute(select(Pricing).where(Pricing.client_id == client_id))
-    return {(p.item_id, p.branch_id): p for p in result.scalars().all()}
+async def _load_existing_items(
+    db: AsyncSession,
+    client_id: int,
+) -> dict[tuple[str, int], Item]:
+
+    result = await db.execute(
+        select(Item).where(
+            Item.client_id == client_id
+        )
+    )
+
+    return {
+        (
+            i.name.strip().lower(),
+            i.branch_id,
+        ): i
+        for i in result.scalars().all()
+    }
 
 
-async def _load_existing_bom(db: AsyncSession) -> dict[tuple[int, int, int], ItemIngredient]:
-    result = await db.execute(select(ItemIngredient))
-    return {(bi.item_id, bi.inventory_item_id, bi.godown_id): bi for bi in result.scalars().all()}
+async def _load_inventory_items(
+    db: AsyncSession,
+    branch_ids: list[int],
+) -> dict[tuple[str, int], InventoryItem]:
+
+    if not branch_ids:
+        return {}
+
+    result = await db.execute(
+        select(InventoryItem).where(
+            InventoryItem.branch_id.in_(branch_ids)
+        )
+    )
+
+    return {
+        (
+            iv.name.strip().lower(),
+            iv.branch_id,
+        ): iv
+        for iv in result.scalars().all()
+    }
 
 
-# ---------------------------------------------------------------------------
-# Auto-create helpers (idempotent: check map first, never duplicate)
-# ---------------------------------------------------------------------------
+async def _load_godowns(
+    db: AsyncSession,
+    branch_ids: list[int],
+) -> dict[tuple[str, int], Godown]:
+
+    if not branch_ids:
+        return {}
+
+    result = await db.execute(
+        select(Godown).where(
+            Godown.branch_id.in_(branch_ids)
+        )
+    )
+
+    return {
+        (
+            g.name.strip().lower(),
+            g.branch_id,
+        ): g
+        for g in result.scalars().all()
+    }
+
+
+async def _load_existing_pricings(
+    db: AsyncSession,
+    client_id: int,
+) -> dict[tuple[int, int], Pricing]:
+
+    result = await db.execute(
+        select(Pricing).where(
+            Pricing.client_id == client_id
+        )
+    )
+
+    return {
+        (
+            p.item_id,
+            p.branch_id,
+        ): p
+        for p in result.scalars().all()
+    }
+
+
+async def _load_existing_bom(
+    db: AsyncSession,
+) -> dict[tuple[int, int, int], ItemIngredient]:
+
+    result = await db.execute(
+        select(ItemIngredient)
+    )
+
+    return {
+        (
+            bi.item_id,
+            bi.inventory_item_id,
+            bi.godown_id,
+        ): bi
+        for bi in result.scalars().all()
+    }
+
+
+# ============================================================================
+# AUTO-CREATE HELPERS
+# ============================================================================
 
 async def _find_or_create_godown(
     db: AsyncSession,
@@ -299,26 +687,37 @@ async def _find_or_create_godown(
     godowns_map: dict[tuple[str, int], Godown],
     counters: dict[str, int],
 ) -> Godown:
-    """
-    Return an existing Godown (case-insensitive name + branch_id match)
-    or create a new one with sensible defaults.
-    Always flushes after creation and updates godowns_map in-place.
-    """
-    key = (godown_name.strip().lower(), branch_id)
+
+    key = (
+        godown_name.strip().lower(),
+        branch_id,
+    )
+
     godown = godowns_map.get(key)
+
     if godown is not None:
-        counters["godowns_skipped"] = counters.get("godowns_skipped", 0) + 1
+
+        counters["godowns_skipped"] = (
+            counters.get("godowns_skipped", 0) + 1
+        )
+
         return godown
 
-    # Not in map — create it.
     godown = Godown(
         name=godown_name.strip(),
         branch_id=branch_id,
     )
+
     db.add(godown)
-    await db.flush()  # populate godown.id immediately
+
+    await db.flush()
+
     godowns_map[key] = godown
-    counters["godowns_created"] = counters.get("godowns_created", 0) + 1
+
+    counters["godowns_created"] = (
+        counters.get("godowns_created", 0) + 1
+    )
+
     return godown
 
 
@@ -330,53 +729,70 @@ async def _find_or_create_category(
     categories_map: dict[tuple[str, int], Category],
     counters: dict[str, int],
 ) -> Category:
-    """
-    Return an existing Category (case-insensitive name + branch_id match)
-    or create a new one.
-    Always flushes after creation and updates categories_map in-place.
-    """
-    key = (category_name.strip().lower(), branch_id)
+
+    key = (
+        category_name.strip().lower(),
+        branch_id,
+    )
+
     category = categories_map.get(key)
+
     if category is not None:
-        counters["categories_skipped"] = counters.get("categories_skipped", 0) + 1
+
+        counters["categories_skipped"] = (
+            counters.get("categories_skipped", 0) + 1
+        )
+
         return category
 
-    # Not in map — create it.
     category = Category(
         name=category_name.strip(),
         branch_id=branch_id,
         client_id=client_id,
     )
+
     db.add(category)
-    await db.flush()  # populate category.id immediately
+
+    await db.flush()
+
     categories_map[key] = category
-    counters["categories_created"] = counters.get("categories_created", 0) + 1
+
+    counters["categories_created"] = (
+        counters.get("categories_created", 0) + 1
+    )
+
     return category
 
 
-# ---------------------------------------------------------------------------
-# Module-specific processors
-# ---------------------------------------------------------------------------
+# ============================================================================
+# MENU PROCESSOR
+# ============================================================================
 
 async def _process_menu(
     db: AsyncSession,
     sheets: dict[str, pd.DataFrame],
     client_id: int,
 ) -> UploadResult:
-    """Business logic for the 'menu' module. Handles Menu Items -> Pricing -> BOM.
 
-    Auto-creates missing Categories and Godowns (case-insensitive dedup).
-    Inventory Items are NOT auto-created — they must exist in the DB.
-    """
     menu_df = sheets["Menu_Items"]
     pricing_df = sheets["Pricing"]
     bom_df = sheets["BOM"]
 
-    branches_map = await _load_branches(db, client_id)
-    categories_map = await _load_categories(db, client_id)
-    items_map = await _load_existing_items(db, client_id)
+    branches_map = await _load_branches(
+        db,
+        client_id,
+    )
 
-    # Shared counters dict — helpers mutate this in-place.
+    categories_map = await _load_categories(
+        db,
+        client_id,
+    )
+
+    items_map = await _load_existing_items(
+        db,
+        client_id,
+    )
+
     counters: dict[str, int] = {
         "categories_created": 0,
         "categories_skipped": 0,
@@ -390,18 +806,34 @@ async def _process_menu(
         "bom_updated": 0,
         "errors": 0,
     }
-    new_items: dict[tuple[str, int], Item] = {}
 
-    # ----------------------------------------------------------------
-    # Phase 1: Menu Items (auto-create Category if missing)
-    # ----------------------------------------------------------------
+    new_items: dict[
+        tuple[str, int],
+        Item,
+    ] = {}
+
+    # ------------------------------------------------------------------------
+    # PHASE 1: MENU ITEMS
+    # ------------------------------------------------------------------------
+
     for idx, row in menu_df.iterrows():
-        name = _safe_str(row.get("Name"))
-        branch_code = _safe_str(row.get("Branch Code")).upper()
-        category_name = _safe_str(row.get("Category"))
 
-        # Safely convert Food Type
-        food_type = _safe_food_type(row.get("Food Type"), idx + 2)
+        name = _safe_str(
+            row.get("Name")
+        )
+
+        branch_code = _safe_str(
+            row.get("Branch Code")
+        ).upper()
+
+        category_name = _safe_str(
+            row.get("Category")
+        )
+
+        food_type = _safe_food_type(
+            row.get("Food Type"),
+            idx + 2,
+        )
 
         if not name:
             continue
@@ -409,20 +841,25 @@ async def _process_menu(
         if not branch_code:
             raise HTTPException(
                 400,
-                f"Row {idx + 2}: 'Branch Code' cannot be empty."
+                f"Row {idx + 2}: "
+                f"'Branch Code' cannot be empty.",
             )
 
         if not category_name:
             raise HTTPException(
                 400,
-                f"Row {idx + 2}: 'Category' cannot be empty."
+                f"Row {idx + 2}: "
+                f"'Category' cannot be empty.",
             )
 
-        branch = branches_map.get(branch_code)
+        branch = branches_map.get(
+            branch_code
+        )
+
         if branch is None:
             raise HTTPException(
                 400,
-                f"Branch '{branch_code}' not found."
+                f"Branch '{branch_code}' not found.",
             )
 
         category = await _find_or_create_category(
@@ -434,77 +871,152 @@ async def _process_menu(
             counters=counters,
         )
 
-        key = (name.lower(), branch.id)
+        key = (
+            name.lower(),
+            branch.id,
+        )
 
         existing_item = items_map.get(key)
 
         if existing_item:
-            # Update existing item
+
             existing_item.category_id = category.id
             existing_item.food_type = food_type
-            existing_item.is_active = _safe_bool(row.get("Active", True))
+            existing_item.is_active = _safe_bool(
+                row.get("Active", True)
+            )
 
             counters["items_updated"] += 1
+
             continue
 
         if key in new_items:
+
             counters["items_updated"] += 1
+
             continue
 
-        # Create new item
         item = Item(
             name=name,
             category_id=category.id,
             branch_id=branch.id,
             client_id=client_id,
             food_type=food_type,
-            is_active=_safe_bool(row.get("Active", True)),
+            is_active=_safe_bool(
+                row.get("Active", True)
+            ),
         )
 
         db.add(item)
+
         new_items[key] = item
+
         counters["items_created"] += 1
 
     await db.flush()
+
     items_map.update(new_items)
 
-    # ----------------------------------------------------------------
-    # Phase 2: Pricing (create or update)
-    # ----------------------------------------------------------------
-    pricings_map = await _load_existing_pricings(db, client_id)
+    # ------------------------------------------------------------------------
+    # PHASE 2: PRICING
+    # ------------------------------------------------------------------------
+
+    pricings_map = await _load_existing_pricings(
+        db,
+        client_id,
+    )
 
     for idx, row in pricing_df.iterrows():
-        menu_item_name = _safe_str(row.get("Menu Item"))
-        branch_code = _safe_str(row.get("Branch Code")).upper()
+
+        menu_item_name = _safe_str(
+            row.get("Menu Item")
+        )
+
+        branch_code = _safe_str(
+            row.get("Branch Code")
+        ).upper()
 
         if not menu_item_name or not branch_code:
             continue
 
-        branch = branches_map.get(branch_code)
-        if branch is None:
-            raise HTTPException(400, f"Branch '{branch_code}' not found.")
+        branch = branches_map.get(
+            branch_code
+        )
 
-        item = items_map.get((menu_item_name.lower(), branch.id))
+        if branch is None:
+            raise HTTPException(
+                400,
+                f"Branch '{branch_code}' not found.",
+            )
+
+        item = items_map.get(
+            (
+                menu_item_name.lower(),
+                branch.id,
+            )
+        )
+
         if item is None:
             raise HTTPException(
                 400,
-                f"Menu Item '{menu_item_name}' not found for branch '{branch_code}'.",
+                (
+                    f"Menu Item '{menu_item_name}' "
+                    f"not found for branch "
+                    f"'{branch_code}'."
+                ),
             )
 
-        price = _safe_float(row.get("Price", 0), "Price")
-        cost_price = _safe_float(row.get("Cost Price", 0), "Cost Price")
-        discount = _safe_float(row.get("Discount", 0), "Discount")
-        tax = _safe_float(row.get("Tax", 0), "Tax")
-        cgst = _safe_float(row.get("CGST", 0), "CGST")
-        sgst = _safe_float(row.get("SGST", 0), "SGST")
-        calories_raw = row.get("Calories")
-        calories = int(calories_raw) if pd.notna(calories_raw) else None
-        is_active = _safe_bool(row.get("Active", True))
+        price = _safe_float(
+            row.get("Price", 0),
+            "Price",
+        )
 
-        p_key = (item.id, branch.id)
+        cost_price = _safe_float(
+            row.get("Cost Price", 0),
+            "Cost Price",
+        )
+
+        discount = _safe_float(
+            row.get("Discount", 0),
+            "Discount",
+        )
+
+        tax = _safe_float(
+            row.get("Tax", 0),
+            "Tax",
+        )
+
+        cgst = _safe_float(
+            row.get("CGST", 0),
+            "CGST",
+        )
+
+        sgst = _safe_float(
+            row.get("SGST", 0),
+            "SGST",
+        )
+
+        calories_raw = row.get("Calories")
+
+        calories = (
+            int(calories_raw)
+            if pd.notna(calories_raw)
+            else None
+        )
+
+        is_active = _safe_bool(
+            row.get("Active", True)
+        )
+
+        p_key = (
+            item.id,
+            branch.id,
+        )
+
         existing = pricings_map.get(p_key)
 
         if existing:
+
             existing.price = price
             existing.cost_price = cost_price
             existing.discount = discount
@@ -513,64 +1025,128 @@ async def _process_menu(
             existing.sgst_rate = sgst
             existing.calories = calories
             existing.is_active = is_active
+
             counters["pricing_updated"] += 1
+
         else:
-            db.add(Pricing(
-                client_id=client_id,
-                item_id=item.id,
-                branch_id=branch.id,
-                price=price,
-                cost_price=cost_price,
-                discount=discount,
-                tax=tax,
-                cgst_rate=cgst,
-                sgst_rate=sgst,
-                calories=calories,
-                is_active=is_active,
-            ))
+
+            db.add(
+                Pricing(
+                    client_id=client_id,
+                    item_id=item.id,
+                    branch_id=branch.id,
+                    price=price,
+                    cost_price=cost_price,
+                    discount=discount,
+                    tax=tax,
+                    cgst_rate=cgst,
+                    sgst_rate=sgst,
+                    calories=calories,
+                    is_active=is_active,
+                )
+            )
+
             counters["pricing_created"] += 1
 
     await db.flush()
 
-    # ----------------------------------------------------------------
-    # Phase 3: BOM (auto-create Godown if missing; Inventory Item MUST exist)
-    # ----------------------------------------------------------------
-    all_branch_ids = [b.id for b in branches_map.values()]
-    inventory_map = await _load_inventory_items(db, all_branch_ids)
-    godowns_map = await _load_godowns(db, all_branch_ids)
+    # ------------------------------------------------------------------------
+    # PHASE 3: BOM
+    # ------------------------------------------------------------------------
+
+    all_branch_ids = [
+        b.id
+        for b in branches_map.values()
+    ]
+
+    inventory_map = await _load_inventory_items(
+        db,
+        all_branch_ids,
+    )
+
+    godowns_map = await _load_godowns(
+        db,
+        all_branch_ids,
+    )
+
     bom_map = await _load_existing_bom(db)
 
     for idx, row in bom_df.iterrows():
-        menu_item_name = _safe_str(row.get("Menu Item"))
-        inv_item_name = _safe_str(row.get("Inventory Item"))
-        godown_name = _safe_str(row.get("Godown"))
-        branch_code = _safe_str(row.get("Branch Code")).upper()
 
-        if not menu_item_name or not inv_item_name or not godown_name:
+        menu_item_name = _safe_str(
+            row.get("Menu Item")
+        )
+
+        inv_item_name = _safe_str(
+            row.get("Inventory Item")
+        )
+
+        godown_name = _safe_str(
+            row.get("Godown")
+        )
+
+        branch_code = _safe_str(
+            row.get("Branch Code")
+        ).upper()
+
+        if (
+            not menu_item_name
+            or not inv_item_name
+            or not godown_name
+        ):
             continue
 
-        branch = branches_map.get(branch_code)
-        if branch is None:
-            raise HTTPException(400, f"Branch Code '{branch_code}' not found.")
+        branch = branches_map.get(
+            branch_code
+        )
 
-        item = items_map.get((menu_item_name.lower(), branch.id))
+        if branch is None:
+            raise HTTPException(
+                400,
+                (
+                    f"Branch Code "
+                    f"'{branch_code}' not found."
+                ),
+            )
+
+        item = items_map.get(
+            (
+                menu_item_name.lower(),
+                branch.id,
+            )
+        )
+
         if item is None:
             raise HTTPException(
                 400,
-                f"Menu Item '{menu_item_name}' not found for Branch Code '{branch_code}'.",
+                (
+                    f"Menu Item "
+                    f"'{menu_item_name}' "
+                    f"not found for Branch "
+                    f"Code '{branch_code}'."
+                ),
             )
 
-        # Inventory Item must already exist — cannot safely auto-create
-        # (requires unit, cost, vendor, stock info that cannot be inferred).
-        inv_item = inventory_map.get((inv_item_name.lower(), branch.id))
+        inv_item = inventory_map.get(
+            (
+                inv_item_name.lower(),
+                branch.id,
+            )
+        )
+
         if inv_item is None:
             raise HTTPException(
                 400,
-                f"Inventory Item '{inv_item_name}' not found for branch '{branch_code}'. "
-                "Please upload Inventory before importing BOM.",
+                (
+                    f"Inventory Item "
+                    f"'{inv_item_name}' "
+                    f"not found for branch "
+                    f"'{branch_code}'. "
+                    f"Please upload Inventory "
+                    f"before importing BOM."
+                ),
             )
 
-        # Auto-create Godown if it does not exist.
         godown = await _find_or_create_godown(
             db=db,
             godown_name=godown_name,
@@ -580,25 +1156,57 @@ async def _process_menu(
         )
 
         try:
-            quantity = float(row.get("Quantity"))
-        except (TypeError, ValueError):
-            raise HTTPException(400, f"Invalid quantity for BOM row {idx + 2}.")
-        if quantity <= 0:
-            raise HTTPException(400, f"Quantity must be positive (row {idx + 2}).")
+            quantity = float(
+                row.get("Quantity")
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            raise HTTPException(
+                400,
+                (
+                    f"Invalid quantity for "
+                    f"BOM row {idx + 2}."
+                ),
+            )
 
-        bom_key = (item.id, inv_item.id, godown.id)
-        existing_bom = bom_map.get(bom_key)
+        if quantity <= 0:
+            raise HTTPException(
+                400,
+                (
+                    f"Quantity must be positive "
+                    f"(row {idx + 2})."
+                ),
+            )
+
+        bom_key = (
+            item.id,
+            inv_item.id,
+            godown.id,
+        )
+
+        existing_bom = bom_map.get(
+            bom_key
+        )
 
         if existing_bom:
+
             existing_bom.quantity_required = quantity
+
             counters["bom_updated"] += 1
+
         else:
-            db.add(ItemIngredient(
-                item_id=item.id,
-                inventory_item_id=inv_item.id,
-                godown_id=godown.id,
-                quantity_required=quantity,
-            ))
+
+            db.add(
+                ItemIngredient(
+                    item_id=item.id,
+                    inventory_item_id=inv_item.id,
+                    godown_id=godown.id,
+                    quantity_required=quantity,
+                )
+            )
+
             counters["bom_created"] += 1
 
     return UploadResult(
@@ -607,24 +1215,72 @@ async def _process_menu(
     )
 
 
+# ============================================================================
+# INVENTORY PROCESSOR
+# ============================================================================
+
 async def _process_inventory(
     db: AsyncSession,
     sheets: dict[str, pd.DataFrame],
     client_id: int,
 ) -> UploadResult:
-    """Business logic for the 'inventory' module.
-
-    Auto-creates missing Godowns (case-insensitive dedup).
-    row_category accepts any non-empty string — no whitelist restriction.
     """
+    Business logic for the inventory module.
+
+    Supports:
+
+    - Name
+    - Branch Code
+    - Godown
+    - Category
+    - Unit
+    - Display Unit
+    - Conversion Factor
+    - Stock Qty
+    - Reorder Level
+    - Cost Per Unit
+    - Vendor Name
+    - Vendor Phone
+    - Status
+
+    Missing optional values receive safe defaults.
+
+    Existing inventory items are UPDATED.
+    New inventory items are CREATED.
+
+    Missing Godowns are automatically CREATED.
+    """
+
     inv_df = sheets["Inventory_Items"]
 
-    branches_map = await _load_branches(db, client_id)
-    all_branch_ids = [b.id for b in branches_map.values()]
-    godowns_map = await _load_godowns(db, all_branch_ids)
-    inventory_map = await _load_inventory_items(db, all_branch_ids)
+    # ------------------------------------------------------------------------
+    # LOAD EXISTING DATA
+    # ------------------------------------------------------------------------
 
-    # Shared counters dict — helpers mutate this in-place.
+    branches_map = await _load_branches(
+        db,
+        client_id,
+    )
+
+    all_branch_ids = [
+        b.id
+        for b in branches_map.values()
+    ]
+
+    godowns_map = await _load_godowns(
+        db,
+        all_branch_ids,
+    )
+
+    inventory_map = await _load_inventory_items(
+        db,
+        all_branch_ids,
+    )
+
+    # ------------------------------------------------------------------------
+    # COUNTERS
+    # ------------------------------------------------------------------------
+
     counters: dict[str, int] = {
         "godowns_created": 0,
         "godowns_skipped": 0,
@@ -633,26 +1289,88 @@ async def _process_inventory(
         "errors": 0,
     }
 
+    # ------------------------------------------------------------------------
+    # PROCESS ROWS
+    # ------------------------------------------------------------------------
+
     for idx, row in inv_df.iterrows():
-        name = _safe_str(row.get("Name"))
-        branch_code = _safe_str(row.get("Branch Code")).upper()
-        unit = _safe_str(row.get("Unit"))
+
+        excel_row = idx + 2
+
+        # --------------------------------------------------------------------
+        # BASIC FIELDS
+        # --------------------------------------------------------------------
+
+        name = _safe_str(
+            row.get("Name")
+        )
+
+        branch_code = _safe_str(
+            row.get("Branch Code")
+        ).upper()
+
+        unit = _safe_str(
+            row.get("Unit")
+        )
+
+        # --------------------------------------------------------------------
+        # REQUIRED VALIDATION
+        # --------------------------------------------------------------------
 
         if not name:
             continue
+
         if not branch_code:
-            raise HTTPException(400, f"Row {idx + 2}: 'Branch Code' cannot be empty.")
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Row {excel_row}: "
+                    f"'Branch Code' cannot be empty."
+                ),
+            )
+
         if not unit:
-            raise HTTPException(400, f"Row {idx + 2}: 'Unit' cannot be empty.")
 
-        branch = branches_map.get(branch_code)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Row {excel_row}: "
+                    f"'Unit' cannot be empty."
+                ),
+            )
+
+        # --------------------------------------------------------------------
+        # BRANCH
+        # --------------------------------------------------------------------
+
+        branch = branches_map.get(
+            branch_code
+        )
+
         if branch is None:
-            raise HTTPException(400, f"Branch '{branch_code}' not found.")
 
-        # Auto-create Godown if it is specified but does not exist.
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Row {excel_row}: "
+                    f"Branch '{branch_code}' "
+                    f"not found."
+                ),
+            )
+
+        # --------------------------------------------------------------------
+        # GODOWN
+        # --------------------------------------------------------------------
+
         godown = None
-        godown_name = _safe_str(row.get("Godown"))
+
+        godown_name = _safe_str(
+            row.get("Godown")
+        )
+
         if godown_name:
+
             godown = await _find_or_create_godown(
                 db=db,
                 godown_name=godown_name,
@@ -661,53 +1379,213 @@ async def _process_inventory(
                 counters=counters,
             )
 
-        # Accept any non-empty category string; default to "other" when blank.
-        # This makes re-import of exported files always succeed.
-        row_category = _safe_str(row.get("Category")) or "other"
+        # --------------------------------------------------------------------
+        # CATEGORY
+        # --------------------------------------------------------------------
 
-        display_unit = _safe_str(row.get("Display Unit")) or "piece"
-        conversion_factor = _safe_float(row.get("Conversion Factor", 1.0), "Conversion Factor")
+        row_category = (
+            _safe_str(
+                row.get("Category")
+            )
+            or "other"
+        )
+
+        # --------------------------------------------------------------------
+        # DISPLAY UNIT
+        # --------------------------------------------------------------------
+
+        display_unit = (
+            _safe_str(
+                row.get("Display Unit")
+            )
+            or "piece"
+        )
+
+        # --------------------------------------------------------------------
+        # CONVERSION FACTOR
+        # --------------------------------------------------------------------
+
+        conversion_factor = _safe_float(
+            row.get(
+                "Conversion Factor",
+                1.0,
+            ),
+            "Conversion Factor",
+        )
+
         if conversion_factor <= 0:
-            raise HTTPException(400, f"Row {idx + 2}: 'Conversion Factor' must be positive.")
 
-        stock_qty = _safe_float(row.get("Stock Qty", 0), "Stock Qty")
-        reorder_level = _safe_float(row.get("Reorder Level", 0), "Reorder Level")
-        cost_per_unit = _safe_float(row.get("Cost Per Unit", 0), "Cost Per Unit")
-        vendor_name = _safe_str(row.get("Vendor Name")) or None
-        vendor_phone = _safe_str(row.get("Vendor Phone")) or None
-
-        status_raw = _safe_str(row.get("Status")) or "in_stock"
-        if status_raw not in _VALID_STATUS:
             raise HTTPException(
-                400,
-                f"Row {idx + 2}: 'Status' must be one of {sorted(_VALID_STATUS)}, got '{status_raw}'.",
+                status_code=400,
+                detail=(
+                    f"Row {excel_row}: "
+                    f"'Conversion Factor' "
+                    f"must be positive."
+                ),
             )
 
-        key = (name.lower(), branch.id)
-        existing = inventory_map.get(key)
+        # --------------------------------------------------------------------
+        # STOCK QTY
+        # --------------------------------------------------------------------
+
+        stock_qty = _safe_float(
+            row.get(
+                "Stock Qty",
+                0,
+            ),
+            "Stock Qty",
+        )
+
+        # --------------------------------------------------------------------
+        # REORDER LEVEL
+        # --------------------------------------------------------------------
+
+        reorder_level = _safe_float(
+            row.get(
+                "Reorder Level",
+                0,
+            ),
+            "Reorder Level",
+        )
+
+        # --------------------------------------------------------------------
+        # COST PER UNIT
+        # --------------------------------------------------------------------
+
+        cost_per_unit = _safe_float(
+            row.get(
+                "Cost Per Unit",
+                0,
+            ),
+            "Cost Per Unit",
+        )
+
+        # --------------------------------------------------------------------
+        # VENDOR
+        # --------------------------------------------------------------------
+
+        vendor_name = (
+            _safe_str(
+                row.get("Vendor Name")
+            )
+            or None
+        )
+
+        vendor_phone = (
+            _safe_str(
+                row.get("Vendor Phone")
+            )
+            or None
+        )
+
+        # --------------------------------------------------------------------
+        # STATUS
+        # --------------------------------------------------------------------
+        #
+        # IMPORTANT FIX:
+        #
+        # OLD CODE:
+        #
+        #     if status_raw not in _VALID_STATUS:
+        #
+        # caused:
+        #
+        #     NameError:
+        #     name '_VALID_STATUS' is not defined
+        #
+        # NOW status is normalized through _safe_inventory_status().
+        # --------------------------------------------------------------------
+
+        status_raw = _safe_inventory_status(
+            row.get("Status"),
+            excel_row,
+        )
+
+        # --------------------------------------------------------------------
+        # INVENTORY LOOKUP
+        # --------------------------------------------------------------------
+
+        key = (
+            name.lower(),
+            branch.id,
+        )
+
+        existing = inventory_map.get(
+            key
+        )
+
+        # --------------------------------------------------------------------
+        # UPDATE EXISTING
+        # --------------------------------------------------------------------
 
         if existing:
+
             existing.unit = unit
-            existing.display_unit = display_unit
-            existing.conversion_factor = conversion_factor
-            existing.row_category = row_category
-            existing.stock_qty = stock_qty
-            existing.reorder_level = reorder_level
-            existing.cost_per_unit = cost_per_unit
-            existing.vendor_name = vendor_name
-            existing.vendor_phone = vendor_phone
-            existing.status = status_raw
+
+            existing.display_unit = (
+                display_unit
+            )
+
+            existing.conversion_factor = (
+                conversion_factor
+            )
+
+            existing.row_category = (
+                row_category
+            )
+
+            existing.stock_qty = (
+                stock_qty
+            )
+
+            existing.reorder_level = (
+                reorder_level
+            )
+
+            existing.cost_per_unit = (
+                cost_per_unit
+            )
+
+            existing.vendor_name = (
+                vendor_name
+            )
+
+            existing.vendor_phone = (
+                vendor_phone
+            )
+
+            existing.status = (
+                status_raw
+            )
+
             if godown is not None:
-                existing.godown_id = godown.id
-            counters["items_updated"] += 1
+                existing.godown_id = (
+                    godown.id
+                )
+
+            counters[
+                "items_updated"
+            ] += 1
+
+        # --------------------------------------------------------------------
+        # CREATE NEW
+        # --------------------------------------------------------------------
+
         else:
+
             item = InventoryItem(
                 name=name,
                 branch_id=branch.id,
-                godown_id=godown.id if godown else None,
+                godown_id=(
+                    godown.id
+                    if godown
+                    else None
+                ),
                 unit=unit,
                 display_unit=display_unit,
-                conversion_factor=conversion_factor,
+                conversion_factor=(
+                    conversion_factor
+                ),
                 row_category=row_category,
                 stock_qty=stock_qty,
                 reorder_level=reorder_level,
@@ -716,9 +1594,24 @@ async def _process_inventory(
                 vendor_phone=vendor_phone,
                 status=status_raw,
             )
+
             db.add(item)
+
             inventory_map[key] = item
-            counters["items_created"] += 1
+
+            counters[
+                "items_created"
+            ] += 1
+
+    # ------------------------------------------------------------------------
+    # FLUSH
+    # ------------------------------------------------------------------------
+
+    await db.flush()
+
+    # ------------------------------------------------------------------------
+    # RESULT
+    # ------------------------------------------------------------------------
 
     return UploadResult(
         message="Inventory uploaded successfully",
@@ -726,74 +1619,137 @@ async def _process_inventory(
     )
 
 
+# ============================================================================
+# CATEGORY PROCESSOR
+# ============================================================================
+
 async def _process_category(
     db: AsyncSession,
     sheets: dict[str, pd.DataFrame],
     client_id: int,
 ) -> UploadResult:
-    """Business logic for the 'category' module."""
+
     cat_df = sheets["Categories"]
 
-    branches_map = await _load_branches(db, client_id)
-    categories_map = await _load_categories(db, client_id)
+    branches_map = await _load_branches(
+        db,
+        client_id,
+    )
 
-    created = updated = 0
+    categories_map = await _load_categories(
+        db,
+        client_id,
+    )
+
+    created = 0
+    updated = 0
 
     for idx, row in cat_df.iterrows():
-        name = _safe_str(row.get("Name"))
-        branch_code = _safe_str(row.get("Branch Code")).upper()
+
+        excel_row = idx + 2
+
+        name = _safe_str(
+            row.get("Name")
+        )
+
+        branch_code = _safe_str(
+            row.get("Branch Code")
+        ).upper()
 
         if not name:
             continue
+
         if not branch_code:
-            raise HTTPException(400, f"Row {idx + 2}: 'Branch Code' cannot be empty.")
 
-        branch = branches_map.get(branch_code)
+            raise HTTPException(
+                400,
+                (
+                    f"Row {excel_row}: "
+                    f"'Branch Code' cannot be empty."
+                ),
+            )
+
+        branch = branches_map.get(
+            branch_code
+        )
+
         if branch is None:
-            raise HTTPException(400, f"Branch '{branch_code}' not found.")
 
-        is_active = _safe_bool(row.get("Active", True))
-        key = (name.lower(), branch.id)
-        existing = categories_map.get(key)
+            raise HTTPException(
+                400,
+                (
+                    f"Branch '{branch_code}' "
+                    f"not found."
+                ),
+            )
+
+        is_active = _safe_bool(
+            row.get("Active", True)
+        )
+
+        key = (
+            name.lower(),
+            branch.id,
+        )
+
+        existing = categories_map.get(
+            key
+        )
 
         if existing:
+
             existing.is_active = is_active
+
             updated += 1
+
         else:
+
             category = Category(
                 name=name,
                 branch_id=branch.id,
                 client_id=client_id,
+                is_active=is_active,
             )
+
             db.add(category)
+
             categories_map[key] = category
+
             created += 1
+
+    await db.flush()
 
     return UploadResult(
         message="Categories uploaded successfully",
-        counts={"categories_created": created, "categories_updated": updated},
+        counts={
+            "categories_created": created,
+            "categories_updated": updated,
+        },
     )
 
 
-# Patch handlers into the config now that functions are defined.
+# ============================================================================
+# PATCH HANDLERS
+# ============================================================================
+
 UPLOAD_CONFIG["menu"].handler = _process_menu
-UPLOAD_CONFIG["inventory"].handler = _process_inventory
-UPLOAD_CONFIG["category"].handler = _process_category
+
+UPLOAD_CONFIG["inventory"].handler = (
+    _process_inventory
+)
+
+UPLOAD_CONFIG["category"].handler = (
+    _process_category
+)
 
 
-# ---------------------------------------------------------------------------
-# BulkUploadService
-# ---------------------------------------------------------------------------
+# ============================================================================
+# BULK UPLOAD SERVICE
+# ============================================================================
 
 class BulkUploadService:
     """
     Dispatcher + orchestrator for all bulk-upload modules.
-
-    Adding a new module requires:
-      1. A new entry in TEMPLATES
-      2. A new entry in UPLOAD_CONFIG
-      3. A new async _process_<module>()
-    No changes needed here.
     """
 
     @staticmethod
@@ -803,197 +1759,417 @@ class BulkUploadService:
         module: str,
         client_id: int,
     ) -> dict:
-        module = module.lower()
-        config = UPLOAD_CONFIG.get(module)
+
+        module = module.lower().strip()
+
+        config = UPLOAD_CONFIG.get(
+            module
+        )
+
         if config is None:
+
             raise HTTPException(
                 status_code=400,
-                detail=f"Unknown module '{module}'. Supported: {list(UPLOAD_CONFIG)}",
+                detail=(
+                    f"Unknown module '{module}'. "
+                    f"Supported: "
+                    f"{list(UPLOAD_CONFIG)}"
+                ),
             )
 
+        # --------------------------------------------------------------------
+        # READ FILE
+        # --------------------------------------------------------------------
+
         raw_bytes = await file.read()
-        try:
-            xls = pd.ExcelFile(io.BytesIO(raw_bytes))
-        except Exception:
-            raise HTTPException(status_code=400, detail="Could not parse uploaded file as Excel.")
 
-        sheets: dict[str, pd.DataFrame] = {}
-        for sheet_cfg in config.sheets:
-            if sheet_cfg.name not in xls.sheet_names:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Sheet '{sheet_cfg.name}' is missing from the uploaded file.",
-                )
-            df = xls.parse(sheet_cfg.name).dropna(how="all")
+        if not raw_bytes:
 
-            missing_cols = [c for c in sheet_cfg.required_columns if c not in df.columns]
-            if missing_cols:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Column(s) {missing_cols} missing in sheet '{sheet_cfg.name}'.",
-                )
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded Excel file is empty.",
+            )
 
-            sheets[sheet_cfg.name] = df
+        # --------------------------------------------------------------------
+        # PARSE EXCEL
+        # --------------------------------------------------------------------
 
         try:
-            result: UploadResult = await config.handler(db, sheets, client_id)
-            await db.commit()
-        except HTTPException:
-            await db.rollback()
-            raise
+
+            xls = pd.ExcelFile(
+                io.BytesIO(raw_bytes)
+            )
+
         except Exception as exc:
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Could not parse uploaded "
+                    f"file as Excel: {exc}"
+                ),
+            )
+
+        # --------------------------------------------------------------------
+        # READ REQUIRED SHEETS
+        # --------------------------------------------------------------------
+
+        sheets: dict[
+            str,
+            pd.DataFrame,
+        ] = {}
+
+        for sheet_cfg in config.sheets:
+
+            if (
+                sheet_cfg.name
+                not in xls.sheet_names
+            ):
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Sheet '{sheet_cfg.name}' "
+                        f"is missing from the "
+                        f"uploaded file."
+                    ),
+                )
+
+            df = (
+                xls
+                .parse(sheet_cfg.name)
+                .dropna(how="all")
+            )
+
+            # Normalize column names
+            df.columns = [
+                str(col).strip()
+                for col in df.columns
+            ]
+
+            missing_cols = [
+                c
+                for c in sheet_cfg.required_columns
+                if c not in df.columns
+            ]
+
+            if missing_cols:
+
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Column(s) "
+                        f"{missing_cols} "
+                        f"missing in sheet "
+                        f"'{sheet_cfg.name}'."
+                    ),
+                )
+
+            sheets[
+                sheet_cfg.name
+            ] = df
+
+        # --------------------------------------------------------------------
+        # PROCESS UPLOAD
+        # --------------------------------------------------------------------
+
+        try:
+
+            if config.handler is None:
+
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        f"No upload handler "
+                        f"configured for "
+                        f"module '{module}'."
+                    ),
+                )
+
+            result: UploadResult = (
+                await config.handler(
+                    db,
+                    sheets,
+                    client_id,
+                )
+            )
+
+            await db.commit()
+
+        except HTTPException:
+
             await db.rollback()
+
+            raise
+
+        except Exception as exc:
+
+            await db.rollback()
+
             raise HTTPException(
                 status_code=500,
-                detail=f"Unexpected error during '{module}' upload: {exc}",
+                detail=(
+                    f"Unexpected error during "
+                    f"'{module}' upload: {exc}"
+                ),
             ) from exc
 
         return result.to_dict()
 
+    # ------------------------------------------------------------------------
+    # DOWNLOAD TEMPLATE
+    # ------------------------------------------------------------------------
+
     @staticmethod
-    async def download_template(module: str) -> FileResponse:
-        module = module.lower()
+    async def download_template(
+        module: str,
+    ) -> FileResponse:
+
+        module = module.lower().strip()
 
         if module not in TEMPLATES:
+
             raise HTTPException(
                 status_code=400,
-                detail=f"No template found for module '{module}'. Available: {list(TEMPLATES)}",
+                detail=(
+                    f"No template found for "
+                    f"module '{module}'. "
+                    f"Available: "
+                    f"{list(TEMPLATES)}"
+                ),
             )
 
         temp_dir = Path("temp")
-        temp_dir.mkdir(parents=True, exist_ok=True)
-        file_path = temp_dir / f"{module}_template.xlsx"
 
-        with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
-            for sheet_name, sample_data in TEMPLATES[module].items():
-                df = pd.DataFrame(sample_data)
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
-                _auto_width_excel(writer, sheet_name)
+        temp_dir.mkdir(
+            parents=True,
+            exist_ok=True,
+        )
+
+        file_path = (
+            temp_dir
+            / f"{module}_template.xlsx"
+        )
+
+        with pd.ExcelWriter(
+            file_path,
+            engine="openpyxl",
+        ) as writer:
+
+            for (
+                sheet_name,
+                sample_data,
+            ) in TEMPLATES[module].items():
+
+                df = pd.DataFrame(
+                    sample_data
+                )
+
+                df.to_excel(
+                    writer,
+                    sheet_name=sheet_name,
+                    index=False,
+                )
+
+                _auto_width_excel(
+                    writer,
+                    sheet_name,
+                )
 
         return FileResponse(
             path=str(file_path),
-            filename=f"{module}_template.xlsx",
-            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=(
+                f"{module}_template.xlsx"
+            ),
+            media_type=(
+                "application/vnd.openxmlformats-"
+                "officedocument.spreadsheetml.sheet"
+            ),
         )
 
 
-# ---------------------------------------------------------------------------
-# Branch permission helper
-# Defined here (above BulkExportService) so it is in scope when called.
-# ---------------------------------------------------------------------------
+# ============================================================================
+# BRANCH PERMISSION HELPER
+# ============================================================================
 
 async def get_allowed_branches(
     db: AsyncSession,
     client: Any,
 ) -> list[Branch]:
     """
-    Return all branches owned by the authenticated client.
+    Determine which branches the authenticated
+    client may access.
     """
 
-    result = await db.execute(
-        select(Branch).where(
-            Branch.client_id == client.id
-        )
-    )
+    # ------------------------------------------------------------------------
+    # ALL BRANCHES
+    # ------------------------------------------------------------------------
 
-    branches = result.scalars().all()
+    if getattr(
+        client,
+        "all_branches",
+        False,
+    ):
 
-    if not branches:
-        raise HTTPException(
-            status_code=403,
-            detail="No branches found for this client."
-        )
-
-    return branches
-    """
-    Determine which Branch objects the authenticated client may access.
-
-    Two scenarios:
-      - client.all_branches is True  -> return every branch owned by this client.
-      - otherwise                    -> return only the branches explicitly
-                                        assigned via client.branch_ids (list[int]).
-
-    Raises 403 if the resolved list is empty so callers never export
-    zero-branch data silently.
-    """
-    if getattr(client, "all_branches", False):
-        result = await db.execute(
-            select(Branch).where(Branch.client_id == client.id)
-        )
-        branches = result.scalars().all()
-    else:
-        assigned_ids: list[int] = getattr(client, "branch_ids", []) or []
-        if not assigned_ids:
-            raise HTTPException(
-                status_code=403,
-                detail="No branches are assigned to your account.",
-            )
         result = await db.execute(
             select(Branch).where(
-                Branch.client_id == client.id,
-                Branch.id.in_(assigned_ids),
+                Branch.client_id
+                == client.id
             )
         )
-        branches = result.scalars().all()
+
+        branches = (
+            result
+            .scalars()
+            .all()
+        )
+
+    # ------------------------------------------------------------------------
+    # ASSIGNED BRANCHES
+    # ------------------------------------------------------------------------
+
+    else:
+
+        assigned_ids: list[int] = (
+            getattr(
+                client,
+                "branch_ids",
+                [],
+            )
+            or []
+        )
+
+        if not assigned_ids:
+
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "No branches are assigned "
+                    "to your account."
+                ),
+            )
+
+        result = await db.execute(
+            select(Branch).where(
+                Branch.client_id
+                == client.id,
+                Branch.id.in_(
+                    assigned_ids
+                ),
+            )
+        )
+
+        branches = (
+            result
+            .scalars()
+            .all()
+        )
 
     if not branches:
+
         raise HTTPException(
             status_code=403,
-            detail="No accessible branches found for your account.",
+            detail=(
+                "No accessible branches "
+                "found for your account."
+            ),
         )
+
     return list(branches)
 
 
-# ---------------------------------------------------------------------------
-# Generic Excel generator
-# ---------------------------------------------------------------------------
+# ============================================================================
+# GENERIC EXCEL RESPONSE
+# ============================================================================
 
 def _build_excel_response(
     sheets: dict[str, pd.DataFrame],
     filename: str,
 ) -> FileResponse:
-    """Write one worksheet per DataFrame into a temp .xlsx and return FileResponse."""
+
     if not sheets:
-        raise HTTPException(status_code=404, detail="No data available for export.")
+
+        raise HTTPException(
+            status_code=404,
+            detail="No data available for export.",
+        )
 
     temp_dir = Path("temp")
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    file_path = temp_dir / filename
+
+    temp_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    file_path = (
+        temp_dir
+        / filename
+    )
 
     try:
-        with pd.ExcelWriter(file_path, engine="openpyxl") as writer:
-            for sheet_name, df in sheets.items():
-                df.to_excel(writer, sheet_name=sheet_name, index=False)
-                _auto_width_excel(writer, sheet_name)
+
+        with pd.ExcelWriter(
+            file_path,
+            engine="openpyxl",
+        ) as writer:
+
+            for (
+                sheet_name,
+                df,
+            ) in sheets.items():
+
+                df.to_excel(
+                    writer,
+                    sheet_name=sheet_name,
+                    index=False,
+                )
+
+                _auto_width_excel(
+                    writer,
+                    sheet_name,
+                )
+
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to generate Excel file: {exc}",
+            detail=(
+                f"Failed to generate "
+                f"Excel file: {exc}"
+            ),
         ) from exc
 
     return FileResponse(
         path=str(file_path),
         filename=filename,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        media_type=(
+            "application/vnd.openxmlformats-"
+            "officedocument.spreadsheetml.sheet"
+        ),
     )
 
 
-# ---------------------------------------------------------------------------
-# Module-specific export handlers
-# ---------------------------------------------------------------------------
-
+# ============================================================================
+# EXPORT - BILL
+# ============================================================================
 
 async def _export_bill(
     db: AsyncSession,
     branch_ids: list[int],
     client_id: int,
 ) -> dict[str, pd.DataFrame]:
-    """Export Bills for allowed branches."""
+
     result = await db.execute(
         select(Bill, Branch)
-        .join(Branch, Bill.branch_id == Branch.id)
-        .where(Bill.branch_id.in_(branch_ids))
+        .join(
+            Branch,
+            Bill.branch_id == Branch.id,
+        )
+        .where(
+            Bill.branch_id.in_(branch_ids)
+        )
     )
+
     rows = result.all()
 
     data = [
@@ -1001,48 +2177,98 @@ async def _export_bill(
             "Invoice No": bill.invoice_no,
             "Branch Code": branch.branch_code,
             "Order Type": bill.order_type,
-            "Customer Name": bill.customer_name or "",
-            "Customer Phone": bill.customer_phone or "",
-            "Payment Status": bill.payment_status.value,   # enum → string
-            "Payment Method": bill.payment_method or "",
+            "Customer Name": (
+                bill.customer_name or ""
+            ),
+            "Customer Phone": (
+                bill.customer_phone or ""
+            ),
+            "Payment Status": (
+                bill.payment_status.value
+                if bill.payment_status
+                else ""
+            ),
+            "Payment Method": (
+                bill.payment_method or ""
+            ),
             "Subtotal": bill.subtotal,
             "CGST %": bill.cgst_percent,
             "CGST Amount": bill.cgst_amount,
             "SGST %": bill.sgst_percent,
             "SGST Amount": bill.sgst_amount,
-            "Service Charge %": bill.service_charge_percent,
-            "Service Charge Amount": bill.service_charge_amount,
+            "Service Charge %": (
+                bill.service_charge_percent
+            ),
+            "Service Charge Amount": (
+                bill.service_charge_amount
+            ),
             "Tax Total": bill.tax_total,
-            "Discount Amount": bill.discount_amount,
-            "Round Off Amount": bill.round_off_amount,
+            "Discount Amount": (
+                bill.discount_amount
+            ),
+            "Round Off Amount": (
+                bill.round_off_amount
+            ),
             "Grand Total": bill.grand_total,
             "Paid Amount": bill.paid_amount,
             "Due Amount": bill.due_amount,
-            "Offer Discount": bill.offer_discount,
+            "Offer Discount": (
+                bill.offer_discount
+            ),
             "Final Amount": bill.final_amount,
             "Notes": bill.notes or "",
-            "Footer Message": bill.footer_message or "",
-            "Billed At": bill.billed_at.strftime("%Y-%m-%d %H:%M:%S") if bill.billed_at else "",
+            "Footer Message": (
+                bill.footer_message or ""
+            ),
+            "Billed At": (
+                bill.billed_at.strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                if bill.billed_at
+                else ""
+            ),
         }
         for bill, branch in rows
     ]
 
-    return {"Bills": pd.DataFrame(data)}
+    return {
+        "Bills": pd.DataFrame(data)
+    }
 
 
+# ============================================================================
+# EXPORT - MENU
+# ============================================================================
 
 async def _export_menu(
     db: AsyncSession,
     branch_ids: list[int],
     client_id: int,
 ) -> dict[str, pd.DataFrame]:
-    """Export Menu Items, Pricing, and BOM for allowed branches."""
+
+    # ------------------------------------------------------------------------
+    # MENU ITEMS
+    # ------------------------------------------------------------------------
+
     items_result = await db.execute(
-        select(Item, Branch, Category)
-        .join(Branch, Item.branch_id == Branch.id)
-        .join(Category, Item.category_id == Category.id)
-        .where(Item.branch_id.in_(branch_ids))
+        select(
+            Item,
+            Branch,
+            Category,
+        )
+        .join(
+            Branch,
+            Item.branch_id == Branch.id,
+        )
+        .join(
+            Category,
+            Item.category_id == Category.id,
+        )
+        .where(
+            Item.branch_id.in_(branch_ids)
+        )
     )
+
     items_rows = items_result.all()
 
     menu_items_data = [
@@ -1050,18 +2276,40 @@ async def _export_menu(
             "Name": item.name,
             "Category": category.name,
             "Branch Code": branch.branch_code,
-            "Food Type": item.food_type.value if item.food_type else "",
+            "Food Type": (
+                item.food_type.value
+                if item.food_type
+                else ""
+            ),
             "Active": item.is_active,
         }
-        for item, branch, category in items_rows
+        for item, branch, category
+        in items_rows
     ]
 
+    # ------------------------------------------------------------------------
+    # PRICING
+    # ------------------------------------------------------------------------
+
     pricing_result = await db.execute(
-        select(Pricing, Item, Branch)
-        .join(Item, Pricing.item_id == Item.id)
-        .join(Branch, Pricing.branch_id == Branch.id)
-        .where(Pricing.branch_id.in_(branch_ids))
+        select(
+            Pricing,
+            Item,
+            Branch,
+        )
+        .join(
+            Item,
+            Pricing.item_id == Item.id,
+        )
+        .join(
+            Branch,
+            Pricing.branch_id == Branch.id,
+        )
+        .where(
+            Pricing.branch_id.in_(branch_ids)
+        )
     )
+
     pricing_rows = pricing_result.all()
 
     pricing_data = [
@@ -1077,17 +2325,46 @@ async def _export_menu(
             "Calories": pricing.calories,
             "Active": pricing.is_active,
         }
-        for pricing, item, branch in pricing_rows
+        for pricing, item, branch
+        in pricing_rows
     ]
 
+    # ------------------------------------------------------------------------
+    # BOM
+    # ------------------------------------------------------------------------
+
     bom_result = await db.execute(
-        select(ItemIngredient, Item, InventoryItem, Godown, Branch)
-        .join(Item, ItemIngredient.item_id == Item.id)
-        .join(InventoryItem, ItemIngredient.inventory_item_id == InventoryItem.id)
-        .join(Godown, ItemIngredient.godown_id == Godown.id)
-        .join(Branch, Item.branch_id == Branch.id)
-        .where(Item.branch_id.in_(branch_ids))
+        select(
+            ItemIngredient,
+            Item,
+            InventoryItem,
+            Godown,
+            Branch,
+        )
+        .join(
+            Item,
+            ItemIngredient.item_id
+            == Item.id,
+        )
+        .join(
+            InventoryItem,
+            ItemIngredient.inventory_item_id
+            == InventoryItem.id,
+        )
+        .join(
+            Godown,
+            ItemIngredient.godown_id
+            == Godown.id,
+        )
+        .join(
+            Branch,
+            Item.branch_id == Branch.id,
+        )
+        .where(
+            Item.branch_id.in_(branch_ids)
+        )
     )
+
     bom_rows = bom_result.all()
 
     bom_data = [
@@ -1096,65 +2373,140 @@ async def _export_menu(
             "Branch Code": branch.branch_code,
             "Inventory Item": inv_item.name,
             "Godown": godown.name,
-            "Quantity": ingredient.quantity_required,
+            "Quantity": (
+                ingredient.quantity_required
+            ),
         }
-        for ingredient, item, inv_item, godown, branch in bom_rows
+        for (
+            ingredient,
+            item,
+            inv_item,
+            godown,
+            branch,
+        ) in bom_rows
     ]
 
     return {
-        "Menu_Items": pd.DataFrame(menu_items_data),
-        "Pricing": pd.DataFrame(pricing_data),
-        "BOM": pd.DataFrame(bom_data),
+        "Menu_Items": pd.DataFrame(
+            menu_items_data
+        ),
+        "Pricing": pd.DataFrame(
+            pricing_data
+        ),
+        "BOM": pd.DataFrame(
+            bom_data
+        ),
     }
 
+
+# ============================================================================
+# EXPORT - INVENTORY
+# ============================================================================
 
 async def _export_inventory(
     db: AsyncSession,
     branch_ids: list[int],
     client_id: int,
 ) -> dict[str, pd.DataFrame]:
-    """Export Inventory Items for allowed branches."""
+
     result = await db.execute(
-        select(InventoryItem, Branch, Godown)
-        .join(Branch, InventoryItem.branch_id == Branch.id)
-        .outerjoin(Godown, InventoryItem.godown_id == Godown.id)
-        .where(InventoryItem.branch_id.in_(branch_ids))
+        select(
+            InventoryItem,
+            Branch,
+            Godown,
+        )
+        .join(
+            Branch,
+            InventoryItem.branch_id
+            == Branch.id,
+        )
+        .outerjoin(
+            Godown,
+            InventoryItem.godown_id
+            == Godown.id,
+        )
+        .where(
+            InventoryItem.branch_id.in_(
+                branch_ids
+            )
+        )
     )
+
     rows = result.all()
 
     data = [
         {
             "Name": inv.name,
             "Branch Code": branch.branch_code,
-            "Godown": godown.name if godown else "",
+            "Godown": (
+                godown.name
+                if godown
+                else ""
+            ),
             "Category": inv.row_category,
             "Unit": inv.unit,
             "Display Unit": inv.display_unit,
-            "Conversion Factor": inv.conversion_factor,
+            "Conversion Factor": (
+                inv.conversion_factor
+            ),
             "Stock Qty": inv.stock_qty,
-            "Reorder Level": inv.reorder_level,
-            "Cost Per Unit": inv.cost_per_unit,
-            "Vendor Name": inv.vendor_name or "",
-            "Vendor Phone": inv.vendor_phone or "",
-            "Status": inv.status,
+            "Reorder Level": (
+                inv.reorder_level
+            ),
+            "Cost Per Unit": (
+                inv.cost_per_unit
+            ),
+            "Vendor Name": (
+                inv.vendor_name or ""
+            ),
+            "Vendor Phone": (
+                inv.vendor_phone or ""
+            ),
+            "Status": (
+                inv.status.value
+                if hasattr(
+                    inv.status,
+                    "value",
+                )
+                else inv.status
+            ),
         }
-        for inv, branch, godown in rows
+        for inv, branch, godown
+        in rows
     ]
 
-    return {"Inventory_Items": pd.DataFrame(data)}
+    return {
+        "Inventory_Items": pd.DataFrame(data)
+    }
 
+
+# ============================================================================
+# EXPORT - CATEGORY
+# ============================================================================
 
 async def _export_category(
     db: AsyncSession,
     branch_ids: list[int],
     client_id: int,
 ) -> dict[str, pd.DataFrame]:
-    """Export Categories for allowed branches."""
+
     result = await db.execute(
-        select(Category, Branch)
-        .join(Branch, Category.branch_id == Branch.id)
-        .where(Category.branch_id.in_(branch_ids))
+        select(
+            Category,
+            Branch,
+        )
+        .join(
+            Branch,
+            Category.branch_id
+            == Branch.id,
+        )
+        .where(
+            Category.branch_id.in_(
+                branch_ids
+            )
+        )
     )
+
     rows = result.all()
 
     data = [
@@ -1163,33 +2515,46 @@ async def _export_category(
             "Branch Code": branch.branch_code,
             "Active": category.is_active,
         }
-        for category, branch in rows
+        for category, branch
+        in rows
     ]
 
-    return {"Categories": pd.DataFrame(data)}
+    return {
+        "Categories": pd.DataFrame(data)
+    }
 
 
+# ============================================================================
+# EXPORT - ALL REPORTS
+# ============================================================================
 
 async def _export_all_reports(
     db: AsyncSession,
     branch_ids: list[int],
     client_id: int,
 ) -> dict[str, pd.DataFrame]:
-    """Export all reports into a single Excel with one sheet each."""
+
     from datetime import datetime, timedelta
     from sqlalchemy import func
 
-    from app.accounts.order.model import Order, OrderItem
-    from app.accounts.payment.model import Payment
+    # ------------------------------------------------------------------------
+    # BILLS
+    # ------------------------------------------------------------------------
 
-    # ----------------------------------------------------------------
-    # Sheet 1: Bills
-    # ----------------------------------------------------------------
     bills_result = await db.execute(
-        select(Bill, Branch)
-        .join(Branch, Bill.branch_id == Branch.id)
-        .where(Bill.branch_id.in_(branch_ids))
+        select(
+            Bill,
+            Branch,
+        )
+        .join(
+            Branch,
+            Bill.branch_id == Branch.id,
+        )
+        .where(
+            Bill.branch_id.in_(branch_ids)
+        )
     )
+
     bills_rows = bills_result.all()
 
     bills_data = [
@@ -1197,172 +2562,420 @@ async def _export_all_reports(
             "Invoice No": bill.invoice_no,
             "Branch Code": branch.branch_code,
             "Order Type": bill.order_type,
-            "Customer Name": bill.customer_name or "",
-            "Customer Phone": bill.customer_phone or "",
-            "Payment Status": bill.payment_status.value,
-            "Payment Method": bill.payment_method or "",
+            "Customer Name": (
+                bill.customer_name or ""
+            ),
+            "Customer Phone": (
+                bill.customer_phone or ""
+            ),
+            "Payment Status": (
+                bill.payment_status.value
+                if bill.payment_status
+                else ""
+            ),
+            "Payment Method": (
+                bill.payment_method or ""
+            ),
             "Subtotal": bill.subtotal,
             "CGST %": bill.cgst_percent,
             "CGST Amount": bill.cgst_amount,
             "SGST %": bill.sgst_percent,
             "SGST Amount": bill.sgst_amount,
-            "Service Charge %": bill.service_charge_percent,
-            "Service Charge Amount": bill.service_charge_amount,
+            "Service Charge %": (
+                bill.service_charge_percent
+            ),
+            "Service Charge Amount": (
+                bill.service_charge_amount
+            ),
             "Tax Total": bill.tax_total,
-            "Discount Amount": bill.discount_amount,
-            "Round Off Amount": bill.round_off_amount,
+            "Discount Amount": (
+                bill.discount_amount
+            ),
+            "Round Off Amount": (
+                bill.round_off_amount
+            ),
             "Grand Total": bill.grand_total,
             "Paid Amount": bill.paid_amount,
             "Due Amount": bill.due_amount,
-            "Offer Discount": bill.offer_discount,
+            "Offer Discount": (
+                bill.offer_discount
+            ),
             "Final Amount": bill.final_amount,
             "Notes": bill.notes or "",
-            "Billed At": bill.billed_at.strftime("%Y-%m-%d %H:%M:%S") if bill.billed_at else "",
+            "Billed At": (
+                bill.billed_at.strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                if bill.billed_at
+                else ""
+            ),
         }
-        for bill, branch in bills_rows
+        for bill, branch
+        in bills_rows
     ]
 
-    # ----------------------------------------------------------------
-    # Sheet 2: Financial Summary (per branch)
-    # ----------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # FINANCIAL SUMMARY
+    # ------------------------------------------------------------------------
+
     financial_data = []
+
     for bid in branch_ids:
-        branch_obj = next((b for _, b in bills_rows if b.id == bid), None)
-        branch_code = branch_obj.branch_code if branch_obj else str(bid)
+
+        branch_obj = next(
+            (
+                branch
+                for bill, branch
+                in bills_rows
+                if bill.branch_id == bid
+            ),
+            None,
+        )
+
+        branch_code = (
+            branch_obj.branch_code
+            if branch_obj
+            else str(bid)
+        )
 
         revenue = await db.scalar(
-            select(func.coalesce(func.sum(Bill.grand_total), 0))
-            .where(Bill.branch_id == bid, Bill.payment_status == PaymentStatus.complete)
+            select(
+                func.coalesce(
+                    func.sum(
+                        Bill.grand_total
+                    ),
+                    0,
+                )
+            )
+            .where(
+                Bill.branch_id == bid,
+                Bill.payment_status
+                == PaymentStatus.complete,
+            )
         ) or 0
 
         paid_orders = await db.scalar(
-            select(func.count(Bill.id))
-            .where(Bill.branch_id == bid, Bill.payment_status == PaymentStatus.complete)
+            select(
+                func.count(Bill.id)
+            )
+            .where(
+                Bill.branch_id == bid,
+                Bill.payment_status
+                == PaymentStatus.complete,
+            )
         ) or 0
 
         tax_total = await db.scalar(
-            select(func.coalesce(func.sum(Bill.tax_total + Bill.service_charge_amount), 0))
-            .where(Bill.branch_id == bid, Bill.payment_status == PaymentStatus.complete)
+            select(
+                func.coalesce(
+                    func.sum(
+                        Bill.tax_total
+                        + Bill.service_charge_amount
+                    ),
+                    0,
+                )
+            )
+            .where(
+                Bill.branch_id == bid,
+                Bill.payment_status
+                == PaymentStatus.complete,
+            )
         ) or 0
 
-        financial_data.append({
-            "Branch Code": branch_code,
-            "Total Revenue": round(float(revenue), 2),
-            "Paid Orders": paid_orders,
-            "Tax Collected": round(float(tax_total), 2),
-            "Avg Order Value": round(float(revenue) / paid_orders, 2) if paid_orders else 0,
-        })
+        financial_data.append(
+            {
+                "Branch Code": branch_code,
+                "Total Revenue": round(
+                    float(revenue),
+                    2,
+                ),
+                "Paid Orders": paid_orders,
+                "Tax Collected": round(
+                    float(tax_total),
+                    2,
+                ),
+                "Avg Order Value": (
+                    round(
+                        float(revenue)
+                        / paid_orders,
+                        2,
+                    )
+                    if paid_orders
+                    else 0
+                ),
+            }
+        )
 
-    # ----------------------------------------------------------------
-    # Sheet 3: Sales Summary — this week per branch
-    # ----------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # SALES SUMMARY
+    # ------------------------------------------------------------------------
+
     today = datetime.utcnow()
-    start_of_week = (today - timedelta(days=today.weekday())).replace(
-        hour=0, minute=0, second=0, microsecond=0
+
+    start_of_week = (
+        today
+        - timedelta(
+            days=today.weekday()
+        )
+    ).replace(
+        hour=0,
+        minute=0,
+        second=0,
+        microsecond=0,
     )
-    end_of_week = (start_of_week + timedelta(days=5)).replace(
-        hour=23, minute=59, second=59, microsecond=999999
+
+    end_of_week = (
+        start_of_week
+        + timedelta(days=6)
+    ).replace(
+        hour=23,
+        minute=59,
+        second=59,
+        microsecond=999999,
     )
 
     sales_data = []
+
     for bid in branch_ids:
-        branch_obj = next((b for _, b in bills_rows if b.id == bid), None)
-        branch_code = branch_obj.branch_code if branch_obj else str(bid)
+
+        branch_obj = next(
+            (
+                branch
+                for bill, branch
+                in bills_rows
+                if bill.branch_id == bid
+            ),
+            None,
+        )
+
+        branch_code = (
+            branch_obj.branch_code
+            if branch_obj
+            else str(bid)
+        )
 
         week_orders = await db.scalar(
-            select(func.count(Order.id))
+            select(
+                func.count(Order.id)
+            )
             .where(
                 Order.branch_id == bid,
-                Order.created_at >= start_of_week,
-                Order.created_at <= end_of_week,
+                Order.created_at
+                >= start_of_week,
+                Order.created_at
+                <= end_of_week,
             )
         ) or 0
 
         week_revenue = await db.scalar(
-            select(func.coalesce(func.sum(Bill.grand_total), 0))
+            select(
+                func.coalesce(
+                    func.sum(
+                        Bill.grand_total
+                    ),
+                    0,
+                )
+            )
             .where(
                 Bill.branch_id == bid,
-                Bill.created_at >= start_of_week,
-                Bill.created_at <= end_of_week,
-                Bill.payment_status == PaymentStatus.complete,
+                Bill.created_at
+                >= start_of_week,
+                Bill.created_at
+                <= end_of_week,
+                Bill.payment_status
+                == PaymentStatus.complete,
             )
         ) or 0
 
-        sales_data.append({
-            "Branch Code": branch_code,
-            "This Week Orders": week_orders,
-            "This Week Revenue": round(float(week_revenue), 2),
-            "Avg Daily Orders": round(week_orders / 6, 1),
-        })
+        sales_data.append(
+            {
+                "Branch Code": branch_code,
+                "This Week Orders": week_orders,
+                "This Week Revenue": round(
+                    float(week_revenue),
+                    2,
+                ),
+                "Avg Daily Orders": round(
+                    week_orders / 7,
+                    1,
+                ),
+            }
+        )
 
-    # ----------------------------------------------------------------
-    # Sheet 4: Top Selling Items
-    # ----------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # TOP SELLING ITEMS
+    # ------------------------------------------------------------------------
+
     top_items_result = await db.execute(
         select(
-            Item.name.label("item_name"),
-            func.sum(OrderItem.quantity).label("quantity_sold"),
+            Item.name.label(
+                "item_name"
+            ),
+            func.sum(
+                OrderItem.quantity
+            ).label(
+                "quantity_sold"
+            ),
         )
-        .join(OrderItem, OrderItem.item_id == Item.id)
-        .join(Order, Order.id == OrderItem.order_id)
-        .join(Bill, Bill.order_id == Order.id)
+        .join(
+            OrderItem,
+            OrderItem.item_id
+            == Item.id,
+        )
+        .join(
+            Order,
+            Order.id
+            == OrderItem.order_id,
+        )
+        .join(
+            Bill,
+            Bill.order_id
+            == Order.id,
+        )
         .where(
-            Order.branch_id.in_(branch_ids),
-            Bill.payment_status == PaymentStatus.complete,
+            Order.branch_id.in_(
+                branch_ids
+            ),
+            Bill.payment_status
+            == PaymentStatus.complete,
         )
-        .group_by(Item.name)
-        .order_by(func.sum(OrderItem.quantity).desc())
+        .group_by(
+            Item.name
+        )
+        .order_by(
+            func.sum(
+                OrderItem.quantity
+            ).desc()
+        )
         .limit(50)
     )
-    top_items_rows = top_items_result.all()
-    total_qty = sum(r.quantity_sold for r in top_items_rows)
+
+    top_items_rows = (
+        top_items_result.all()
+    )
+
+    total_qty = sum(
+        r.quantity_sold
+        for r in top_items_rows
+    )
 
     top_items_data = [
         {
             "Item Name": r.item_name,
             "Quantity Sold": r.quantity_sold,
-            "% of Total": round((r.quantity_sold / total_qty) * 100, 2) if total_qty else 0,
+            "% of Total": (
+                round(
+                    (
+                        r.quantity_sold
+                        / total_qty
+                    )
+                    * 100,
+                    2,
+                )
+                if total_qty
+                else 0
+            ),
         }
         for r in top_items_rows
     ]
 
-    # ----------------------------------------------------------------
-    # Sheet 5: Category Distribution
-    # ----------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # CATEGORY DISTRIBUTION
+    # ------------------------------------------------------------------------
+
     cat_result = await db.execute(
         select(
-            Category.name.label("category_name"),
+            Category.name.label(
+                "category_name"
+            ),
             Branch.branch_code,
-            func.count(Item.id).label("item_count"),
+            func.count(
+                Item.id
+            ).label(
+                "item_count"
+            ),
         )
-        .outerjoin(Item, Item.category_id == Category.id)
-        .join(Branch, Category.branch_id == Branch.id)
-        .where(Category.branch_id.in_(branch_ids))
-        .group_by(Category.name, Branch.branch_code)
-        .order_by(func.count(Item.id).desc())
+        .outerjoin(
+            Item,
+            Item.category_id
+            == Category.id,
+        )
+        .join(
+            Branch,
+            Category.branch_id
+            == Branch.id,
+        )
+        .where(
+            Category.branch_id.in_(
+                branch_ids
+            )
+        )
+        .group_by(
+            Category.name,
+            Branch.branch_code,
+        )
+        .order_by(
+            func.count(
+                Item.id
+            ).desc()
+        )
     )
+
     cat_rows = cat_result.all()
-    total_cat_items = sum(r.item_count for r in cat_rows)
+
+    total_cat_items = sum(
+        r.item_count
+        for r in cat_rows
+    )
 
     category_data = [
         {
             "Branch Code": r.branch_code,
             "Category": r.category_name,
             "Item Count": r.item_count,
-            "% of Menu": round((r.item_count / total_cat_items) * 100, 2) if total_cat_items else 0,
+            "% of Menu": (
+                round(
+                    (
+                        r.item_count
+                        / total_cat_items
+                    )
+                    * 100,
+                    2,
+                )
+                if total_cat_items
+                else 0
+            ),
         }
         for r in cat_rows
     ]
 
-    # ----------------------------------------------------------------
-    # Sheet 6: Inventory Summary
-    # ----------------------------------------------------------------
+    # ------------------------------------------------------------------------
+    # INVENTORY SUMMARY
+    # ------------------------------------------------------------------------
+
     inv_result = await db.execute(
-        select(InventoryItem, Branch, Godown)
-        .join(Branch, InventoryItem.branch_id == Branch.id)
-        .outerjoin(Godown, InventoryItem.godown_id == Godown.id)
-        .where(InventoryItem.branch_id.in_(branch_ids))
+        select(
+            InventoryItem,
+            Branch,
+            Godown,
+        )
+        .join(
+            Branch,
+            InventoryItem.branch_id
+            == Branch.id,
+        )
+        .outerjoin(
+            Godown,
+            InventoryItem.godown_id
+            == Godown.id,
+        )
+        .where(
+            InventoryItem.branch_id.in_(
+                branch_ids
+            )
+        )
     )
+
     inv_rows = inv_result.all()
 
     inventory_data = [
@@ -1370,87 +2983,222 @@ async def _export_all_reports(
             "Branch Code": branch.branch_code,
             "Name": inv.name,
             "Category": inv.row_category,
-            "Godown": godown.name if godown else "",
+            "Godown": (
+                godown.name
+                if godown
+                else ""
+            ),
             "Unit": inv.unit,
             "Stock Qty": inv.stock_qty,
-            "Reorder Level": inv.reorder_level,
-            "Cost Per Unit": inv.cost_per_unit,
-            "Stock Value": round((inv.stock_qty or 0) * (inv.cost_per_unit or 0), 2),
-            "Status": inv.status,
-            "Vendor Name": inv.vendor_name or "",
-            "Vendor Phone": inv.vendor_phone or "",
+            "Reorder Level": (
+                inv.reorder_level
+            ),
+            "Cost Per Unit": (
+                inv.cost_per_unit
+            ),
+            "Stock Value": round(
+                (
+                    inv.stock_qty or 0
+                )
+                * (
+                    inv.cost_per_unit or 0
+                ),
+                2,
+            ),
+            "Status": (
+                inv.status.value
+                if hasattr(
+                    inv.status,
+                    "value",
+                )
+                else inv.status
+            ),
+            "Vendor Name": (
+                inv.vendor_name or ""
+            ),
+            "Vendor Phone": (
+                inv.vendor_phone or ""
+            ),
         }
-        for inv, branch, godown in inv_rows
+        for inv, branch, godown
+        in inv_rows
     ]
 
-    # ----------------------------------------------------------------
-    # Sheet 7: Payment Method Totals
-    # ----------------------------------------------------------------
-    payments_result = await db.execute(
-        select(Payment, Branch)
-        .join(Branch, Payment.branch_id == Branch.id)
-        .where(Branch.id.in_(branch_ids))
-    )
-    payments_rows = payments_result.all()
+    # ------------------------------------------------------------------------
+    # PAYMENT METHOD TOTALS
+    # ------------------------------------------------------------------------
 
-    payment_totals: dict[str, dict] = {}
+    payments_result = await db.execute(
+        select(
+            Payment,
+            Branch,
+        )
+        .join(
+            Branch,
+            Payment.branch_id
+            == Branch.id,
+        )
+        .where(
+            Branch.id.in_(branch_ids)
+        )
+    )
+
+    payments_rows = (
+        payments_result.all()
+    )
+
+    payment_totals: dict[
+        str,
+        dict,
+    ] = {}
+
     for payment, branch in payments_rows:
+
         code = branch.branch_code
+
         if code not in payment_totals:
+
             payment_totals[code] = {
                 "Branch Code": code,
-                "Cash Orders": 0, "Cash Total": 0,
-                "UPI Orders": 0, "UPI Total": 0,
-                "Card Orders": 0, "Card Total": 0,
-                "Credit Orders": 0, "Credit Total": 0,
+                "Cash Orders": 0,
+                "Cash Total": 0,
+                "UPI Orders": 0,
+                "UPI Total": 0,
+                "Card Orders": 0,
+                "Card Total": 0,
+                "Credit Orders": 0,
+                "Credit Total": 0,
                 "Grand Total": 0,
             }
-        for item in (payment.payment_breakdown or []):
-            method = (item.get("payment_method") or "").lower()
-            amount = float(item.get("payment_amount", 0))
+
+        breakdown = (
+            payment.payment_breakdown
+            or []
+        )
+
+        for item in breakdown:
+
+            method = (
+                item.get(
+                    "payment_method"
+                )
+                or ""
+            ).lower()
+
+            amount = float(
+                item.get(
+                    "payment_amount",
+                    0,
+                )
+                or 0
+            )
+
             if method == "cash":
-                payment_totals[code]["Cash Orders"] += 1
-                payment_totals[code]["Cash Total"] += amount
+
+                payment_totals[code][
+                    "Cash Orders"
+                ] += 1
+
+                payment_totals[code][
+                    "Cash Total"
+                ] += amount
+
             elif method == "upi":
-                payment_totals[code]["UPI Orders"] += 1
-                payment_totals[code]["UPI Total"] += amount
+
+                payment_totals[code][
+                    "UPI Orders"
+                ] += 1
+
+                payment_totals[code][
+                    "UPI Total"
+                ] += amount
+
             elif method == "card":
-                payment_totals[code]["Card Orders"] += 1
-                payment_totals[code]["Card Total"] += amount
+
+                payment_totals[code][
+                    "Card Orders"
+                ] += 1
+
+                payment_totals[code][
+                    "Card Total"
+                ] += amount
+
             elif method == "credit":
-                payment_totals[code]["Credit Orders"] += 1
-                payment_totals[code]["Credit Total"] += amount
+
+                payment_totals[code][
+                    "Credit Orders"
+                ] += 1
+
+                payment_totals[code][
+                    "Credit Total"
+                ] += amount
 
     for row in payment_totals.values():
+
         row["Grand Total"] = round(
-            row["Cash Total"] + row["UPI Total"] + row["Card Total"] + row["Credit Total"], 2
+            row["Cash Total"]
+            + row["UPI Total"]
+            + row["Card Total"]
+            + row["Credit Total"],
+            2,
         )
-        for key in ("Cash Total", "UPI Total", "Card Total", "Credit Total"):
-            row[key] = round(row[key], 2)
 
-    payment_data = list(payment_totals.values())
+        for key in (
+            "Cash Total",
+            "UPI Total",
+            "Card Total",
+            "Credit Total",
+        ):
 
-    # ----------------------------------------------------------------
-    # Assemble all sheets
-    # ----------------------------------------------------------------
+            row[key] = round(
+                row[key],
+                2,
+            )
+
+    payment_data = list(
+        payment_totals.values()
+    )
+
+    # ------------------------------------------------------------------------
+    # RETURN ALL REPORTS
+    # ------------------------------------------------------------------------
+
     return {
-        "Bills": pd.DataFrame(bills_data),
-        "Financial_Summary": pd.DataFrame(financial_data),
-        "Sales_Summary": pd.DataFrame(sales_data),
-        "Top_Selling_Items": pd.DataFrame(top_items_data),
-        "Category_Distribution": pd.DataFrame(category_data),
-        "Inventory": pd.DataFrame(inventory_data),
-        "Payment_Totals": pd.DataFrame(payment_data),
+        "Bills": pd.DataFrame(
+            bills_data
+        ),
+        "Financial_Summary": pd.DataFrame(
+            financial_data
+        ),
+        "Sales_Summary": pd.DataFrame(
+            sales_data
+        ),
+        "Top_Selling_Items": pd.DataFrame(
+            top_items_data
+        ),
+        "Category_Distribution": pd.DataFrame(
+            category_data
+        ),
+        "Inventory": pd.DataFrame(
+            inventory_data
+        ),
+        "Payment_Totals": pd.DataFrame(
+            payment_data
+        ),
     }
 
 
-# ---------------------------------------------------------------------------
-# Export handler registry
-# ---------------------------------------------------------------------------
+# ============================================================================
+# EXPORT HANDLER REGISTRY
+# ============================================================================
 
-ExportHandler = Callable  # async (db, branch_ids, client_id) -> dict[str, pd.DataFrame]
+ExportHandler = Callable
 
-EXPORT_HANDLERS: dict[str, ExportHandler] = {
+
+EXPORT_HANDLERS: dict[
+    str,
+    ExportHandler,
+] = {
     "menu": _export_menu,
     "inventory": _export_inventory,
     "category": _export_category,
@@ -1459,18 +3207,13 @@ EXPORT_HANDLERS: dict[str, ExportHandler] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# BulkExportService
-# ---------------------------------------------------------------------------
+# ============================================================================
+# BULK EXPORT SERVICE
+# ============================================================================
 
 class BulkExportService:
     """
     Generic export orchestrator.
-
-    Adding a new export module requires:
-      1. A new async _export_<module>(db, branch_ids, client_id) function.
-      2. A new entry in EXPORT_HANDLERS.
-    No changes needed here.
     """
 
     @staticmethod
@@ -1479,43 +3222,81 @@ class BulkExportService:
         module: str,
         client: Any,
     ) -> FileResponse:
-        module = module.lower()
-        handler = EXPORT_HANDLERS.get(module)
+
+        module = module.lower().strip()
+
+        handler = EXPORT_HANDLERS.get(
+            module
+        )
+
         if handler is None:
+
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    f"Unknown export module '{module}'. "
-                    f"Supported: {list(EXPORT_HANDLERS)}"
+                    f"Unknown export module "
+                    f"'{module}'. Supported: "
+                    f"{list(EXPORT_HANDLERS)}"
                 ),
             )
 
-        print("CLIENT:", client)
-        print("CLIENT ID:", client.id)
-        print("ALL BRANCHES:", getattr(client, "all_branches", None))
-        print("BRANCH IDS:", getattr(client, "branch_ids", None))
+        allowed_branches = (
+            await get_allowed_branches(
+                db,
+                client,
+            )
+        )
 
-        # get_allowed_branches is defined above in this same module — no import needed.
-        allowed_branches = await get_allowed_branches(db, client)
-        branch_ids = [b.id for b in allowed_branches]
+        branch_ids = [
+            b.id
+            for b in allowed_branches
+        ]
 
         try:
-            sheets: dict[str, pd.DataFrame] = await handler(db, branch_ids, client.id)
+
+            sheets = await handler(
+                db,
+                branch_ids,
+                client.id,
+            )
+
         except HTTPException:
             raise
+
         except Exception as exc:
+
             raise HTTPException(
                 status_code=500,
-                detail=f"Unexpected error during '{module}' export: {exc}",
+                detail=(
+                    f"Unexpected error during "
+                    f"'{module}' export: {exc}"
+                ),
             ) from exc
 
-        total_rows = sum(len(df) for df in sheets.values())
+        total_rows = sum(
+            len(df)
+            for df in sheets.values()
+        )
+
         if total_rows == 0:
+
             raise HTTPException(
                 status_code=404,
-                detail=f"No data found for module '{module}' in your accessible branches.",
+                detail=(
+                    f"No data found for "
+                    f"module '{module}' in your "
+                    f"accessible branches."
+                ),
             )
 
         from datetime import date
-        filename = f"{module}_export_{date.today()}.xlsx"
-        return _build_excel_response(sheets, filename)
+
+        filename = (
+            f"{module}_export_"
+            f"{date.today()}.xlsx"
+        )
+
+        return _build_excel_response(
+            sheets,
+            filename,
+        )
