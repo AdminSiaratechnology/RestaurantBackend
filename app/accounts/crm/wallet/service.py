@@ -17,7 +17,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from app.accounts.branch.model import Branch, statusEnum
-from app.accounts.crm.customer.model import Customer
+from app.accounts.customer.model import Customer
 from app.accounts.crm.loyalty.model import (
     CustomerLoyaltyAccount,
     LoyaltyTransaction,
