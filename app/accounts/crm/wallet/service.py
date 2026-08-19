@@ -1,29 +1,33 @@
 """
 CRM Wallet Service.
+
+Responsibilities:
+- Customer wallet account management
+- Wallet transactions
+- Loyalty points -> wallet conversion
+- Wallet discount calculation
+- Wallet debit
+
+Important:
+Wallet is NOT a payment method.
+It is only used as a discount/contribution against a bill.
 """
 
 from fastapi import HTTPException
 from sqlalchemy import select
 
-from app.accounts.crm.wallet.model import (
-    CustomerWalletAccount,
-    WalletTransaction,
-)
-
+from app.accounts.branch.model import Branch, statusEnum
+from app.accounts.crm.customer.model import Customer
 from app.accounts.crm.loyalty.model import (
     CustomerLoyaltyAccount,
     LoyaltyTransaction,
 )
-
 from app.accounts.crm.loyalty.conversion_rule.model import (
     LoyaltyConversionRule,
 )
-
-from app.accounts.customer.model import Customer
-
-from app.accounts.branch.model import (
-    Branch,
-    statusEnum,
+from app.accounts.crm.wallet.model import (
+    CustomerWalletAccount,
+    WalletTransaction,
 )
 
 
@@ -68,7 +72,7 @@ async def get_branch(
 
     Branch must:
     - exist
-    - belong to the customer/client
+    - belong to client
     - be active
     """
 
@@ -87,17 +91,13 @@ async def get_branch(
             detail="Branch not found for this client",
         )
 
-    # --------------------------------------------------------
-    # IMPORTANT:
-    # Branch enum values are:
-    #
-    # ACTIVE = "active"
-    # INACTIVE = "inactive"
-    #
-    # Compare against enum, NOT "ACTIVE".
-    # --------------------------------------------------------
+    # Handle SQLAlchemy enum safely.
+    branch_status = branch.status
 
-    if branch.status != statusEnum.ACTIVE:
+    if hasattr(branch_status, "value"):
+        branch_status = branch_status.value
+
+    if str(branch_status).lower() != "active":
         raise HTTPException(
             status_code=400,
             detail="Branch is inactive",
@@ -260,6 +260,18 @@ async def get_loyalty_conversion_rule(
     client_id: int,
     branch_id: int,
 ):
+    """
+    Get active loyalty conversion rule.
+
+    IMPORTANT:
+    Do not depend only on SQLAlchemy `.is_(True)` here.
+    Some existing databases may contain boolean-like
+    values differently.
+
+    We first filter by client + branch and then validate
+    is_active in Python.
+    """
+
     result = await db.execute(
         select(LoyaltyConversionRule)
         .where(
@@ -267,11 +279,36 @@ async def get_loyalty_conversion_rule(
             == client_id,
             LoyaltyConversionRule.branch_id
             == branch_id,
-            LoyaltyConversionRule.is_active.is_(True),
+        )
+        .order_by(
+            LoyaltyConversionRule.id.desc()
         )
     )
 
-    return result.scalar_one_or_none()
+    rules = result.scalars().all()
+
+    for rule in rules:
+
+        is_active = rule.is_active
+
+        # Boolean
+        if is_active is True:
+            return rule
+
+        # Enum
+        if hasattr(is_active, "value"):
+            is_active = is_active.value
+
+        # String values
+        if str(is_active).strip().lower() in {
+            "true",
+            "1",
+            "active",
+            "yes",
+        }:
+            return rule
+
+    return None
 
 
 # ============================================================
@@ -283,7 +320,8 @@ def validate_conversion_rule(rule):
 
     if rule is None:
         raise ValueError(
-            "No active loyalty conversion rule found for this branch"
+            "No active loyalty conversion rule found "
+            "for this branch"
         )
 
     if rule.points_required is None:
@@ -310,9 +348,20 @@ def validate_conversion_rule(rule):
             "rupee_value must be greater than 0"
         )
 
-    if not rule.is_active:
+    is_active = rule.is_active
+
+    if hasattr(is_active, "value"):
+        is_active = is_active.value
+
+    if str(is_active).strip().lower() not in {
+        "true",
+        "1",
+        "active",
+        "yes",
+    }:
         raise ValueError(
-            "Invalid loyalty conversion rule: rule is inactive"
+            "Invalid loyalty conversion rule: "
+            "rule is inactive"
         )
 
 
@@ -327,27 +376,21 @@ async def convert_loyalty_points_to_wallet(
     branch_id: int,
 ):
     """
-    Convert all available loyalty points into wallet balance.
+    Convert ALL available loyalty points into wallet balance.
 
-    Flow:
+    Example:
 
-        Customer
-            ↓
-        Get client_id
-            ↓
-        Validate branch
-            ↓
-        Get loyalty account
-            ↓
-        Get branch conversion rule
-            ↓
-        Convert points
-            ↓
-        Credit wallet
-            ↓
-        Create loyalty transaction
-            ↓
-        Create wallet transaction
+        Points = 100
+        Rule = 10 points = ₹3
+
+        Wallet credit =
+            (100 / 10) * 3
+            = ₹30
+
+    After successful conversion:
+
+        Loyalty points = 0
+        Wallet balance += ₹30
     """
 
     try:
@@ -366,7 +409,10 @@ async def convert_loyalty_points_to_wallet(
         if client_id is None:
             raise HTTPException(
                 status_code=400,
-                detail="Customer is not associated with a client",
+                detail=(
+                    "Customer is not associated "
+                    "with a client"
+                ),
             )
 
         # ====================================================
@@ -394,7 +440,7 @@ async def convert_loyalty_points_to_wallet(
             )
 
         # ====================================================
-        # 4. GET CURRENT LOYALTY POINTS
+        # 4. GET CURRENT POINTS
         # ====================================================
 
         current_points = round(
@@ -473,7 +519,7 @@ async def convert_loyalty_points_to_wallet(
             )
 
         # ====================================================
-        # 8. CALCULATE WALLET BALANCE
+        # 8. WALLET BALANCE
         # ====================================================
 
         wallet_balance_before = round(
@@ -500,9 +546,11 @@ async def convert_loyalty_points_to_wallet(
             loyalty_balance_after
         )
 
-        customer.loyalty_points = (
-            loyalty_balance_after
-        )
+        # Keep customer's cached loyalty points in sync.
+        if hasattr(customer, "loyalty_points"):
+            customer.loyalty_points = (
+                loyalty_balance_after
+            )
 
         loyalty_account.total_points_redeemed = round(
             float(
@@ -520,7 +568,7 @@ async def convert_loyalty_points_to_wallet(
         wallet.balance = wallet_balance_after
 
         # ====================================================
-        # 11. CREATE LOYALTY TRANSACTION
+        # 11. LOYALTY TRANSACTION
         # ====================================================
 
         loyalty_transaction = LoyaltyTransaction(
@@ -541,7 +589,7 @@ async def convert_loyalty_points_to_wallet(
         await db.flush()
 
         # ====================================================
-        # 12. CREATE WALLET TRANSACTION
+        # 12. WALLET TRANSACTION
         # ====================================================
 
         wallet_transaction = WalletTransaction(
@@ -571,7 +619,7 @@ async def convert_loyalty_points_to_wallet(
         await db.commit()
 
         # ====================================================
-        # 14. RETURN RESPONSE
+        # 14. RETURN
         # ====================================================
 
         return {
@@ -623,17 +671,35 @@ async def get_wallet_discount_rule(
     )
 
     result = await db.execute(
-        select(WalletDiscountRule)
-        .where(
+        select(WalletDiscountRule).where(
             WalletDiscountRule.client_id
             == client_id,
             WalletDiscountRule.branch_id
             == branch_id,
-            WalletDiscountRule.is_active.is_(True),
         )
     )
 
-    return result.scalar_one_or_none()
+    rules = result.scalars().all()
+
+    for rule in rules:
+
+        is_active = rule.is_active
+
+        if is_active is True:
+            return rule
+
+        if hasattr(is_active, "value"):
+            is_active = is_active.value
+
+        if str(is_active).strip().lower() in {
+            "true",
+            "1",
+            "active",
+            "yes",
+        }:
+            return rule
+
+    return None
 
 
 # ============================================================
@@ -657,8 +723,8 @@ async def calculate_wallet_discount(
     Example:
 
         Bill                  = ₹5616
-        Wallet balance        = ₹2000
-        Branch wallet rule   = 20%
+        Wallet balance       = ₹2000
+        Branch rule          = 20%
 
         Maximum wallet usage = ₹1123.20
         Wallet contribution  = ₹1123.20
@@ -718,8 +784,8 @@ async def calculate_wallet_discount(
 
     rule = await get_wallet_discount_rule(
         db,
-        client_id,
-        branch_id,
+        client_id=client_id,
+        branch_id=branch_id,
     )
 
     if rule is None:
@@ -805,6 +871,24 @@ async def debit_wallet(
         return None
 
     # ========================================================
+    # DUPLICATE DEBIT CHECK
+    # ========================================================
+
+    if reference_type == "BILL":
+        existing_tx = await db.execute(
+            select(WalletTransaction).where(
+                WalletTransaction.reference_type == "BILL",
+                WalletTransaction.reference_id == reference_id,
+                WalletTransaction.transaction_type == "DEBIT",
+            )
+        )
+        if existing_tx.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Wallet has already been debited for this bill.",
+            )
+
+    # ========================================================
     # LOCK WALLET
     # ========================================================
 
@@ -857,6 +941,10 @@ async def debit_wallet(
         + amount,
         2,
     )
+
+    # ========================================================
+    # CREATE TRANSACTION
+    # ========================================================
 
     transaction = WalletTransaction(
         customer_id=customer_id,

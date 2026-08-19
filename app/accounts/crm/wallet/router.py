@@ -47,8 +47,6 @@ async def get_account(
     )
 
     if account is None:
-        # Don't treat missing wallet as an error.
-        # Return a zero wallet instead.
         account = await service.get_or_create_wallet_account(
             db,
             customer_id=customer_id,
@@ -74,16 +72,16 @@ async def list_transactions(
     customer_id: int,
     db: SessionDep,
 ):
-
     return await service.get_wallet_transactions(
         db,
-        customer_id,
+        customer_id=customer_id,
     )
 
 
 # ============================================================
 # LOYALTY -> WALLET CONVERSION
 # ============================================================
+
 
 @router.post(
     "/convert-loyalty/{customer_id}",
@@ -95,6 +93,7 @@ async def convert_loyalty_to_wallet(
     db: SessionDep,
 ):
     try:
+
         result = await service.convert_loyalty_points_to_wallet(
             db,
             customer_id=customer_id,
@@ -102,6 +101,10 @@ async def convert_loyalty_to_wallet(
         )
 
         return result
+
+    except HTTPException:
+        await db.rollback()
+        raise
 
     except ValueError as exc:
         await db.rollback()
@@ -111,19 +114,18 @@ async def convert_loyalty_to_wallet(
             detail=str(exc),
         )
 
-    except HTTPException:
-        await db.rollback()
-        raise
-
     except Exception as exc:
         await db.rollback()
 
         print(
-            "LOYALTY TO WALLET ERROR:",
+            "LOYALTY TO WALLET ROUTER ERROR:",
             repr(exc),
         )
 
         raise HTTPException(
             status_code=500,
-            detail="Failed to convert loyalty points into wallet balance",
+            detail=(
+                "Failed to convert loyalty points "
+                "into wallet balance"
+            ),
         )
