@@ -7,10 +7,11 @@ FastAPI router for branch-wise loyalty conversion rules.
 from fastapi import (
     APIRouter,
     HTTPException,
+    Query,
 )
 
 from app.db.config import SessionDep
-
+from app.accounts.branch.model import Branch
 from app.accounts.crm.loyalty.conversion_rule import service
 
 from app.accounts.crm.loyalty.conversion_rule.schema import (
@@ -38,21 +39,25 @@ router = APIRouter(
 async def get_conversion_rule(
     branch_id: int,
     db: SessionDep,
+    client_id: int | None = Query(None),
 ):
+    branch = await db.get(Branch, branch_id)
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found")
+
+    target_client_id = client_id or branch.client_id
 
     rule = await service.get_rule(
         db,
+        client_id=target_client_id,
         branch_id=branch_id,
     )
 
     if rule is None:
-        return LoyaltyConversionRuleOut(
-            id=0,
-            client_id=1,
+        rule = await service.get_or_create_loyalty_conversion_rule(
+            db,
+            client_id=target_client_id,
             branch_id=branch_id,
-            points_required=10.0,
-            rupee_value=5.0,
-            is_active=True,
         )
 
     return rule
@@ -69,14 +74,19 @@ async def get_conversion_rule(
 )
 async def create_conversion_rule(
     branch_id: int,
-    client_id: int,
     payload: LoyaltyConversionRuleCreate,
     db: SessionDep,
+    client_id: int | None = Query(None),
 ):
+    branch = await db.get(Branch, branch_id)
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found")
+
+    target_client_id = client_id or branch.client_id
 
     return await service.create_rule(
         db,
-        client_id=client_id,
+        client_id=target_client_id,
         branch_id=branch_id,
         points_required=payload.points_required,
         rupee_value=payload.rupee_value,
@@ -97,10 +107,17 @@ async def update_conversion_rule(
     branch_id: int,
     payload: LoyaltyConversionRuleUpdate,
     db: SessionDep,
+    client_id: int | None = Query(None),
 ):
+    branch = await db.get(Branch, branch_id)
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found")
+
+    target_client_id = client_id or branch.client_id
 
     rule = await service.update_rule(
         db,
+        client_id=target_client_id,
         branch_id=branch_id,
         points_required=payload.points_required,
         rupee_value=payload.rupee_value,
@@ -108,10 +125,9 @@ async def update_conversion_rule(
     )
 
     if rule is None:
-
         raise HTTPException(
             status_code=404,
-            detail="Loyalty conversion rule not found",
+            detail="No active loyalty conversion rule is configured for this branch.",
         )
 
     return rule
@@ -128,18 +144,24 @@ async def update_conversion_rule(
 async def delete_conversion_rule(
     branch_id: int,
     db: SessionDep,
+    client_id: int | None = Query(None),
 ):
+    branch = await db.get(Branch, branch_id)
+    if not branch:
+        raise HTTPException(status_code=404, detail="Branch not found")
+
+    target_client_id = client_id or branch.client_id
 
     rule = await service.deactivate_rule(
         db,
+        client_id=target_client_id,
         branch_id=branch_id,
     )
 
     if rule is None:
-
         raise HTTPException(
             status_code=404,
-            detail="Loyalty conversion rule not found",
+            detail="No active loyalty conversion rule is configured for this branch.",
         )
 
     return {

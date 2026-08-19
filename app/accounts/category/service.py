@@ -68,7 +68,7 @@ class CategoryService:
 
         # Invalidate cache
         await Cache.delete(f"categories:branch:{payload.branch_id}")
-        await Cache.delete(f"menu:branch:{payload.branch_id}")
+        await Cache.clear_menu_cache(payload.branch_id, client_id)
 
         return category
 
@@ -103,7 +103,7 @@ class CategoryService:
 
         cache_key = f"categories:branch:{branch_id}"
         cached_data = await Cache.get(cache_key)
-        if cached_data:
+        if cached_data is not None:
             return cached_data
 
         result = await db.execute(
@@ -158,7 +158,7 @@ class CategoryService:
         await db.refresh(category)
 
         await Cache.delete(f"categories:branch:{category.branch_id}")
-        await Cache.delete(f"menu:branch:{category.branch_id}")
+        await Cache.clear_menu_cache(category.branch_id, category.client_id)
 
         return category
 
@@ -196,11 +196,12 @@ class CategoryService:
             )
 
         branch_id = category.branch_id
+        client_id = category.client_id
         await db.delete(category)
         await db.commit()
 
         await Cache.delete(f"categories:branch:{branch_id}")
-        await Cache.delete(f"menu:branch:{branch_id}")
+        await Cache.clear_menu_cache(branch_id, client_id)
 
         return {
             "message": "Category deleted"

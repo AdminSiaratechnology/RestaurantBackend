@@ -22,8 +22,12 @@ from app.accounts.crm.loyalty.model import (
     CustomerLoyaltyAccount,
     LoyaltyTransaction,
 )
+from app.accounts.crm.loyalty.service import get_loyalty_account
 from app.accounts.crm.loyalty.conversion_rule.model import (
     LoyaltyConversionRule,
+)
+from app.accounts.crm.loyalty.conversion_rule.service import (
+    get_or_create_loyalty_conversion_rule,
 )
 from app.accounts.crm.wallet.model import (
     CustomerWalletAccount,
@@ -114,17 +118,33 @@ async def get_branch(
 async def get_loyalty_account(
     db,
     customer_id: int,
+    lock: bool = False,
 ):
-    result = await db.execute(
-        select(CustomerLoyaltyAccount)
-        .where(
-            CustomerLoyaltyAccount.customer_id
-            == customer_id
-        )
-        .with_for_update()
+    stmt = select(CustomerLoyaltyAccount).where(
+        CustomerLoyaltyAccount.customer_id == customer_id
     )
+    if lock:
+        stmt = stmt.with_for_update()
+    result = await db.execute(stmt)
+    account = result.scalar_one_or_none()
 
-    return result.scalar_one_or_none()
+    if not account:
+        customer = await db.get(Customer, customer_id)
+        if not customer:
+            return None
+
+        account = CustomerLoyaltyAccount(
+            customer_id=customer.id,
+            client_id=customer.client_id,
+            total_points_earned=float(customer.loyalty_points or 0.0),
+            total_points_redeemed=0.0,
+            current_points_balance=float(customer.loyalty_points or 0.0),
+            converted_spend=0.0,
+        )
+        db.add(account)
+        await db.flush()
+
+    return account
 
 
 # ============================================================
@@ -320,8 +340,7 @@ def validate_conversion_rule(rule):
 
     if rule is None:
         raise ValueError(
-            "No active loyalty conversion rule found "
-            "for this branch"
+            "No active loyalty conversion rule is configured for this branch."
         )
 
     if rule.points_required is None:
@@ -404,6 +423,12 @@ async def convert_loyalty_points_to_wallet(
             customer_id,
         )
 
+        if not customer:
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found",
+            )
+
         client_id = customer.client_id
 
         if client_id is None:
@@ -416,27 +441,30 @@ async def convert_loyalty_points_to_wallet(
             )
 
         # ====================================================
-        # 2. VALIDATE BRANCH
+        # 2. VALIDATE BRANCH OWNERSHIP
         # ====================================================
 
-        branch = await get_branch(
-            db,
-            branch_id=branch_id,
-            client_id=client_id,
-        )
+        branch = await db.get(Branch, branch_id)
+        if not branch or branch.client_id != client_id:
+            raise HTTPException(
+                status_code=400,
+                detail="The selected branch does not belong to this customer’s client.",
+            )
 
         # ====================================================
-        # 3. GET LOYALTY ACCOUNT
+        # 3. GET LOYALTY ACCOUNT (WITH LOCK)
         # ====================================================
 
         loyalty_account = await get_loyalty_account(
             db,
             customer_id,
+            lock=True,
         )
 
         if loyalty_account is None:
-            raise ValueError(
-                "Customer loyalty account not found"
+            raise HTTPException(
+                status_code=404,
+                detail="Customer loyalty account not found.",
             )
 
         # ====================================================
@@ -455,15 +483,16 @@ async def convert_loyalty_points_to_wallet(
         )
 
         if current_points <= 0:
-            raise ValueError(
-                "No loyalty points available for conversion"
+            raise HTTPException(
+                status_code=400,
+                detail="No loyalty points available for conversion.",
             )
 
         # ====================================================
-        # 5. GET CONVERSION RULE
+        # 5. GET OR CREATE CONVERSION RULE
         # ====================================================
 
-        rule = await get_loyalty_conversion_rule(
+        rule = await get_or_create_loyalty_conversion_rule(
             db,
             client_id=client_id,
             branch_id=branch.id,

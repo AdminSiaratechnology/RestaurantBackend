@@ -13,6 +13,9 @@ from app.accounts.deps import (
 )
 
 
+from app.core.cache import Cache
+
+
 # =========================================================
 # CREATE PRICING
 # =========================================================
@@ -79,6 +82,8 @@ async def create_pricing_service(
 
     await db.commit()
     await db.refresh(pricing)
+
+    await Cache.clear_menu_cache(data.branch_id, client.id)
 
     return pricing
 
@@ -193,6 +198,8 @@ async def update_pricing_service(
     await db.commit()
     await db.refresh(pricing)
 
+    await Cache.clear_menu_cache(pricing.branch_id, pricing.client_id)
+
     return pricing
 
 
@@ -225,8 +232,13 @@ async def delete_pricing_service(
         current=current
     )
 
+    branch_id = pricing.branch_id
+    client_id = pricing.client_id
+
     await db.delete(pricing)
     await db.commit()
+
+    await Cache.clear_menu_cache(branch_id, client_id)
 
     return {
         "message": "Pricing deleted successfully"

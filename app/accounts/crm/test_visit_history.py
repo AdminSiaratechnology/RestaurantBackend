@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import app.db.base  # noqa
 from app.accounts.crm.customer_history.checkout_service import handle_customer_and_visit
-from app.accounts.crm.customer.service import find_or_create_customer
+from app.accounts.customer.service import find_or_create_customer
 
 
 async def test_visit_creation():

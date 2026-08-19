@@ -1207,7 +1207,9 @@ async def _process_menu(
                 )
             )
 
-            counters["bom_created"] += 1
+    from app.core.cache import Cache
+    for branch in branches_map.values():
+        await Cache.clear_menu_cache(branch.id, client_id)
 
     return UploadResult(
         message="Menu uploaded successfully",

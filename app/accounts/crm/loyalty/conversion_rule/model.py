@@ -11,6 +11,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    UniqueConstraint,
 )
 
 from app.db.base import Base
@@ -19,6 +20,14 @@ from app.db.base import Base
 class LoyaltyConversionRule(Base):
 
     __tablename__ = "loyalty_conversion_rules"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "client_id",
+            "branch_id",
+            name="uq_loyalty_conversion_rule_client_branch",
+        ),
+    )
 
     id = Column(
         Integer,
@@ -43,7 +52,6 @@ class LoyaltyConversionRule(Base):
             ondelete="CASCADE",
         ),
         nullable=False,
-        unique=True,
         index=True,
     )
 
