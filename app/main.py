@@ -69,7 +69,7 @@ app.add_middleware(
         "https://restaurantsiaralive.netlify.app",
         "https://rmssuperadminn.netlify.app",
         "https://dx9mtcpd-5173.inc1.devtunnels.ms",
-        "https://taalrms.com"
+        "https://taalrms.com",
         
     ],
     allow_credentials=True,
