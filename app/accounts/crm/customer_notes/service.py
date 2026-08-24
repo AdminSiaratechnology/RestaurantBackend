@@ -4,7 +4,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.accounts.crm.customer.model import Customer
+from app.accounts.customer.model import Customer
 
 from .constants import CustomerNoteType
 from .model import CustomerNote
