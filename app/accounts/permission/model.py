@@ -1,7 +1,6 @@
-from sqlalchemy import Column, Integer, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, Boolean, ForeignKey, text
 from sqlalchemy.orm import relationship
 from app.db.base import Base
-
 
 
 class StaffPermission(Base):
@@ -16,21 +15,96 @@ class StaffPermission(Base):
         unique=True
     )
 
-    # ✅ Permissions from UI
-    manage_orders = Column(Boolean, default=False)
-    manage_staff = Column(Boolean, default=False)
-    manage_inventory = Column(Boolean, default=False)
-    manage_purchase = Column(Boolean, default=False, nullable=False)
-    manage_customers = Column(Boolean, default=False)
-    manage_reports = Column(Boolean, default=False)
-    manage_branches = Column(Boolean, default=False)
-    access_billing = Column(Boolean, default=False)
-    edit_menu_items = Column(Boolean, default=False)
-    manage_tables = Column(Boolean, default=False)
-    manage_kitchen = Column(Boolean, default=False)
-    manage_offers = Column(Boolean, default=False)
-    manage_brands = Column(Boolean, default=False)
+    manage_orders = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
 
+    manage_staff = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    manage_inventory = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    manage_purchase = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    manage_customers = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    manage_reports = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    manage_branches = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    access_billing = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    edit_menu_items = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    manage_tables = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    manage_kitchen = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    manage_offers = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
+
+    manage_brands = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default=text("false")
+    )
 
     staff = relationship(
         "app.accounts.staff.model.Staff",
