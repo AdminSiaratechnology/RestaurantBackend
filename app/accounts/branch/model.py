@@ -181,3 +181,21 @@ class Branch(Base):
         back_populates="branch",
         cascade="all, delete-orphan",
     )
+
+
+# ========================================================
+# PURCHASE RELATIONSHIPS
+# ========================================================
+
+    purchase_invoice_counter = relationship(
+        "BranchPurchaseInvoiceCounter",
+        back_populates="branch",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+
+    purchase_entries = relationship(
+        "PurchaseEntry",
+        back_populates="branch",
+        cascade="all, delete-orphan",
+    )

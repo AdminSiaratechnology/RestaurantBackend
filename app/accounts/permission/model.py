@@ -20,6 +20,7 @@ class StaffPermission(Base):
     manage_orders = Column(Boolean, default=False)
     manage_staff = Column(Boolean, default=False)
     manage_inventory = Column(Boolean, default=False)
+    manage_purchase = Column(Boolean, default=False, nullable=False)
     manage_customers = Column(Boolean, default=False)
     manage_reports = Column(Boolean, default=False)
     manage_branches = Column(Boolean, default=False)

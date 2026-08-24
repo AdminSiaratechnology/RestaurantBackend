@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 
 from app.db.config import SessionDep
@@ -34,6 +35,11 @@ router = APIRouter(
     tags=["Branch"],
 )
 
+branches_router = APIRouter(
+    prefix="/branches",
+    tags=["Branches"],
+)
+
 
 # ============================================================
 # ROLE ACCESS
@@ -53,6 +59,14 @@ branch_access = require_roles(
 
 @router.post(
     "/create_branch",
+    response_model=BranchOut,
+)
+@branches_router.post(
+    "/create_branch",
+    response_model=BranchOut,
+)
+@branches_router.post(
+    "",
     response_model=BranchOut,
 )
 async def create_branch(
@@ -128,37 +142,29 @@ async def create_branch(
 
 
 # ============================================================
-# GET ALL BRANCHES
+# HELPER: FETCH BRANCHES WITH FILTERING & RBAC
 # ============================================================
 
-@router.get(
-    "/get_all_branch",
-    response_model=list[BranchOut],
-)
-async def get_branches(
+async def fetch_branches_with_rbac(
     db: SessionDep,
-    current=Depends(access_one),
-):
+    current: dict,
+    client_id: Optional[int] = None,
+    branch_id: Optional[int] = None,
+    brand_id: Optional[int] = None,
+) -> list[Branch]:
     role = UserRole(current["role"])
     user = current["user"]
 
     # --------------------------------------------------------
-    # SUPER ADMIN
+    # 1. BASE QUERY ACCORDING TO ROLE-BASED ACCESS CONTROL
     # --------------------------------------------------------
 
+    # SUPER ADMIN: can access all branches
     if role == UserRole.SUPER_ADMIN:
+        query = select(Branch)
 
-        query = (
-            select(Branch)
-            .order_by(Branch.id.desc())
-        )
-
-    # --------------------------------------------------------
-    # PARTNER
-    # --------------------------------------------------------
-
+    # PARTNER: only branches belonging to clients assigned to that partner
     elif role == UserRole.PARTNER:
-
         query = (
             select(Branch)
             .join(
@@ -168,29 +174,19 @@ async def get_branches(
             .where(
                 Client.partner_id == user.id
             )
-            .order_by(Branch.id.desc())
         )
 
-    # --------------------------------------------------------
-    # CLIENT
-    # --------------------------------------------------------
-
+    # CLIENT: only branches belonging to that client
     elif role == UserRole.CLIENT:
-
         query = (
             select(Branch)
             .where(
                 Branch.client_id == user.id
             )
-            .order_by(Branch.id.desc())
         )
 
-    # --------------------------------------------------------
-    # STAFF
-    # --------------------------------------------------------
-
+    # STAFF: only their assigned branch
     elif role == UserRole.STAFF:
-
         if not user.branch_id:
             return []
 
@@ -199,25 +195,73 @@ async def get_branches(
             .where(
                 Branch.id == user.branch_id
             )
-            .order_by(Branch.id.desc())
         )
 
-    # --------------------------------------------------------
-    # UNKNOWN ROLE
-    # --------------------------------------------------------
-
+    # UNKNOWN / UNAUTHORIZED ROLE
     else:
-
         raise HTTPException(
             status_code=403,
             detail="Not allowed",
         )
 
+    # --------------------------------------------------------
+    # 2. APPLY OPTIONAL FILTERS (AND LOGIC)
+    # --------------------------------------------------------
+
+    if client_id is not None:
+        query = query.where(Branch.client_id == client_id)
+
+    if branch_id is not None:
+        query = query.where(Branch.id == branch_id)
+
+    if brand_id is not None:
+        query = query.where(Branch.brand_id == brand_id)
+
+    # --------------------------------------------------------
+    # 3. ORDERING
+    # --------------------------------------------------------
+
+    query = query.order_by(Branch.id.desc())
+
     result = await db.execute(query)
-
     branches = result.scalars().all()
+    return list(branches)
 
-    return branches
+
+# ============================================================
+# GET ALL BRANCHES (Supports /branches/all & /branch/get_all_branch)
+# ============================================================
+
+@router.get(
+    "/get_all_branch",
+    response_model=list[BranchOut],
+)
+@router.get(
+    "/all",
+    response_model=list[BranchOut],
+)
+@branches_router.get(
+    "/all",
+    response_model=list[BranchOut],
+)
+@branches_router.get(
+    "/get_all_branch",
+    response_model=list[BranchOut],
+)
+async def get_branches(
+    client_id: Optional[int] = Query(None, gt=0, description="Filter by client ID"),
+    branch_id: Optional[int] = Query(None, gt=0, description="Filter by branch ID"),
+    brand_id: Optional[int] = Query(None, gt=0, description="Filter by brand ID"),
+    db: SessionDep = None,
+    current=Depends(access_one),
+):
+    return await fetch_branches_with_rbac(
+        db=db,
+        current=current,
+        client_id=client_id,
+        branch_id=branch_id,
+        brand_id=brand_id,
+    )
 
 
 # ============================================================
@@ -226,6 +270,14 @@ async def get_branches(
 
 @router.get(
     "/get_branch/{branch_id}",
+    response_model=BranchOut,
+)
+@branches_router.get(
+    "/get_branch/{branch_id}",
+    response_model=BranchOut,
+)
+@branches_router.get(
+    "/{branch_id}",
     response_model=BranchOut,
 )
 async def get_branch(
@@ -266,6 +318,14 @@ async def get_branch(
 
 @router.put(
     "/update_branch/{branch_id}",
+    response_model=BranchOut,
+)
+@branches_router.put(
+    "/update_branch/{branch_id}",
+    response_model=BranchOut,
+)
+@branches_router.put(
+    "/{branch_id}",
     response_model=BranchOut,
 )
 async def update_branch(
@@ -345,7 +405,11 @@ async def update_branch(
 # DELETE BRANCH
 # ============================================================
 
+@router.delete("/delete_branch/{branch_id}")
 @router.delete("/delet_branch/{branch_id}")
+@branches_router.delete("/delete_branch/{branch_id}")
+@branches_router.delete("/delet_branch/{branch_id}")
+@branches_router.delete("/{branch_id}")
 async def delete_branch(
     branch_id: int,
     db: SessionDep,
@@ -454,6 +518,14 @@ async def delete_branch(
     "/change_status/{branch_id}",
     response_model=BranchOut,
 )
+@branches_router.patch(
+    "/change_status/{branch_id}",
+    response_model=BranchOut,
+)
+@branches_router.patch(
+    "/{branch_id}/status",
+    response_model=BranchOut,
+)
 async def change_branch_status(
     branch_id: int,
     data: BranchStatusUpdate,
@@ -554,4 +626,4 @@ async def change_branch_status(
 
     await db.refresh(branch)
 
-    return branch
+    return branch

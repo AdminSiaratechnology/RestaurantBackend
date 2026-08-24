@@ -10,6 +10,7 @@ from app.accounts.staff.model import Staff
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from app.accounts.brand.model import Brand
 from app.accounts.permission.model import StaffPermission
+from app.accounts.permission.services import CHEF_PERMISSIONS, WAITER_PERMISSIONS
 from sqlalchemy.orm import selectinload
 from app.accounts.staff.model import StaffRole
 from app.core.cache import Cache
@@ -257,15 +258,47 @@ client_access = require_roles(UserRole.PARTNER, UserRole.SUPER_ADMIN)
 
 
 
-def require_permission(permission_name: str):
+def require_permission(permission_name: str, allow_client_admin: bool = True):
 
     async def checker(
         db: SessionDep,
-        current=Depends(require_staff)
+        current=Depends(get_current_user)
     ):
+        role = current["role"]
+
+        # SuperAdmin, Partner, and Client bypass staff permission checks
+        if allow_client_admin and role in (UserRole.SUPER_ADMIN, UserRole.PARTNER, UserRole.CLIENT):
+            return current
+
+        if role != UserRole.STAFF:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Staff access required"
+            )
+
         user = current["user"]
+
+        # If staff is chef or waiter, check standard role permission maps
+        if getattr(user, "role", None) == StaffRole.chef:
+            has_perm = CHEF_PERMISSIONS.get(permission_name, False)
+            if not has_perm:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"{permission_name} permission denied"
+                )
+            return current
+
+        if getattr(user, "role", None) == StaffRole.waiter:
+            has_perm = WAITER_PERMISSIONS.get(permission_name, False)
+            if not has_perm:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"{permission_name} permission denied"
+                )
+            return current
+
+        # Manager: check cached or DB StaffPermission
         cache_key = f"permissions:user:{user.id}"
-        
         permissions_dict = await Cache.get(cache_key)
 
         if not permissions_dict:
@@ -278,12 +311,12 @@ def require_permission(permission_name: str):
 
             if not permissions:
                 raise HTTPException(
-                    status_code=403,
+                    status_code=status.HTTP_403_FORBIDDEN,
                     detail="No permissions assigned"
                 )
-            
+
             permissions_dict = {
-                c.name: getattr(permissions, c.name) 
+                c.name: getattr(permissions, c.name)
                 for c in permissions.__table__.columns
             }
             await Cache.set(cache_key, permissions_dict, expire=1800)
@@ -292,11 +325,14 @@ def require_permission(permission_name: str):
 
         if not has_permission:
             raise HTTPException(
-                status_code=403,
+                status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"{permission_name} permission denied"
             )
 
         return current
 
     return checker
+
+
+require_purchase_access = require_permission("manage_purchase", allow_client_admin=True)
 

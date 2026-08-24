@@ -334,3 +334,10 @@ class Customer(Base):
         default=0.0,
         nullable=False,
     )
+
+    notes = relationship(
+        "CustomerNote",
+        back_populates="customer",
+        foreign_keys="CustomerNote.customer_id",
+        cascade="all, delete-orphan",
+    )
