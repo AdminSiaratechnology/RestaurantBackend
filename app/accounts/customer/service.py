@@ -2,6 +2,9 @@ from datetime import datetime
 
 from fastapi import HTTPException
 
+from typing import Optional
+
+from sqlalchemy import select
 from sqlalchemy import (
     select,
     desc,
@@ -142,83 +145,170 @@ async def create_customer_service(
 # FIND EXISTING CUSTOMER
 # =========================================================
 
+# async def find_existing_customer(
+#     db,
+#     client_id: int,
+#     name: str | None = None,
+#     phone: str | None = None,
+#     email: str | None = None,
+# ):
+#     """
+#     Customer matching rule:
+
+#         name + phone
+#             OR
+#         name + email
+
+#     Phone alone is NOT enough.
+#     Email alone is NOT enough.
+#     Name alone is NOT enough.
+#     """
+
+#     name = (
+#         name.strip()
+#         if name and name.strip()
+#         else None
+#     )
+
+#     phone = (
+#         phone.strip()
+#         if phone and phone.strip()
+#         else None
+#     )
+
+#     email = (
+#         email.strip().lower()
+#         if email and email.strip()
+#         else None
+#     )
+
+#     if not name:
+#         return None
+
+#     # -----------------------------------------------------
+#     # NAME + PHONE
+#     # -----------------------------------------------------
+
+#     if phone:
+#         customer = await db.scalar(
+#             select(Customer).where(
+#                 Customer.client_id == client_id,
+#                 func.lower(Customer.name)
+#                 == name.lower(),
+#                 Customer.phone == phone,
+#             )
+#         )
+
+#         if customer:
+#             return customer
+
+#     # -----------------------------------------------------
+#     # NAME + EMAIL
+#     # -----------------------------------------------------
+
+#     if email:
+#         customer = await db.scalar(
+#             select(Customer).where(
+#                 Customer.client_id == client_id,
+#                 func.lower(Customer.name)
+#                 == name.lower(),
+#                 func.lower(Customer.email)
+#                 == email,
+#             )
+#         )
+
+#         if customer:
+#             return customer
+
+#     return None
+
+
 async def find_existing_customer(
     db,
-    client_id: int,
-    name: str | None = None,
-    phone: str | None = None,
-    email: str | None = None,
+    *,
+    name: Optional[str] = None,
+    phone: Optional[str] = None,
+    email: Optional[str] = None,
 ):
     """
-    Customer matching rule:
+    Find ONLY a real CRM customer.
 
+    Valid identity:
         name + phone
-            OR
+        OR
         name + email
 
-    Phone alone is NOT enough.
-    Email alone is NOT enough.
-    Name alone is NOT enough.
+    Never search/create using:
+        Guest
+        Walk-In
+        GUEST-*
+        phone-only
+        email-only
     """
 
-    name = (
-        name.strip()
-        if name and name.strip()
-        else None
-    )
+    name = (name or "").strip()
+    phone = (phone or "").strip()
+    email = (email or "").strip().lower()
 
-    phone = (
-        phone.strip()
-        if phone and phone.strip()
-        else None
-    )
-
-    email = (
-        email.strip().lower()
-        if email and email.strip()
-        else None
-    )
+    # ---------------------------------------------------------
+    # INVALID CUSTOMER IDENTITY
+    # ---------------------------------------------------------
 
     if not name:
         return None
 
-    # -----------------------------------------------------
+    # ---------------------------------------------------------
+    # NEVER TREAT GUEST / WALK-IN AS CUSTOMER
+    # ---------------------------------------------------------
+
+    guest_names = {
+        "guest",
+        "walk-in",
+        "walk in",
+        "walkin",
+    }
+
+    if name.lower() in guest_names:
+        return None
+
+    if phone and phone.upper().startswith("GUEST-"):
+        return None
+
+    # ---------------------------------------------------------
     # NAME + PHONE
-    # -----------------------------------------------------
+    # ---------------------------------------------------------
 
     if phone:
-        customer = await db.scalar(
+        result = await db.execute(
             select(Customer).where(
-                Customer.client_id == client_id,
-                func.lower(Customer.name)
-                == name.lower(),
+                Customer.name == name,
                 Customer.phone == phone,
             )
         )
 
+        customer = result.scalar_one_or_none()
+
         if customer:
             return customer
 
-    # -----------------------------------------------------
+    # ---------------------------------------------------------
     # NAME + EMAIL
-    # -----------------------------------------------------
+    # ---------------------------------------------------------
 
     if email:
-        customer = await db.scalar(
+        result = await db.execute(
             select(Customer).where(
-                Customer.client_id == client_id,
-                func.lower(Customer.name)
-                == name.lower(),
-                func.lower(Customer.email)
-                == email,
+                Customer.name == name,
+                Customer.email == email,
             )
         )
+
+        customer = result.scalar_one_or_none()
 
         if customer:
             return customer
 
     return None
-
 
 # =========================================================
 # FIND OR CREATE CUSTOMER FROM ORDER

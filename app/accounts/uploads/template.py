@@ -1,13 +1,18 @@
-TEMPLATES = {
+TEMPLATES: dict[str, dict[str, list[dict]]] = {
+
+    # ========================================================================
+    # MENU
+    # ========================================================================
+
     "menu": {
+
         "Menu_Items": [
             {
                 "Name": "Veg Burger",
                 "Category": "Fast Food",
                 "Branch Code": "BR001",
                 "Food Type": "veg",
-                "Image": "veg_burger.jpg",
-                "Active": True
+                "Active": True,
             }
         ],
 
@@ -22,7 +27,7 @@ TEMPLATES = {
                 "CGST": 2.5,
                 "SGST": 2.5,
                 "Calories": 350,
-                "Active": True
+                "Active": True,
             }
         ],
 
@@ -32,32 +37,78 @@ TEMPLATES = {
                 "Branch Code": "BR001",
                 "Inventory Item": "Burger Bun",
                 "Godown": "Main Store",
-                "Quantity": 1
+                "Quantity": 1,
             },
             {
                 "Menu Item": "Veg Burger",
                 "Branch Code": "BR001",
                 "Inventory Item": "Veg Patty",
                 "Godown": "Main Store",
-                "Quantity": 1
+                "Quantity": 1,
             },
             {
                 "Menu Item": "Veg Burger",
                 "Branch Code": "BR001",
                 "Inventory Item": "Mayonnaise",
                 "Godown": "Main Store",
-                "Quantity": 20
+                "Quantity": 20,
             },
             {
                 "Menu Item": "Veg Burger",
                 "Branch Code": "BR001",
                 "Inventory Item": "Lettuce",
                 "Godown": "Main Store",
-                "Quantity": 15
-            }
-        ]
+                "Quantity": 15,
+            },
+        ],
     },
+
+    # ========================================================================
+    # INVENTORY
+    # ========================================================================
+
+    "inventory": {
+
+        "Inventory_Items": [
+            {
+                "Name": "Burger Bun",
+                "Branch Code": "BR001",
+                "Godown": "Main Store",
+                "Category": "dry",
+                "Unit": "kg",
+                "Display Unit": "piece",
+                "Conversion Factor": 1,
+                "Stock Qty": 100,
+                "Reorder Level": 20,
+                "Cost Per Unit": 5.50,
+                "Vendor Name": "Fresh Farms",
+                "Vendor Phone": "9876543210",
+                "Status": "in_stock",
+            }
+        ],
+    },
+
+    # ========================================================================
+    # CATEGORY
+    # ========================================================================
+
+    "category": {
+
+        "Categories": [
+            {
+                "Name": "Fast Food",
+                "Branch Code": "BR001",
+                "Active": True,
+            }
+        ],
+    },
+
+    # ========================================================================
+    # BILL
+    # ========================================================================
+
     "bill": {
+
         "Bills": [
             {
                 "Invoice No": "INV-2025-001",
@@ -65,7 +116,7 @@ TEMPLATES = {
                 "Order Type": "dine_in",
                 "Customer Name": "John Doe",
                 "Customer Phone": "9876543210",
-                "Payment Status": "paid",        # pending / paid / partial
+                "Payment Status": "paid",
                 "Payment Method": "cash",
                 "Subtotal": 240.0,
                 "CGST %": 2.5,
@@ -86,7 +137,58 @@ TEMPLATES = {
                 "Footer Message": "Thank you for dining with us!",
                 "Billed At": "2025-06-27 13:00:00",
             }
-        ]
-    }
-    
+        ],
+    },
+
+    # ========================================================================
+    # PURCHASE
+    # ========================================================================
+
+    "purchase": {
+
+        # --------------------------------------------------------------------
+        # PURCHASE HEADER
+        # --------------------------------------------------------------------
+
+        "Purchase_Entries": [
+            {
+                "Branch Code": "BR001",
+                "Supplier Name": "Fresh Farms",
+                "Supplier Invoice Number": "SUP-INV-001",
+                "Supplier Invoice Date": "2026-08-22",
+                "Delivery Date": "2026-08-22",
+                "Reference Number": "PO-001",
+                "Payment Terms": "Credit",
+                "Due Date": "2026-09-22",
+                "Notes": "Regular inventory purchase",
+            }
+        ],
+
+        # --------------------------------------------------------------------
+        # PURCHASE ITEMS
+        # --------------------------------------------------------------------
+
+        "Purchase_Items": [
+            {
+                "Branch Code": "BR001",
+                "Supplier Invoice Number": "SUP-INV-001",
+                "Inventory Item": "Burger Bun",
+                "Godown": "Main Store",
+                "Quantity": 100,
+                "Rate": 5.50,
+                "Discount %": 0,
+                "Tax %": 5,
+            },
+            {
+                "Branch Code": "BR001",
+                "Supplier Invoice Number": "SUP-INV-001",
+                "Inventory Item": "Veg Patty",
+                "Godown": "Main Store",
+                "Quantity": 50,
+                "Rate": 25,
+                "Discount %": 0,
+                "Tax %": 5,
+            },
+        ],
+    },
 }

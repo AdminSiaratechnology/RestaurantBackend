@@ -1,118 +1,270 @@
+from datetime import datetime, timezone
+
 from sqlalchemy import (
-    Column,
-    Integer,
-    String,
     Boolean,
-    Float,
+    Column,
     DateTime,
-    ForeignKey
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Index,
 )
-from datetime import datetime
-from app.accounts.vendor.enum import PaymentMethod, VendorStatus, VendorType
+
 from app.db.base import Base
 
 
 class Vendor(Base):
+
     __tablename__ = "vendors"
 
-    id = Column(Integer, primary_key=True, index=True)
+    # =========================================================
+    # PRIMARY KEY
+    # =========================================================
 
-    # Basic Information
-    vendor_code = Column(String, unique=True, nullable=False)
-    vendor_name = Column(String, nullable=False)
-
-    vendor_type = Column(String)  # Supplier, Manufacturer, Distributor
-
-    status = Column(
-        String,
-        default="active"
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
     )
 
-    # Contact Information
-    contact_person = Column(String)
+    # =========================================================
+    # CLIENT OWNERSHIP
+    # =========================================================
 
-    mobile = Column(String, nullable=False)
+    client_id = Column(
+        Integer,
+        ForeignKey("clients.id"),
+        nullable=False,
+        index=True,
+    )
 
-    email = Column(String)
+    # =========================================================
+    # BASIC INFORMATION
+    # =========================================================
 
-    # Address Information
-    address = Column(String)
+    vendor_code = Column(
+        String(50),
+        nullable=False,
+        index=True,
+    )
 
-    city = Column(String)
+    vendor_name = Column(
+        String(255),
+        nullable=False,
+        index=True,
+    )
 
-    state = Column(String)
+    vendor_type = Column(
+        String(50),
+        nullable=False,
+        default="supplier",
+    )
 
-    pincode = Column(String)
+    status = Column(
+        String(30),
+        nullable=False,
+        default="active",
+        index=True,
+    )
 
-    # Tax Information
-    gstin = Column(String)
+    # =========================================================
+    # CONTACT INFORMATION
+    # =========================================================
 
-    pan_number = Column(String)
+    contact_person = Column(
+        String(255),
+        nullable=True,
+    )
 
-    fssai_number = Column(String)
+    mobile = Column(
+        String(20),
+        nullable=False,
+    )
 
-    # Banking Information
-    bank_name = Column(String)
+    email = Column(
+        String(255),
+        nullable=True,
+    )
 
-    account_number = Column(String)
+    # =========================================================
+    # ADDRESS INFORMATION
+    # =========================================================
 
-    ifsc_code = Column(String)
+    address = Column(
+        String(500),
+        nullable=True,
+    )
 
-    # Payment Information
-    payment_method = Column(String)
-    # Cash, Bank Transfer, UPI, Cheque
+    city = Column(
+        String(100),
+        nullable=True,
+    )
 
-    credit_days = Column(Integer, default=0)
+    state = Column(
+        String(100),
+        nullable=True,
+    )
 
-    credit_limit = Column(Float, default=0)
+    pincode = Column(
+        String(10),
+        nullable=True,
+    )
 
-    # Business Information
-    product_categories = Column(String)
-    # Vegetables, Dairy, Meat, Grocery etc.
+    # =========================================================
+    # TAX INFORMATION
+    # =========================================================
+
+    gstin = Column(
+        String(20),
+        nullable=True,
+    )
+
+    pan_number = Column(
+        String(20),
+        nullable=True,
+    )
+
+    fssai_number = Column(
+        String(30),
+        nullable=True,
+    )
+
+    # =========================================================
+    # BANKING INFORMATION
+    # =========================================================
+
+    bank_name = Column(
+        String(255),
+        nullable=True,
+    )
+
+    account_number = Column(
+        String(50),
+        nullable=True,
+    )
+
+    ifsc_code = Column(
+        String(20),
+        nullable=True,
+    )
+
+    # =========================================================
+    # PAYMENT INFORMATION
+    # =========================================================
+
+    payment_method = Column(
+        String(30),
+        nullable=True,
+    )
+
+    credit_days = Column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+
+    credit_limit = Column(
+        Numeric(14, 2),
+        nullable=False,
+        default=0,
+    )
+
+    # =========================================================
+    # BUSINESS INFORMATION
+    # =========================================================
+
+    product_categories = Column(
+        String(500),
+        nullable=True,
+    )
 
     preferred_vendor = Column(
         Boolean,
-        default=False
+        nullable=False,
+        default=False,
     )
 
     lead_time_days = Column(
         Integer,
-        default=0
+        nullable=False,
+        default=0,
     )
 
-    # Branch Mapping
+    # =========================================================
+    # OPTIONAL BRANCH INFORMATION
+    #
+    # This is NOT used for authorization.
+    # Authorization is CLIENT based.
+    # =========================================================
+
     branch_id = Column(
         Integer,
         ForeignKey("branches.id"),
-        nullable=True
+        nullable=True,
+        index=True,
     )
 
-    # Financial Tracking
+    # =========================================================
+    # FINANCIAL TRACKING
+    # =========================================================
+
     current_outstanding = Column(
-        Float,
-        default=0
+        Numeric(14, 2),
+        nullable=False,
+        default=0,
     )
 
     total_purchase_amount = Column(
-        Float,
-        default=0
+        Numeric(14, 2),
+        nullable=False,
+        default=0,
     )
 
     last_purchase_date = Column(
-        DateTime,
-        nullable=True
+        DateTime(timezone=True),
+        nullable=True,
     )
 
-    # Additional Information
-    notes = Column(String)
+    # =========================================================
+    # ADDITIONAL INFORMATION
+    # =========================================================
+
+    notes = Column(
+        String(1000),
+        nullable=True,
+    )
+
+    # =========================================================
+    # TIMESTAMPS
+    # =========================================================
 
     created_at = Column(
-        DateTime,
-        default=datetime.utcnow
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
     )
 
     updated_at = Column(
-        DateTime,
-        default=datetime.utcnow,
-        onupdate=datetime.utcnow
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    # =========================================================
+    # INDEXES
+    # =========================================================
+
+    __table_args__ = (
+        Index(
+            "ix_vendors_client_vendor_code",
+            "client_id",
+            "vendor_code",
+        ),
+        Index(
+            "ix_vendors_client_vendor_name",
+            "client_id",
+            "vendor_name",
+        ),
     )

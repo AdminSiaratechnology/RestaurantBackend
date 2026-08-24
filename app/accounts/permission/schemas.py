@@ -6,6 +6,7 @@ class StaffPermissionBase(BaseModel):
     manage_orders: bool = False
     manage_staff: bool = False
     manage_inventory: bool = False
+    manage_purchase: bool = False
     manage_customers: bool = False
     manage_reports: bool = False
     manage_branches: bool = False

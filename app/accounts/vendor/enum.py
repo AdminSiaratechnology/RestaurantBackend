@@ -16,6 +16,7 @@ class VendorType(str, Enum):
 
 class PaymentMethod(str, Enum):
     cash = "cash"
+    credit = "credit"
     bank_transfer = "bank_transfer"
     upi = "upi"
     cheque = "cheque"

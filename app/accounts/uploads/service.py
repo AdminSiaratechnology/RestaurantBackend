@@ -1,36 +1,37 @@
-"""
-app/accounts/uploads/service.py
-
-Generic Bulk Upload Framework — Production Ready
-"""
-
 from __future__ import annotations
 
 import io
 from dataclasses import dataclass, field
+from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
 
 import pandas as pd
 
 from fastapi import HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.accounts.bill.enum import PaymentStatus
-from app.accounts.bill.model import Bill
 from app.accounts.branch.model import Branch
-from app.accounts.category.model import Category
-from app.accounts.ingredient.model import ItemIngredient
 from app.accounts.inventory.model import Godown, InventoryItem
-from app.accounts.item.enum import FoodType
-from app.accounts.item.model import Item
-from app.accounts.order.model import Order, OrderItem
-from app.accounts.payment.model import Payment
+from app.accounts.purchase.model import (
+    BranchPurchaseInvoiceCounter,
+    PurchaseEntry,
+    PurchaseEntryItem,
+)
+from app.accounts.purchase.schema import PurchaseCreate, PurchaseItemCreate
+from app.accounts.purchase.service import create_purchase
+from app.accounts.vendor.model import Vendor
+from app.accounts.category.model import Category
+from app.accounts.item.model import Item, FoodType
 from app.accounts.pricing.model import Pricing
-
+from app.accounts.ingredient.model import ItemIngredient
+from app.accounts.order.model import Order, OrderItem
+from app.accounts.bill.model import Bill, PaymentStatus
+from app.accounts.payment.model import Payment
 
 # ============================================================================
 # TEMPLATE & CONFIG DEFINITIONS
@@ -169,6 +170,47 @@ TEMPLATES: dict[str, dict[str, list[dict]]] = {
             }
         ]
     },
+
+    # ------------------------------------------------------------------------
+    # PURCHASE
+    # ------------------------------------------------------------------------
+    "purchase": {
+        "Purchase_Entries": [
+            {
+                "Branch Code": "BR001",
+                "Supplier Name": "Fresh Farms",
+                "Supplier Invoice Number": "SUP-INV-001",
+                "Supplier Invoice Date": "2026-08-22",
+                "Delivery Date": "2026-08-22",
+                "Reference Number": "PO-001",
+                "Payment Terms": "Credit",
+                "Due Date": "2026-09-22",
+                "Notes": "Regular inventory purchase",
+            }
+        ],
+        "Purchase_Items": [
+            {
+                "Branch Code": "BR001",
+                "Supplier Invoice Number": "SUP-INV-001",
+                "Inventory Item": "Burger Bun",
+                "Godown": "Main Store",
+                "Quantity": 100,
+                "Rate": 5.50,
+                "Discount %": 0,
+                "Tax %": 5,
+            },
+            {
+                "Branch Code": "BR001",
+                "Supplier Invoice Number": "SUP-INV-001",
+                "Inventory Item": "Veg Patty",
+                "Godown": "Main Store",
+                "Quantity": 50,
+                "Rate": 25.0,
+                "Discount %": 0,
+                "Tax %": 5,
+            },
+        ],
+    },
 }
 
 
@@ -177,9 +219,6 @@ TEMPLATES: dict[str, dict[str, list[dict]]] = {
 # ============================================================================
 
 # IMPORTANT:
-# This was missing in the old code and caused:
-# NameError: name '_VALID_STATUS' is not defined
-#
 # Keep these values synchronized with the InventoryItem.status column/enum.
 _VALID_STATUS = {
     "in_stock",
@@ -211,7 +250,7 @@ class ModuleConfig:
     """
 
     sheets: list[SheetConfig]
-    handler: Callable
+    handler: Optional[Callable] = None
 
 
 # ============================================================================
@@ -220,9 +259,10 @@ class ModuleConfig:
 
 UPLOAD_CONFIG: dict[str, ModuleConfig] = {
 
-    # ------------------------------------------------------------------------
+    # ========================================================================
     # MENU
-    # ------------------------------------------------------------------------
+    # ========================================================================
+
     "menu": ModuleConfig(
         sheets=[
             SheetConfig(
@@ -235,6 +275,7 @@ UPLOAD_CONFIG: dict[str, ModuleConfig] = {
                     "Active",
                 ],
             ),
+
             SheetConfig(
                 "Pricing",
                 [
@@ -250,6 +291,7 @@ UPLOAD_CONFIG: dict[str, ModuleConfig] = {
                     "Active",
                 ],
             ),
+
             SheetConfig(
                 "BOM",
                 [
@@ -264,9 +306,10 @@ UPLOAD_CONFIG: dict[str, ModuleConfig] = {
         handler=None,
     ),
 
-    # ------------------------------------------------------------------------
+    # ========================================================================
     # INVENTORY
-    # ------------------------------------------------------------------------
+    # ========================================================================
+
     "inventory": ModuleConfig(
         sheets=[
             SheetConfig(
@@ -281,9 +324,10 @@ UPLOAD_CONFIG: dict[str, ModuleConfig] = {
         handler=None,
     ),
 
-    # ------------------------------------------------------------------------
+    # ========================================================================
     # CATEGORY
-    # ------------------------------------------------------------------------
+    # ========================================================================
+
     "category": ModuleConfig(
         sheets=[
             SheetConfig(
@@ -297,7 +341,60 @@ UPLOAD_CONFIG: dict[str, ModuleConfig] = {
         ],
         handler=None,
     ),
+
+    # ========================================================================
+    # BILL
+    # ========================================================================
+
+    "bill": ModuleConfig(
+        sheets=[
+            SheetConfig(
+                "Bills",
+                [
+                    "Invoice No",
+                    "Branch Code",
+                    "Order Type",
+                    "Payment Status",
+                    "Payment Method",
+                    "Subtotal",
+                    "Grand Total",
+                ],
+            )
+        ],
+        handler=None,
+    ),
+
+    # ========================================================================
+    # PURCHASE
+    # ========================================================================
+
+    "purchase": ModuleConfig(
+        sheets=[
+            SheetConfig(
+                "Purchase_Entries",
+                [
+                    "Branch Code",
+                    "Supplier Name",
+                    "Supplier Invoice Number",
+                    "Supplier Invoice Date",
+                ],
+            ),
+            SheetConfig(
+                "Purchase_Items",
+                [
+                    "Branch Code",
+                    "Supplier Invoice Number",
+                    "Inventory Item",
+                    "Godown",
+                    "Quantity",
+                    "Rate",
+                ],
+            ),
+        ],
+        handler=None,
+    ),
 }
+
 
 
 # ============================================================================
@@ -510,6 +607,124 @@ def _safe_inventory_status(
     return normalized
 
 
+def _safe_date(
+    val: Any,
+    sheet_name: str,
+    row_num: int,
+    field_name: str,
+    required: bool = True,
+) -> Optional[date]:
+    """
+    Safely convert an Excel cell value (datetime, date, str, Timestamp) to Python date.
+    """
+    if val is None or pd.isna(val) or str(val).strip() == "":
+        if required:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": sheet_name,
+                    "row": row_num,
+                    "field": field_name,
+                    "message": f"'{field_name}' is required.",
+                },
+            )
+        return None
+
+    if isinstance(val, datetime):
+        return val.date()
+
+    if isinstance(val, date):
+        return val
+
+    if isinstance(val, pd.Timestamp):
+        return val.date()
+
+    raw_str = str(val).strip()
+    try:
+        parsed = pd.to_datetime(raw_str, errors="raise")
+        return parsed.date()
+    except Exception:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "module": "purchase",
+                "sheet": sheet_name,
+                "row": row_num,
+                "field": field_name,
+                "message": f"Invalid date value for '{field_name}': '{val}'",
+            },
+        )
+
+
+def _safe_float_col(
+    val: Any,
+    sheet_name: str,
+    row_num: int,
+    field_name: str,
+    default: float = 0.0,
+    required: bool = False,
+    min_val: Optional[float] = None,
+    max_val: Optional[float] = None,
+) -> float:
+    """
+    Safely convert an Excel cell value to float with field-level error messages.
+    """
+    if val is None or pd.isna(val) or str(val).strip() == "":
+        if required:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": sheet_name,
+                    "row": row_num,
+                    "field": field_name,
+                    "message": f"'{field_name}' is required.",
+                },
+            )
+        return default
+
+    try:
+        num = float(val)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "module": "purchase",
+                "sheet": sheet_name,
+                "row": row_num,
+                "field": field_name,
+                "message": f"Invalid numeric value for '{field_name}': '{val}'",
+            },
+        )
+
+    if min_val is not None and num < min_val:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "module": "purchase",
+                "sheet": sheet_name,
+                "row": row_num,
+                "field": field_name,
+                "message": f"'{field_name}' must be at least {min_val}. Got {num}.",
+            },
+        )
+
+    if max_val is not None and num > max_val:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "module": "purchase",
+                "sheet": sheet_name,
+                "row": row_num,
+                "field": field_name,
+                "message": f"'{field_name}' cannot be greater than {max_val}. Got {num}.",
+            },
+        )
+
+    return num
+
+
 def _auto_width_excel(
     writer: pd.ExcelWriter,
     sheet_name: str,
@@ -550,6 +765,26 @@ async def _load_branches(
         b.branch_code.strip().upper(): b
         for b in result.scalars().all()
     }
+
+
+async def _load_vendors(
+    db: AsyncSession,
+    branch_ids: list[int],
+) -> list[Vendor]:
+
+    if not branch_ids:
+        return []
+
+    result = await db.execute(
+        select(Vendor).where(
+            or_(
+                Vendor.branch_id.in_(branch_ids),
+                Vendor.branch_id.is_(None),
+            )
+        )
+    )
+
+    return list(result.scalars().all())
 
 
 async def _load_categories(
@@ -636,6 +871,7 @@ async def _load_godowns(
         ): g
         for g in result.scalars().all()
     }
+
 
 
 async def _load_existing_pricings(
@@ -1731,6 +1967,431 @@ async def _process_category(
 
 
 # ============================================================================
+# PURCHASE PROCESSOR
+# ============================================================================
+
+async def _process_purchase(
+    db: AsyncSession,
+    sheets: dict[str, pd.DataFrame],
+    client_id: int,
+) -> UploadResult:
+    """
+    Process Purchase bulk upload from Excel.
+    Expected sheets:
+      - Purchase_Entries
+      - Purchase_Items
+    """
+    entries_df = sheets["Purchase_Entries"]
+    items_df = sheets["Purchase_Items"]
+
+    # 1. Load accessible branches for this client
+    branches_map = await _load_branches(db, client_id)
+    if not branches_map:
+        raise HTTPException(
+            status_code=403,
+            detail="No accessible branches found for your account.",
+        )
+
+    branch_ids = [b.id for b in branches_map.values()]
+
+    # 2. Load inventory items, godowns, and vendors
+    inventory_map = await _load_inventory_items(db, branch_ids)
+    godowns_map = await _load_godowns(db, branch_ids)
+    vendors_list = await _load_vendors(db, branch_ids)
+
+    # 3. Validate Purchase_Entries rows
+    entries_map: dict[tuple[str, str], dict] = {}
+    seen_entries: set[tuple[str, str]] = set()
+
+    for idx, row in entries_df.iterrows():
+        excel_row = idx + 2
+        branch_code = _safe_str(row.get("Branch Code")).upper()
+        supplier_name = _safe_str(row.get("Supplier Name"))
+        supplier_inv_num = _safe_str(row.get("Supplier Invoice Number"))
+
+        if not branch_code:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Entries",
+                    "row": excel_row,
+                    "field": "Branch Code",
+                    "message": "Branch Code is required.",
+                },
+            )
+
+        branch = branches_map.get(branch_code)
+        if branch is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Entries",
+                    "row": excel_row,
+                    "field": "Branch Code",
+                    "message": f"Branch '{branch_code}' not found or not accessible.",
+                },
+            )
+
+        if not supplier_name:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Entries",
+                    "row": excel_row,
+                    "field": "Supplier Name",
+                    "message": "Supplier Name is required.",
+                },
+            )
+
+        if not supplier_inv_num:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Entries",
+                    "row": excel_row,
+                    "field": "Supplier Invoice Number",
+                    "message": "Supplier Invoice Number is required.",
+                },
+            )
+
+        entry_key = (branch_code, supplier_inv_num)
+        if entry_key in seen_entries:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Entries",
+                    "row": excel_row,
+                    "field": "Supplier Invoice Number",
+                    "message": f"Duplicate purchase entry with Supplier Invoice Number '{supplier_inv_num}' for branch '{branch_code}' in upload file.",
+                },
+            )
+        seen_entries.add(entry_key)
+
+        # Match vendor
+        matched_vendor = None
+        target_name = supplier_name.strip().lower()
+        for v in vendors_list:
+            if (v.vendor_name or "").strip().lower() == target_name:
+                if v.branch_id == branch.id or v.branch_id is None:
+                    matched_vendor = v
+                    break
+
+        if matched_vendor is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Entries",
+                    "row": excel_row,
+                    "field": "Supplier Name",
+                    "message": f"Supplier '{supplier_name}' not found for branch '{branch_code}'.",
+                },
+            )
+
+        # Parse dates
+        supplier_inv_date = _safe_date(
+            row.get("Supplier Invoice Date"),
+            "Purchase_Entries",
+            excel_row,
+            "Supplier Invoice Date",
+            required=True,
+        )
+
+        delivery_date = _safe_date(
+            row.get("Delivery Date"),
+            "Purchase_Entries",
+            excel_row,
+            "Delivery Date",
+            required=False,
+        )
+
+        due_date = _safe_date(
+            row.get("Due Date"),
+            "Purchase_Entries",
+            excel_row,
+            "Due Date",
+            required=False,
+        )
+
+        reference_number = _safe_str(row.get("Reference Number")) or None
+        payment_terms = _safe_str(row.get("Payment Terms")) or None
+        notes = _safe_str(row.get("Notes")) or None
+
+        entries_map[entry_key] = {
+            "excel_row": excel_row,
+            "branch": branch,
+            "vendor": matched_vendor,
+            "supplier_inv_num": supplier_inv_num,
+            "supplier_inv_date": supplier_inv_date,
+            "delivery_date": delivery_date,
+            "reference_number": reference_number,
+            "payment_terms": payment_terms,
+            "due_date": due_date,
+            "notes": notes,
+            "items": [],
+        }
+
+    # 4. Validate & Group Purchase_Items rows
+    for idx, row in items_df.iterrows():
+        excel_row = idx + 2
+        branch_code = _safe_str(row.get("Branch Code")).upper()
+        supplier_inv_num = _safe_str(row.get("Supplier Invoice Number"))
+        item_name = _safe_str(row.get("Inventory Item"))
+        godown_name = _safe_str(row.get("Godown"))
+
+        if not branch_code:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Items",
+                    "row": excel_row,
+                    "field": "Branch Code",
+                    "message": "Branch Code is required.",
+                },
+            )
+
+        branch = branches_map.get(branch_code)
+        if branch is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Items",
+                    "row": excel_row,
+                    "field": "Branch Code",
+                    "message": f"Branch '{branch_code}' not found or not accessible.",
+                },
+            )
+
+        if not supplier_inv_num:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Items",
+                    "row": excel_row,
+                    "field": "Supplier Invoice Number",
+                    "message": "Supplier Invoice Number is required.",
+                },
+            )
+
+        entry_key = (branch_code, supplier_inv_num)
+        if entry_key not in entries_map:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Items",
+                    "row": excel_row,
+                    "field": "Supplier Invoice Number",
+                    "message": f"Item references unknown Supplier Invoice Number '{supplier_inv_num}' for branch '{branch_code}'.",
+                },
+            )
+
+        if not item_name:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Items",
+                    "row": excel_row,
+                    "field": "Inventory Item",
+                    "message": "Inventory Item name is required.",
+                },
+            )
+
+        # Match inventory item by (name.lower(), branch.id)
+        inv_item = inventory_map.get((item_name.lower(), branch.id))
+        if inv_item is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Items",
+                    "row": excel_row,
+                    "field": "Inventory Item",
+                    "message": f"Inventory item '{item_name}' not found for branch '{branch_code}'.",
+                },
+            )
+
+        # Match Godown
+        godown_id = None
+        if godown_name:
+            g = godowns_map.get((godown_name.lower(), branch.id))
+            if g is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "module": "purchase",
+                        "sheet": "Purchase_Items",
+                        "row": excel_row,
+                        "field": "Godown",
+                        "message": f"Godown '{godown_name}' not found for branch '{branch_code}'.",
+                    },
+                )
+            godown_id = g.id
+        else:
+            godown_id = inv_item.godown_id
+
+        # Quantity and Rate
+        quantity = _safe_float_col(
+            row.get("Quantity"),
+            "Purchase_Items",
+            excel_row,
+            "Quantity",
+            required=True,
+            min_val=0.0001,
+        )
+
+        rate = _safe_float_col(
+            row.get("Rate"),
+            "Purchase_Items",
+            excel_row,
+            "Rate",
+            required=True,
+            min_val=0.0,
+        )
+
+        discount_percent = _safe_float_col(
+            row.get("Discount %"),
+            "Purchase_Items",
+            excel_row,
+            "Discount %",
+            default=0.0,
+            required=False,
+            min_val=0.0,
+            max_val=100.0,
+        )
+
+        tax_percent = _safe_float_col(
+            row.get("Tax %"),
+            "Purchase_Items",
+            excel_row,
+            "Tax %",
+            default=0.0,
+            required=False,
+            min_val=0.0,
+            max_val=100.0,
+        )
+
+        entries_map[entry_key]["items"].append({
+            "excel_row": excel_row,
+            "inventory_item": inv_item,
+            "godown_id": godown_id,
+            "quantity": quantity,
+            "rate": rate,
+            "discount_percent": discount_percent,
+            "tax_percent": tax_percent,
+        })
+
+    # 5. Verify every Purchase_Entries has at least 1 item
+    for entry_key, entry_data in entries_map.items():
+        if not entry_data["items"]:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "module": "purchase",
+                    "sheet": "Purchase_Entries",
+                    "row": entry_data["excel_row"],
+                    "field": "Supplier Invoice Number",
+                    "message": f"Purchase entry '{entry_data['supplier_inv_num']}' has no purchase items in 'Purchase_Items' sheet.",
+                },
+            )
+
+    # 6. Build PurchaseCreate payloads and call create_purchase()
+    purchases_created = 0
+    total_items_created = 0
+
+    for entry_key, entry_data in entries_map.items():
+        branch = entry_data["branch"]
+        vendor = entry_data["vendor"]
+
+        items_payload = []
+        subtotal = 0.0
+        total_discount = 0.0
+        total_tax = 0.0
+
+        for it in entry_data["items"]:
+            inv = it["inventory_item"]
+            qty = it["quantity"]
+            rate = it["rate"]
+            disc_pct = it["discount_percent"]
+            tax_pct = it["tax_percent"]
+
+            gross = qty * rate
+            disc_amt = gross * disc_pct / 100.0
+            taxable = gross - disc_amt
+            tax_amt = taxable * tax_pct / 100.0
+            line_amount = round(taxable + tax_amt, 2)
+
+            subtotal += gross
+            total_discount += disc_amt
+            total_tax += tax_amt
+
+            items_payload.append(
+                PurchaseItemCreate(
+                    inventory_item_id=inv.id,
+                    godown_id=it["godown_id"],
+                    item_name=inv.name,
+                    row_category=inv.row_category or "other",
+                    unit=inv.unit,
+                    display_unit=inv.display_unit or inv.unit,
+                    conversion_factor=inv.conversion_factor or 1.0,
+                    quantity=qty,
+                    reorder_level=inv.reorder_level or 0.0,
+                    rate=rate,
+                    vendor_name=vendor.vendor_name,
+                    vendor_phone=vendor.mobile,
+                    discount_percent=disc_pct,
+                    tax_percent=tax_pct,
+                    amount=line_amount,
+                )
+            )
+
+        subtotal = round(subtotal, 2)
+        total_discount = round(total_discount, 2)
+        total_tax = round(total_tax, 2)
+        grand_total = round(subtotal - total_discount + total_tax, 2)
+
+        purchase_create_payload = PurchaseCreate(
+            branch_id=branch.id,
+            supplier_id=vendor.id,
+            supplier_invoice_number=entry_data["supplier_inv_num"],
+            supplier_invoice_date=entry_data["supplier_inv_date"],
+            delivery_date=entry_data["delivery_date"],
+            reference_number=entry_data["reference_number"],
+            payment_terms=entry_data["payment_terms"],
+            due_date=entry_data["due_date"],
+            notes=entry_data["notes"],
+            subtotal=subtotal,
+            discount_amount=total_discount,
+            tax_amount=total_tax,
+            grand_total=grand_total,
+            items=items_payload,
+        )
+
+        await create_purchase(db, purchase_create_payload)
+        purchases_created += 1
+        total_items_created += len(items_payload)
+
+    await db.flush()
+
+    return UploadResult(
+        message="Purchases uploaded successfully",
+        counts={
+            "purchases_created": purchases_created,
+            "items_created": total_items_created,
+        },
+    )
+
+
+# ============================================================================
 # PATCH HANDLERS
 # ============================================================================
 
@@ -1743,6 +2404,11 @@ UPLOAD_CONFIG["inventory"].handler = (
 UPLOAD_CONFIG["category"].handler = (
     _process_category
 )
+
+UPLOAD_CONFIG["purchase"].handler = (
+    _process_purchase
+)
+
 
 
 # ============================================================================
@@ -1999,39 +2665,18 @@ async def get_allowed_branches(
     client: Any,
 ) -> list[Branch]:
     """
-    Determine which branches the authenticated
-    client may access.
+    Determine which branches the authenticated client or staff may access.
     """
-
-    # ------------------------------------------------------------------------
-    # ALL BRANCHES
-    # ------------------------------------------------------------------------
-
-    if getattr(
-        client,
-        "all_branches",
-        False,
-    ):
-
+    # If client is a Client model instance (has company_name or client role)
+    if hasattr(client, "company_name") or getattr(client, "all_branches", True) or not hasattr(client, "branch_ids"):
+        c_id = getattr(client, "id", None)
         result = await db.execute(
             select(Branch).where(
-                Branch.client_id
-                == client.id
+                Branch.client_id == c_id
             )
         )
-
-        branches = (
-            result
-            .scalars()
-            .all()
-        )
-
-    # ------------------------------------------------------------------------
-    # ASSIGNED BRANCHES
-    # ------------------------------------------------------------------------
-
+        branches = result.scalars().all()
     else:
-
         assigned_ids: list[int] = (
             getattr(
                 client,
@@ -2040,44 +2685,35 @@ async def get_allowed_branches(
             )
             or []
         )
+        if hasattr(client, "branch_id") and client.branch_id:
+            assigned_ids = list(set(assigned_ids + [client.branch_id]))
 
         if not assigned_ids:
-
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "No branches are assigned "
-                    "to your account."
-                ),
+            c_id = getattr(client, "client_id", getattr(client, "id", None))
+            result = await db.execute(
+                select(Branch).where(
+                    Branch.client_id == c_id
+                )
             )
-
-        result = await db.execute(
-            select(Branch).where(
-                Branch.client_id
-                == client.id,
-                Branch.id.in_(
-                    assigned_ids
-                ),
+            branches = result.scalars().all()
+        else:
+            result = await db.execute(
+                select(Branch).where(
+                    Branch.id.in_(
+                        assigned_ids
+                    )
+                )
             )
-        )
-
-        branches = (
-            result
-            .scalars()
-            .all()
-        )
+            branches = result.scalars().all()
 
     if not branches:
-
         raise HTTPException(
             status_code=403,
-            detail=(
-                "No accessible branches "
-                "found for your account."
-            ),
+            detail="No accessible branches found for your account.",
         )
 
     return list(branches)
+
 
 
 # ============================================================================
@@ -3191,6 +3827,73 @@ async def _export_all_reports(
 
 
 # ============================================================================
+# EXPORT - PURCHASE
+# ============================================================================
+
+async def _export_purchase(
+    db: AsyncSession,
+    branch_ids: list[int],
+    client_id: int,
+) -> dict[str, pd.DataFrame]:
+
+    if not branch_ids:
+        return {
+            "Purchase_Entries": pd.DataFrame(),
+            "Purchase_Items": pd.DataFrame(),
+        }
+
+    stmt = (
+        select(PurchaseEntry)
+        .options(
+            selectinload(PurchaseEntry.items).selectinload(PurchaseEntryItem.inventory_item),
+            selectinload(PurchaseEntry.items).selectinload(PurchaseEntryItem.godown),
+            selectinload(PurchaseEntry.branch),
+            selectinload(PurchaseEntry.supplier),
+        )
+        .where(PurchaseEntry.branch_id.in_(branch_ids))
+        .order_by(PurchaseEntry.id.desc())
+    )
+    result = await db.execute(stmt)
+    purchases = result.scalars().all()
+
+    entries_data = []
+    items_data = []
+
+    for p in purchases:
+        b_code = p.branch.branch_code if p.branch else ""
+        s_name = p.supplier.vendor_name if p.supplier else ""
+        entries_data.append({
+            "Branch Code": b_code,
+            "Supplier Name": s_name,
+            "Supplier Invoice Number": p.supplier_invoice_number,
+            "Supplier Invoice Date": p.supplier_invoice_date.isoformat() if p.supplier_invoice_date else "",
+            "Delivery Date": p.delivery_date.isoformat() if p.delivery_date else "",
+            "Reference Number": p.reference_number or "",
+            "Payment Terms": p.payment_terms or "",
+            "Due Date": p.due_date.isoformat() if p.due_date else "",
+            "Notes": p.notes or "",
+        })
+
+        for it in p.items:
+            g_name = it.godown.name if it.godown else ""
+            items_data.append({
+                "Branch Code": b_code,
+                "Supplier Invoice Number": p.supplier_invoice_number,
+                "Inventory Item": it.item_name,
+                "Godown": g_name,
+                "Quantity": it.quantity,
+                "Rate": it.rate,
+                "Discount %": it.discount_percent,
+                "Tax %": it.tax_percent,
+            })
+
+    return {
+        "Purchase_Entries": pd.DataFrame(entries_data),
+        "Purchase_Items": pd.DataFrame(items_data),
+    }
+
+
+# ============================================================================
 # EXPORT HANDLER REGISTRY
 # ============================================================================
 
@@ -3205,8 +3908,10 @@ EXPORT_HANDLERS: dict[
     "inventory": _export_inventory,
     "category": _export_category,
     "bill": _export_bill,
+    "purchase": _export_purchase,
     "all_reports": _export_all_reports,
 }
+
 
 
 # ============================================================================
