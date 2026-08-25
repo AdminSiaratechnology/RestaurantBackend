@@ -47,6 +47,8 @@ async def test_crm_pipeline():
     mock_offer = MagicMock()
     mock_offer.id = 1
     mock_offer.offer_name = "WELCOME_SILVER"
+    mock_offer.gold_min = 14999.0
+    mock_offer.silver_min = 4999.0
 
     mock_rule = MagicMock()
     mock_rule.bronze_min = 0.0

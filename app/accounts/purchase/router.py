@@ -7,6 +7,7 @@ from fastapi import (
     Query,
     status,
 )
+from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -28,8 +29,10 @@ from app.accounts.purchase.schema import (
 from app.accounts.purchase.service import (
     create_purchase,
     delete_purchase,
+    generate_single_purchase_excel,
     get_next_invoice_preview,
     get_purchase_by_id,
+    get_purchase_for_export,
     get_purchase_items_lookup,
     get_purchases,
     update_purchase,
@@ -250,6 +253,76 @@ async def get_purchase(
         )
 
     return entry
+
+
+# ============================================================
+# EXPORT SINGLE PURCHASE INVOICE EXCEL
+# ============================================================
+
+@router.get(
+    "/purchases/{purchase_id}/export-excel",
+    summary="Export single purchase invoice as Excel",
+)
+@router.get(
+    "/purchase-entries/{purchase_id}/export-excel",
+    include_in_schema=False,
+)
+async def export_single_purchase_excel_endpoint(
+    purchase_id: int,
+    db: AsyncSession = Depends(get_db),
+    current=Depends(require_purchase_access),
+):
+    entry = await get_purchase_for_export(db=db, purchase_id=purchase_id)
+    if not entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Purchase entry not found",
+        )
+
+    # Security check: verify branch/client/partner access
+    role = current["role"]
+    user = current["user"]
+
+    if role == UserRole.SUPER_ADMIN:
+        pass
+    elif role == UserRole.CLIENT:
+        if entry.branch and entry.branch.client_id != user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot access purchase of another client",
+            )
+    elif role == UserRole.PARTNER:
+        if (
+            entry.branch
+            and entry.branch.client
+            and entry.branch.client.partner_id != user.id
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot access purchase of another partner",
+            )
+    elif role == UserRole.STAFF:
+        if entry.branch_id != user.branch_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You cannot access purchase of another branch",
+            )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied",
+        )
+
+    file_path, file_name = generate_single_purchase_excel(entry)
+    return FileResponse(
+        path=file_path,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        filename=file_name,
+        headers={
+            "Content-Disposition": f'attachment; filename="{file_name}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        },
+    )
 
 
 # ============================================================

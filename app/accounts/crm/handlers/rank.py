@@ -36,6 +36,7 @@ class RankHandler(BaseCRMHandler):
         repo = RankRuleRepository(context.db)
 
         rule = await repo.get_branch_rule(
+            client_id=customer.client_id or context.event.client_id,
             branch_id=customer.branch_id,
             is_active_only=True,
         )
@@ -59,14 +60,26 @@ class RankHandler(BaseCRMHandler):
 
         context.dto.new_rank = new_rank
 
+        from app.accounts.customer.service import determine_customer_type
+        from app.accounts.customer.model import CustomerTypeEnum
+
+        customer.current_rank = new_rank
+        customer.customer_type = determine_customer_type(
+            rank=customer.current_rank,
+            visit_count=customer.total_visits or 0,
+        )
+        customer.is_vip = (
+            customer.customer_type == CustomerTypeEnum.VIP
+        )
+
         if previous_rank == new_rank:
             crm_logger.info(
                 f"[{self.name}] Customer #{customer.id} "
-                f"remains {new_rank}."
+                f"remains {new_rank} (type={customer.customer_type.value})."
             )
+            await context.db.flush()
             return
 
-        customer.current_rank = new_rank
         context.dto.rank_upgraded = True
 
         await context.db.flush()
@@ -74,5 +87,5 @@ class RankHandler(BaseCRMHandler):
         crm_logger.info(
             f"[{self.name}] Customer #{customer.id} "
             f"Rank: {previous_rank} -> {new_rank} "
-            f"(Spend={total_spend})"
+            f"(Type={customer.customer_type.value}, Spend={total_spend})"
         )

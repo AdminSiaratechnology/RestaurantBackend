@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import Enum as PyEnum
 
 from sqlalchemy import (
     Boolean,
@@ -10,10 +11,21 @@ from sqlalchemy import (
     Integer,
     String,
     UniqueConstraint,
+    Enum as SQLEnum,
 )
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
+
+
+# =====================================================
+# CUSTOMER TYPE ENUM
+# =====================================================
+
+class CustomerTypeEnum(str, PyEnum):
+    NEW = "New"
+    REGULAR = "Regular"
+    VIP = "VIP"
 
 
 class Customer(Base):
@@ -91,9 +103,27 @@ class Customer(Base):
         nullable=False,
     )
 
+    # =====================================================
+    # CUSTOMER TYPE
+    #
+    # Automatically calculated:
+    #
+    # Gold rank          -> VIP
+    # 1 or 2 visits      -> New
+    # More than 2 visits -> Regular
+    #
+    # DO NOT update this manually.
+    # =====================================================
+
     customer_type = Column(
-        String,
-        default="Regular",
+        SQLEnum(
+            CustomerTypeEnum,
+            name="customer_type_enum",
+            values_callable=lambda enum_cls: [
+                item.value for item in enum_cls
+            ],
+        ),
+        default=CustomerTypeEnum.NEW,
         nullable=False,
     )
 
@@ -185,9 +215,6 @@ class Customer(Base):
 
     # =====================================================
     # CURRENT SPEND
-    #
-    # Increases when customer makes a purchase.
-    # Decreases when customer redeems.
     # =====================================================
 
     current_spend = Column(
@@ -248,7 +275,6 @@ class Customer(Base):
 
     last_order_id = Column(
         Integer,
-        # ForeignKey("orders.id"),
         ForeignKey("orders.id", use_alter=True),
         nullable=True,
     )
@@ -263,18 +289,21 @@ class Customer(Base):
         nullable=False,
     )
 
-    # Number of successful redemption transactions.
-    #
-    # IMPORTANT:
-    # This is incremented ONLY during redemption.
-    # It must NOT increment during normal purchases.
-    # =====================================================
-
     redeem_count = Column(
         Integer,
         nullable=False,
         default=0,
         server_default="0",
+    )
+
+    # =====================================================
+    # WALLET
+    # =====================================================
+
+    wallet_balance = Column(
+        Float,
+        default=0.0,
+        nullable=False,
     )
 
     # =====================================================
@@ -327,12 +356,6 @@ class Customer(Base):
         "CustomerVisitHistory",
         back_populates="customer",
         cascade="all, delete-orphan",
-    )
-
-    wallet_balance = Column(
-        Float,
-        default=0.0,
-        nullable=False,
     )
 
     notes = relationship(
