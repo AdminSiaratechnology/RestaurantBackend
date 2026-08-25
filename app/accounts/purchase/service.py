@@ -1,7 +1,12 @@
+import os
+import re
 from datetime import date, datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from fastapi import HTTPException, status
+import openpyxl
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
 
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -955,4 +960,287 @@ async def get_purchase_items_lookup(
             "last_restocked": item.last_restocked,
         })
 
-    return response
+    return response
+
+
+# ============================================================
+# SINGLE PURCHASE EXPORT EXCEL
+# ============================================================
+
+def sanitize_filename(name: str) -> str:
+    sanitized = re.sub(r"[^a-zA-Z0-9_-]", "_", str(name))
+    return sanitized.strip("_") or "invoice"
+
+
+async def get_purchase_for_export(
+    db: AsyncSession,
+    purchase_id: int,
+) -> Optional[PurchaseEntry]:
+    stmt = (
+        select(PurchaseEntry)
+        .options(
+            selectinload(PurchaseEntry.supplier),
+            selectinload(PurchaseEntry.branch).selectinload(Branch.client),
+            selectinload(PurchaseEntry.items).selectinload(PurchaseEntryItem.inventory_item),
+            selectinload(PurchaseEntry.items).selectinload(PurchaseEntryItem.godown),
+        )
+        .where(PurchaseEntry.id == purchase_id)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
+
+
+def generate_single_purchase_excel(
+    purchase: PurchaseEntry,
+) -> Tuple[str, str]:
+    wb = openpyxl.Workbook()
+
+    # Typography & Colors
+    FONT_HEADER = Font(name="Segoe UI", size=10, bold=True, color="FFFFFF")
+    FONT_BOLD = Font(name="Segoe UI", size=9, bold=True, color="0F172A")
+    FONT_DATA = Font(name="Segoe UI", size=9, color="0F172A")
+    FONT_TOTAL = Font(name="Segoe UI", size=10, bold=True, color="0F172A")
+
+    FILL_HEADER = PatternFill(start_color="1E293B", end_color="1E293B", fill_type="solid")
+    FILL_TOTAL = PatternFill(start_color="FEF3C7", end_color="FEF3C7", fill_type="solid")
+    FILL_ZEBRA = PatternFill(start_color="F8FAFC", end_color="F8FAFC", fill_type="solid")
+
+    BORDER_THIN = Side(style="thin", color="E2E8F0")
+    BORDER_CELL = Border(
+        left=BORDER_THIN,
+        right=BORDER_THIN,
+        top=BORDER_THIN,
+        bottom=BORDER_THIN,
+    )
+    BORDER_TOTAL = Border(
+        top=Side(style="thin", color="D97706"),
+        bottom=Side(style="double", color="D97706"),
+        left=BORDER_THIN,
+        right=BORDER_THIN,
+    )
+
+    ALIGN_LEFT = Alignment(horizontal="left", vertical="center")
+    ALIGN_RIGHT = Alignment(horizontal="right", vertical="center")
+    ALIGN_CENTER = Alignment(horizontal="center", vertical="center")
+
+    NUM_FMT_CURRENCY = "₹#,##0.00"
+    NUM_FMT_QTY = "#,##0.00"
+    NUM_FMT_PERCENT = "0.00%"
+
+    def format_date_str(d):
+        if not d:
+            return "—"
+        if isinstance(d, (datetime, date)):
+            return d.strftime("%d/%m/%Y")
+        return str(d)
+
+    # Extract supplier name & phone
+    vendor_name = "—"
+    vendor_phone = "—"
+    if purchase.supplier:
+        vendor_name = getattr(purchase.supplier, "vendor_name", None) or getattr(purchase.supplier, "name", None) or "—"
+        vendor_phone = getattr(purchase.supplier, "phone", None) or getattr(purchase.supplier, "mobile", None) or getattr(purchase.supplier, "contact_number", None) or "—"
+
+    # ========================================================
+    # SHEET 1: Invoice
+    # ========================================================
+    ws1 = wb.active
+    ws1.title = "Invoice"
+    ws1.views.sheetView[0].showGridLines = True
+
+    # Header Row
+    ws1.append(["Field", "Value"])
+    ws1.row_dimensions[1].height = 24
+    for col_idx in range(1, 3):
+        cell = ws1.cell(row=1, column=col_idx)
+        cell.font = FONT_HEADER
+        cell.fill = FILL_HEADER
+        cell.alignment = ALIGN_LEFT
+        cell.border = BORDER_CELL
+
+    summary_fields = [
+        ("Invoice Number", purchase.invoice_number, "text"),
+        ("Supplier Name", vendor_name, "text"),
+        ("Invoice Date", format_date_str(purchase.invoice_date), "text"),
+        ("Supplier Invoice Number", purchase.supplier_invoice_number or "—", "text"),
+        ("Supplier Invoice Date", format_date_str(purchase.supplier_invoice_date), "text"),
+        ("Delivery Date", format_date_str(purchase.delivery_date), "text"),
+        ("Reference Number", purchase.reference_number or "—", "text"),
+        ("Payment Terms", purchase.payment_terms or "—", "text"),
+        ("Due Date", format_date_str(purchase.due_date), "text"),
+        ("Notes", purchase.notes or "—", "text"),
+        ("Subtotal", float(purchase.subtotal or 0.0), "currency"),
+        ("Discount Amount", float(purchase.discount_amount or 0.0), "currency"),
+        ("Tax Amount", float(purchase.tax_amount or 0.0), "currency"),
+        ("Grand Total", float(purchase.grand_total or 0.0), "currency"),
+    ]
+
+    for row_idx, (field, val, val_type) in enumerate(summary_fields, start=2):
+        ws1.row_dimensions[row_idx].height = 20
+        c1 = ws1.cell(row=row_idx, column=1, value=field)
+        c1.font = FONT_BOLD
+        c1.alignment = ALIGN_LEFT
+        c1.border = BORDER_CELL
+
+        c2 = ws1.cell(row=row_idx, column=2, value=val)
+        c2.font = FONT_DATA
+        c2.border = BORDER_CELL
+
+        if val_type == "currency":
+            c2.number_format = NUM_FMT_CURRENCY
+            c2.alignment = ALIGN_RIGHT
+            if field == "Grand Total":
+                c1.fill = FILL_TOTAL
+                c2.fill = FILL_TOTAL
+                c2.font = FONT_TOTAL
+                c1.border = BORDER_TOTAL
+                c2.border = BORDER_TOTAL
+        else:
+            c2.alignment = ALIGN_LEFT
+
+    ws1.column_dimensions["A"].width = 28
+    ws1.column_dimensions["B"].width = 36
+
+    # ========================================================
+    # SHEET 2: Invoice_Items
+    # ========================================================
+    ws2 = wb.create_sheet(title="Invoice_Items")
+    ws2.views.sheetView[0].showGridLines = True
+    ws2.freeze_panes = "A2"
+
+    item_headers = [
+        "Item",
+        "Category",
+        "Quantity",
+        "Unit",
+        "Display Unit",
+        "Conversion Factor",
+        "Rate",
+        "Discount %",
+        "Tax %",
+        "Amount",
+        "Godown",
+        "Vendor Name",
+        "Vendor Phone",
+    ]
+
+    ws2.append(item_headers)
+    ws2.row_dimensions[1].height = 24
+    for col_idx in range(1, len(item_headers) + 1):
+        cell = ws2.cell(row=1, column=col_idx)
+        cell.font = FONT_HEADER
+        cell.fill = FILL_HEADER
+        cell.alignment = (
+            ALIGN_CENTER
+            if col_idx in (4, 5, 8, 9)
+            else (ALIGN_RIGHT if col_idx in (3, 6, 7, 10) else ALIGN_LEFT)
+        )
+        cell.border = BORDER_CELL
+
+    items = list(purchase.items or [])
+    total_qty = 0.0
+    total_amount = 0.0
+
+    for r_idx, item in enumerate(items, start=2):
+        ws2.row_dimensions[r_idx].height = 20
+        is_zebra = (r_idx % 2 == 1)
+
+        item_qty = float(item.quantity or 0.0)
+        item_rate = float(item.rate or 0.0)
+        item_amt = float(item.amount or (item_qty * item_rate))
+        total_qty += item_qty
+        total_amount += item_amt
+
+        category = item.row_category or (
+            item.inventory_item.row_category if item.inventory_item else "other"
+        )
+        unit = item.unit or "—"
+        display_unit = item.display_unit or unit
+        conv_factor = float(item.conversion_factor or 1.0)
+        discount_pct = float(item.discount_percent or 0.0)
+        tax_pct = float(item.tax_percent or 0.0)
+        godown_name = (
+            item.godown.name
+            if item.godown
+            else (
+                getattr(item.godown, "godown_name", None)
+                if getattr(item, "godown", None)
+                else "—"
+            )
+        ) if getattr(item, "godown", None) else "—"
+        v_name = item.vendor_name or vendor_name
+        v_phone = item.vendor_phone or vendor_phone
+
+        row_vals = [
+            (item.item_name or "—", ALIGN_LEFT, None),
+            (category, ALIGN_LEFT, None),
+            (item_qty, ALIGN_RIGHT, NUM_FMT_QTY),
+            (unit, ALIGN_CENTER, None),
+            (display_unit, ALIGN_CENTER, None),
+            (conv_factor, ALIGN_RIGHT, "#,##0.##"),
+            (item_rate, ALIGN_RIGHT, NUM_FMT_CURRENCY),
+            (discount_pct / 100.0, ALIGN_RIGHT, NUM_FMT_PERCENT),
+            (tax_pct / 100.0, ALIGN_RIGHT, NUM_FMT_PERCENT),
+            (item_amt, ALIGN_RIGHT, NUM_FMT_CURRENCY),
+            (godown_name, ALIGN_LEFT, None),
+            (v_name, ALIGN_LEFT, None),
+            (v_phone, ALIGN_LEFT, None),
+        ]
+
+        for c_idx, (v, align, num_fmt) in enumerate(row_vals, start=1):
+            cell = ws2.cell(row=r_idx, column=c_idx, value=v)
+            cell.font = FONT_DATA
+            cell.alignment = align
+            cell.border = BORDER_CELL
+            if is_zebra:
+                cell.fill = FILL_ZEBRA
+            if num_fmt:
+                cell.number_format = num_fmt
+
+    # Totals Row in Invoice_Items
+    if items:
+        tot_row = len(items) + 2
+        ws2.row_dimensions[tot_row].height = 22
+        for col_idx in range(1, len(item_headers) + 1):
+            cell = ws2.cell(row=tot_row, column=col_idx)
+            cell.font = FONT_TOTAL
+            cell.border = BORDER_TOTAL
+            cell.fill = FILL_TOTAL
+            if col_idx == 1:
+                cell.value = "Total"
+                cell.alignment = ALIGN_LEFT
+            elif col_idx == 3:
+                cell.value = total_qty
+                cell.alignment = ALIGN_RIGHT
+                cell.number_format = NUM_FMT_QTY
+            elif col_idx == 10:
+                cell.value = total_amount
+                cell.alignment = ALIGN_RIGHT
+                cell.number_format = NUM_FMT_CURRENCY
+            else:
+                cell.value = ""
+
+    # Auto-fit column widths for Sheet 2
+    for col in ws2.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        for cell in col:
+            val_str = str(cell.value or "")
+            if cell.number_format == NUM_FMT_CURRENCY and isinstance(cell.value, (int, float)):
+                val_str = f"₹{cell.value:,.2f}"
+            max_len = max(max_len, len(val_str))
+        ws2.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+    # Save to temp directory
+    temp_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+        "temp",
+    )
+    os.makedirs(temp_dir, exist_ok=True)
+    clean_inv = sanitize_filename(purchase.invoice_number or f"INV_{purchase.id}")
+    file_name = f"purchase_invoice_{clean_inv}.xlsx"
+    file_path = os.path.join(temp_dir, file_name)
+
+    wb.save(file_path)
+    return file_path, file_name
+

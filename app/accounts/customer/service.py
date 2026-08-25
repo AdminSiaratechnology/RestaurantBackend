@@ -17,12 +17,55 @@ from sqlalchemy.exc import IntegrityError
 
 from app.accounts.branch.model import Branch
 from app.accounts.client.model import Client
-from app.accounts.customer.model import Customer
+from app.accounts.customer.model import (
+    Customer,
+    CustomerTypeEnum,
+)
 from app.accounts.customer.schema import (
     CustomerCreate,
     CustomerUpdate,
 )
 from app.accounts.deps import UserRole
+
+
+# =========================================================
+# CENTRALIZED CUSTOMER TYPE CLASSIFICATION LOGIC
+# =========================================================
+
+def determine_customer_type(
+    rank: Optional[str] = None,
+    visit_count: int = 0,
+) -> CustomerTypeEnum:
+    """
+    Customer Type Classification Logic:
+
+    Priority / Decision Flow:
+    1. First check Rank:
+       Is Rank = Gold (case-insensitive)?
+       ├── YES -> VIP (Highest priority)
+       │
+       └── NO
+            ↓
+       Check Visit Count
+            ↓
+       visit_count > 2?
+       ├── YES -> Regular
+       │
+       └── NO -> New
+
+    Rules:
+    - Gold rank must always result in VIP, regardless of visit count.
+    - Visit count is checked ONLY if the customer is NOT Gold rank.
+    - Non-Gold customer with > 2 visits is Regular.
+    - Non-Gold customer with <= 2 visits is New.
+    """
+    if rank and str(rank).strip().lower() == "gold":
+        return CustomerTypeEnum.VIP
+
+    if (visit_count or 0) > 2:
+        return CustomerTypeEnum.REGULAR
+
+    return CustomerTypeEnum.NEW
 
 
 # =========================================================
@@ -104,6 +147,12 @@ async def create_customer_service(
     # Create
     # -----------------------------------------------------
 
+    initial_rank = "Bronze"
+    computed_type = determine_customer_type(
+        rank=initial_rank,
+        visit_count=0,
+    )
+
     customer = Customer(
         name=name,
         phone=phone,
@@ -114,7 +163,9 @@ async def create_customer_service(
         anniversary=payload.anniversary,
         profile_photo=payload.profile_photo,
         customer_source=payload.customer_source or "Walk-In",
-        customer_type=payload.customer_type or "Regular",
+        current_rank=initial_rank,
+        customer_type=computed_type,
+        is_vip=(computed_type == CustomerTypeEnum.VIP),
         preferred_language=(
             payload.preferred_language or "English"
         ),
@@ -408,6 +459,12 @@ async def find_or_create_customer(
     # CREATE CUSTOMER
     # -----------------------------------------------------
 
+    initial_rank = "Bronze"
+    computed_type = determine_customer_type(
+        rank=initial_rank,
+        visit_count=0,
+    )
+
     customer = Customer(
         client_id=client_id,
         branch_id=branch_id,
@@ -415,6 +472,9 @@ async def find_or_create_customer(
         name=name,
         phone=phone,
         email=email,
+        current_rank=initial_rank,
+        customer_type=computed_type,
+        is_vip=(computed_type == CustomerTypeEnum.VIP),
     )
 
     db.add(customer)
@@ -514,6 +574,17 @@ async def get_customers_service(
 
     from app.accounts.crm.loyalty.model import CustomerLoyaltyAccount
     for customer in customers:
+        # Centralized classification consistency
+        expected_type = determine_customer_type(
+            rank=customer.current_rank,
+            visit_count=customer.total_visits or 0,
+        )
+        if customer.customer_type != expected_type:
+            customer.customer_type = expected_type
+        customer.is_vip = (
+            customer.customer_type == CustomerTypeEnum.VIP
+        )
+
         loyalty_res = await db.execute(
             select(CustomerLoyaltyAccount.current_points_balance)
             .where(CustomerLoyaltyAccount.customer_id == customer.id)
@@ -721,10 +792,6 @@ async def update_customer_service(
             customer.branch_name = branch.name
             customer.client_id = branch.client_id
 
-    # -----------------------------------------------------
-    # APPLY UPDATE
-    # -----------------------------------------------------
-
     for key, value in update_data.items():
 
         if key != "branch_id":
@@ -733,6 +800,15 @@ async def update_customer_service(
                 key,
                 value,
             )
+
+    # Recalculate customer type and is_vip using centralized rule
+    customer.customer_type = determine_customer_type(
+        rank=customer.current_rank,
+        visit_count=customer.total_visits or 0,
+    )
+    customer.is_vip = (
+        customer.customer_type == CustomerTypeEnum.VIP
+    )
 
     await db.commit()
 
@@ -846,10 +922,25 @@ async def recalculate_customer_crm(
     branch_id: int | None = None,
 ):
     """
-    Recalculate CRM only for REAL customers.
+    Recalculate CRM data for a real customer.
 
-    Guest orders never reach this function because
-    guests have no Customer record.
+    CUSTOMER TYPE RULES
+    -------------------
+
+    1. Gold rank -> VIP
+    2. 1 or 2 visits -> New
+    3. More than 2 visits -> Regular
+
+    Gold always has highest priority.
+
+    Examples:
+
+        visits=1, rank=Bronze -> New
+        visits=2, rank=Silver -> New
+        visits=3, rank=Bronze -> Regular
+        visits=5, rank=Silver -> Regular
+        visits=1, rank=Gold   -> VIP
+        visits=10, rank=Gold  -> VIP
     """
 
     from app.accounts.crm.customer_history.model import (
@@ -861,6 +952,14 @@ async def recalculate_customer_crm(
     )
 
     from app.accounts.order.model import Order
+
+    from app.accounts.crm.loyalty.model import (
+        CustomerLoyaltyAccount,
+    )
+
+    # =====================================================
+    # GET CUSTOMER
+    # =====================================================
 
     customer = await db.get(
         Customer,
@@ -875,9 +974,9 @@ async def recalculate_customer_crm(
         or customer.branch_id
     )
 
-    # -----------------------------------------------------
+    # =====================================================
     # VISIT HISTORY
-    # -----------------------------------------------------
+    # =====================================================
 
     stmt = (
         select(CustomerVisitHistory)
@@ -906,9 +1005,9 @@ async def recalculate_customer_crm(
 
     visits = result.scalars().all()
 
-    # -----------------------------------------------------
-    # CALCULATE
-    # -----------------------------------------------------
+    # =====================================================
+    # CALCULATE VISITS
+    # =====================================================
 
     total_visits = len(visits)
 
@@ -928,6 +1027,10 @@ async def recalculate_customer_crm(
 
     customer.total_spend = total_spend
 
+    # =====================================================
+    # ORDER / VISIT DETAILS
+    # =====================================================
+
     if total_visits > 0:
 
         customer.average_order_value = round(
@@ -946,66 +1049,126 @@ async def recalculate_customer_crm(
         )
 
         if last_visit.order_id:
+
             customer.last_order_id = (
                 last_visit.order_id
             )
 
         if visits[0].visit_date:
+
             customer.first_visit_at = (
                 visits[0].visit_date
             )
 
     else:
 
-        customer.average_order_value = 0
+        customer.average_order_value = 0.0
 
-        customer.last_order_amount = 0
+        customer.last_order_amount = 0.0
 
-    # -----------------------------------------------------
-    # RANK
-    # -----------------------------------------------------
+        customer.last_visit_at = None
+
+        customer.first_visit_at = None
+
+        customer.last_order_id = None
+
+    # =====================================================
+    # RANK CALCULATION
+    # =====================================================
 
     if target_branch_id:
 
-        rule_stmt = select(
-            CRMBranchRankRule
-        ).where(
-            CRMBranchRankRule.branch_id
-            == target_branch_id,
+        rule_stmt = (
+            select(CRMBranchRankRule)
+            .where(
+                CRMBranchRankRule.branch_id
+                == target_branch_id,
 
-            CRMBranchRankRule.is_active
-            == True,
+                CRMBranchRankRule.is_active
+                == True,
+            )
         )
 
         rule_result = await db.execute(
             rule_stmt
         )
 
-        rule = rule_result.scalar_one_or_none()
+        rule = (
+            rule_result.scalar_one_or_none()
+        )
 
         if rule:
-            gold_min = float(rule.gold_min or 0)
-            silver_min = float(rule.silver_min or 0)
+
+            gold_min = float(
+                rule.gold_min or 0
+            )
+
+            silver_min = float(
+                rule.silver_min or 0
+            )
 
             if total_spend >= gold_min:
+
                 new_rank = "Gold"
+
             elif total_spend >= silver_min:
+
                 new_rank = "Silver"
+
             else:
+
                 new_rank = "Bronze"
 
             customer.current_rank = new_rank
 
-            # Sync customer.loyalty_points from CustomerLoyaltyAccount balance (redemption-safe)
-            from app.accounts.crm.loyalty.model import CustomerLoyaltyAccount
-            account_stmt = select(CustomerLoyaltyAccount).where(
-                CustomerLoyaltyAccount.customer_id == customer.id
-            )
-            account_res = await db.execute(account_stmt)
-            loyalty_acc = account_res.scalar_one_or_none()
-            if loyalty_acc:
-                customer.loyalty_points = float(loyalty_acc.current_points_balance or 0.0)
+    # =====================================================
+    # CUSTOMER TYPE CALCULATION
+    #
+    # 1. Gold rank -> VIP (Highest priority)
+    # 2. visit_count > 2 -> Regular
+    # 3. visit_count <= 2 -> New
+    # =====================================================
+
+    customer.customer_type = determine_customer_type(
+        rank=customer.current_rank,
+        visit_count=total_visits,
+    )
+
+    customer.is_vip = (
+        customer.customer_type == CustomerTypeEnum.VIP
+    )
+
+    # =====================================================
+    # LOYALTY POINTS
+    #
+    # Redemption-safe.
+    # =====================================================
+
+    account_stmt = (
+        select(CustomerLoyaltyAccount)
+        .where(
+            CustomerLoyaltyAccount.customer_id
+            == customer.id
+        )
+    )
+
+    account_res = await db.execute(
+        account_stmt
+    )
+
+    loyalty_acc = (
+        account_res.scalar_one_or_none()
+    )
+
+    if loyalty_acc:
+
+        customer.loyalty_points = float(
+            loyalty_acc.current_points_balance
+            or 0.0
+        )
+
+    # =====================================================
+    # SAVE
+    # =====================================================
 
     await db.flush()
-
-    return customer

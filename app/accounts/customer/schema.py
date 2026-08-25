@@ -1,7 +1,18 @@
 from datetime import date, datetime
+from enum import Enum as PyEnum
 from typing import Optional
 
 from pydantic import BaseModel, Field
+
+
+# =========================================================
+# CUSTOMER TYPE ENUM
+# =========================================================
+
+class CustomerTypeEnum(str, PyEnum):
+    NEW = "New"
+    REGULAR = "Regular"
+    VIP = "VIP"
 
 
 # =========================================================
@@ -9,9 +20,9 @@ from pydantic import BaseModel, Field
 # =========================================================
 
 class CustomerCreate(BaseModel):
+
     name: str
 
-    # Phone optional because email can identify customer
     phone: Optional[str] = None
 
     email: Optional[str] = None
@@ -28,7 +39,7 @@ class CustomerCreate(BaseModel):
 
     customer_source: Optional[str] = "Walk-In"
 
-    customer_type: Optional[str] = "Regular"
+    customer_type: Optional[CustomerTypeEnum] = None
 
     preferred_language: Optional[str] = "English"
 
@@ -46,6 +57,7 @@ class CustomerCreate(BaseModel):
 # =========================================================
 
 class CustomerUpdate(BaseModel):
+
     name: Optional[str] = None
 
     phone: Optional[str] = None
@@ -64,7 +76,7 @@ class CustomerUpdate(BaseModel):
 
     customer_source: Optional[str] = None
 
-    customer_type: Optional[str] = None
+    customer_type: Optional[CustomerTypeEnum] = None
 
     status: Optional[str] = None
 
@@ -88,6 +100,7 @@ class CustomerUpdate(BaseModel):
 # =========================================================
 
 class CustomerOut(BaseModel):
+
     id: int
 
     name: str
@@ -108,7 +121,7 @@ class CustomerOut(BaseModel):
 
     customer_source: str
 
-    customer_type: str
+    customer_type: CustomerTypeEnum
 
     status: str
 
@@ -154,6 +167,8 @@ class CustomerOut(BaseModel):
 
     loyalty_points: float = 0.0
 
+    wallet_balance: float = 0.0
+
     created_at: datetime
 
     updated_at: datetime
@@ -167,6 +182,7 @@ class CustomerOut(BaseModel):
 # =========================================================
 
 class CustomerStatistics(BaseModel):
+
     total_orders: int = 0
 
     total_visits: int = 0
@@ -201,6 +217,7 @@ class CustomerStatistics(BaseModel):
 # =========================================================
 
 class CustomerListItem(BaseModel):
+
     id: int
 
     name: str
@@ -213,7 +230,7 @@ class CustomerListItem(BaseModel):
 
     branch_name: Optional[str] = None
 
-    customer_type: str
+    customer_type: CustomerTypeEnum
 
     current_rank: str
 
@@ -246,6 +263,7 @@ class CustomerListItem(BaseModel):
 # =========================================================
 
 class CustomerDashboard(BaseModel):
+
     total_customers: int
 
     active_customers: int
@@ -278,6 +296,7 @@ class CustomerDashboard(BaseModel):
 # =========================================================
 
 class CustomerProfile(BaseModel):
+
     customer: CustomerOut
 
     statistics: CustomerStatistics
@@ -302,6 +321,7 @@ class CustomerProfile(BaseModel):
 # =========================================================
 
 class PaginationResponse(BaseModel):
+
     page: int
 
     page_size: int
@@ -312,6 +332,7 @@ class PaginationResponse(BaseModel):
 
 
 class CustomerListResponse(BaseModel):
+
     items: list[CustomerListItem]
 
     pagination: PaginationResponse
@@ -322,6 +343,7 @@ class CustomerListResponse(BaseModel):
 # =========================================================
 
 class CustomerFilter(BaseModel):
+
     page: int = Field(
         default=1,
         ge=1,
@@ -341,9 +363,7 @@ class CustomerFilter(BaseModel):
 
     status: Optional[str] = None
 
-    customer_type: Optional[str] = None
-
-    current_rank: Optional[str] = None
+    customer_type: Optional[CustomerTypeEnum] = None
 
     customer_source: Optional[str] = None
 

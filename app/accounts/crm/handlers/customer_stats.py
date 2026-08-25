@@ -46,8 +46,19 @@ class CustomerStatsHandler(BaseCRMHandler):
         customer.last_order_id = bill.order_id
         customer.branch_id = context.event.branch_id
 
+        from app.accounts.customer.service import determine_customer_type
+        from app.accounts.customer.model import CustomerTypeEnum
+
+        customer.customer_type = determine_customer_type(
+            rank=customer.current_rank,
+            visit_count=customer.total_visits or 0,
+        )
+        customer.is_vip = (
+            customer.customer_type == CustomerTypeEnum.VIP
+        )
+
         await context.db.flush()
         crm_logger.info(
             f"[{self.name}] Customer #{customer.id} stats updated: "
-            f"Visits={customer.total_visits}, TotalSpend=₹{customer.total_spend}, AOV=₹{customer.average_order_value}"
+            f"Visits={customer.total_visits}, Type={customer.customer_type.value}, TotalSpend=₹{customer.total_spend}, AOV=₹{customer.average_order_value}"
         )
