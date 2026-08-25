@@ -124,7 +124,7 @@ class Customer(Base):
             ],
         ),
         default=CustomerTypeEnum.NEW,
-        nullable=False,
+        nullable=True,
     )
 
     status = Column(
