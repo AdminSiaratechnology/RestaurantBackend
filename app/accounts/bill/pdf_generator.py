@@ -1,5 +1,3 @@
-
-
 from io import BytesIO
 
 from reportlab.lib.units import mm
@@ -13,11 +11,24 @@ from reportlab.platypus import (
     Spacer,
 )
 from reportlab.lib import colors
+from app.utils.currency_formatter import format_currency, get_branch_currency_settings
+
+
+def safe_float(value) -> float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def generate_invoice_pdf(bill):
 
     buffer = BytesIO()
+    branch = getattr(bill, "branch", None)
+    _, symbol, decimals = get_branch_currency_settings(branch)
+    fmt_money = lambda v: format_currency(v, currency_symbol=symbol, decimal_places=decimals)
+
+    tax_type = str(getattr(branch, "tax_type", "GST") or "GST").upper()
 
     doc = SimpleDocTemplate(
         buffer,
@@ -36,39 +47,44 @@ def generate_invoice_pdf(bill):
     elements = []
 
     # Restaurant Name
+    branch_name = getattr(branch, "name", None) if branch else "RESTAURANT"
+    branch_address = getattr(branch, "address", None) if branch else ""
+
     elements.append(
         Paragraph(
-            bill.branch.name,
+            str(branch_name).upper(),
             title,
         )
     )
 
-    elements.append(
-        Paragraph(
-            bill.branch.address or "",
-            styles["BodyText"],
+    if branch_address:
+        elements.append(
+            Paragraph(
+                str(branch_address),
+                styles["BodyText"],
+            )
         )
-    )
 
     elements.append(Spacer(1, 10))
 
     elements.append(
         Paragraph(
-            f"<b>Invoice:</b> {bill.invoice_no}",
+            f"<b>Invoice:</b> {getattr(bill, 'invoice_no', '-') or '-'}",
+            styles["BodyText"],
+        )
+    )
+
+    created_at = getattr(bill, "created_at", None)
+    elements.append(
+        Paragraph(
+            f"<b>Date:</b> {created_at.strftime('%d-%m-%Y %H:%M') if created_at else '-'}",
             styles["BodyText"],
         )
     )
 
     elements.append(
         Paragraph(
-            f"<b>Date:</b> {bill.created_at.strftime('%d-%m-%Y %H:%M')}",
-            styles["BodyText"],
-        )
-    )
-
-    elements.append(
-        Paragraph(
-            f"<b>Customer:</b> {bill.customer_name or 'Walk In'}",
+            f"<b>Customer:</b> {getattr(bill, 'customer_name', 'Walk In') or 'Walk In'}",
             styles["BodyText"],
         )
     )
@@ -83,12 +99,18 @@ def generate_invoice_pdf(bill):
         ]
     ]
 
-    for item in bill.order.order_items:
+    order = getattr(bill, "order", None)
+    order_items = getattr(order, "order_items", []) if order else []
+    for item in order_items:
+        item_obj = getattr(item, "item", None)
+        item_name = getattr(item_obj, "name", "Item") if item_obj else "Item"
+        qty = int(safe_float(getattr(item, "quantity", 1)))
+        price = safe_float(getattr(item, "total_price", getattr(item, "unit_price", 0) * qty))
 
         data.append([
-            item.item.name,
-            str(item.quantity),
-            f"{item.total_price:.2f}",
+            str(item_name),
+            str(qty),
+            fmt_money(price),
         ])
 
     table = Table(
@@ -98,56 +120,88 @@ def generate_invoice_pdf(bill):
 
     table.setStyle(
         TableStyle([
-            ("GRID",(0,0),(-1,-1),0.5,colors.black),
-            ("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
-            ("ALIGN",(1,1),(-1,-1),"CENTER"),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+            ("ALIGN", (1, 1), (-1, -1), "CENTER"),
         ])
     )
 
     elements.append(table)
 
-    elements.append(Spacer(1,10))
+    elements.append(Spacer(1, 10))
 
+    subtotal = safe_float(getattr(bill, "subtotal", 0))
     elements.append(
         Paragraph(
-            f"<b>Subtotal:</b> ₹{bill.subtotal:.2f}",
+            f"<b>Subtotal:</b> {fmt_money(subtotal)}",
             styles["BodyText"],
         )
     )
 
-    elements.append(
-        Paragraph(
-            f"<b>CGST:</b> ₹{bill.cgst_amount:.2f}",
-            styles["BodyText"],
-        )
-    )
+    cgst_percent = safe_float(getattr(bill, "cgst_percent", 0))
+    sgst_percent = safe_float(getattr(bill, "sgst_percent", 0))
+    cgst_amount = safe_float(getattr(bill, "cgst_amount", 0))
+    sgst_amount = safe_float(getattr(bill, "sgst_amount", 0))
+    tax_total = safe_float(getattr(bill, "tax_total", 0))
 
-    elements.append(
-        Paragraph(
-            f"<b>SGST:</b> ₹{bill.sgst_amount:.2f}",
-            styles["BodyText"],
-        )
-    )
+    if tax_type == "VAT":
+        vat_amount = tax_total if tax_total > 0 else (cgst_amount + sgst_amount)
+        vat_percent = cgst_percent + sgst_percent
+        if vat_percent == 0 and subtotal > 0 and vat_amount > 0:
+            vat_percent = round((vat_amount / subtotal) * 100, 2)
+        if vat_amount > 0 or vat_percent > 0:
+            elements.append(
+                Paragraph(
+                    f"<b>VAT ({vat_percent:g}%):</b> {fmt_money(vat_amount)}",
+                    styles["BodyText"],
+                )
+            )
+    else:
+        if cgst_amount > 0:
+            elements.append(
+                Paragraph(
+                    f"<b>CGST ({cgst_percent:g}%):</b> {fmt_money(cgst_amount)}",
+                    styles["BodyText"],
+                )
+            )
+        if sgst_amount > 0:
+            elements.append(
+                Paragraph(
+                    f"<b>SGST ({sgst_percent:g}%):</b> {fmt_money(sgst_amount)}",
+                    styles["BodyText"],
+                )
+            )
 
-    elements.append(
-        Paragraph(
-            f"<b>Discount:</b> ₹{bill.offer_discount:.2f}",
-            styles["BodyText"],
+    discount_amount = safe_float(getattr(bill, "discount_amount", 0))
+    offer_discount = safe_float(getattr(bill, "offer_discount", 0))
+    if discount_amount > 0:
+        elements.append(
+            Paragraph(
+                f"<b>Discount:</b> -{fmt_money(discount_amount)}",
+                styles["BodyText"],
+            )
         )
-    )
+    if offer_discount > 0:
+        elements.append(
+            Paragraph(
+                f"<b>Offer Discount:</b> -{fmt_money(offer_discount)}",
+                styles["BodyText"],
+            )
+        )
 
+    final_amount = safe_float(getattr(bill, "final_amount", getattr(bill, "grand_total", 0)))
     elements.append(
         Paragraph(
-            f"<b>Grand Total:</b> ₹{bill.final_amount:.2f}",
+            f"<b>Grand Total:</b> {fmt_money(final_amount)}",
             styles["Heading3"],
         )
     )
 
-    elements.append(Spacer(1,15))
+    elements.append(Spacer(1, 15))
 
     elements.append(
         Paragraph(
-            bill.footer_message or "",
+            str(getattr(bill, "footer_message", None) or "Thank you for dining with us!"),
             title,
         )
     )

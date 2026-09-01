@@ -1,3 +1,7 @@
+# ============================================================
+# app/accounts/branch/model.py
+# ============================================================
+
 import enum
 
 from sqlalchemy import (
@@ -9,6 +13,7 @@ from sqlalchemy import (
     String,
     func,
 )
+
 from sqlalchemy.orm import relationship
 
 from app.db.base import Base
@@ -29,10 +34,6 @@ class statusEnum(str, enum.Enum):
 
 class Branch(Base):
     __tablename__ = "branches"
-
-    # ========================================================
-    # PRIMARY KEY
-    # ========================================================
 
     id = Column(
         Integer,
@@ -60,12 +61,66 @@ class Branch(Base):
     )
 
     # ========================================================
-    # STATUS
+    # LOCATION
+    # ========================================================
+
+    country = Column(
+        String(100),
+        nullable=False,
+        default="India",
+        server_default="India",
+    )
+
+    state = Column(
+        String(100),
+        nullable=False,
+        default="Delhi",
+        server_default="Delhi",
+    )
+
+    pincode = Column(
+        String(20),
+        nullable=False,
+        default="110001",
+        server_default="110001",
+    )
+
+    # ========================================================
+    # CURRENCY
+    # ========================================================
+
+    currency = Column(
+        String(3),
+        nullable=False,
+        default="INR",
+        server_default="INR",
+    )
+
+    decimal_places = Column(
+        Integer,
+        nullable=False,
+        default=2,
+        server_default="2",
+    )
+
+    # ========================================================
+    # TAX TYPE
     #
-    # IMPORTANT:
-    # values_callable makes SQLAlchemy store the enum VALUE
-    # ("active"/"inactive") instead of the Python enum NAME
-    # ("ACTIVE"/"INACTIVE").
+    # India -> GST
+    # Other countries -> VAT
+    #
+    # Automatically controlled by backend
+    # ========================================================
+
+    tax_type = Column(
+        String(20),
+        nullable=False,
+        default="GST",
+        server_default="GST",
+    )
+
+    # ========================================================
+    # STATUS
     # ========================================================
 
     status = Column(
@@ -74,7 +129,8 @@ class Branch(Base):
             name="branch_status_enum",
             native_enum=True,
             values_callable=lambda enum_class: [
-                member.value for member in enum_class
+                member.value
+                for member in enum_class
             ],
         ),
         nullable=False,
@@ -109,7 +165,7 @@ class Branch(Base):
     # ========================================================
 
     branch_code = Column(
-        String(5),
+        String(20),
         unique=True,
         nullable=False,
         index=True,
@@ -181,11 +237,6 @@ class Branch(Base):
         back_populates="branch",
         cascade="all, delete-orphan",
     )
-
-
-# ========================================================
-# PURCHASE RELATIONSHIPS
-# ========================================================
 
     purchase_invoice_counter = relationship(
         "BranchPurchaseInvoiceCounter",

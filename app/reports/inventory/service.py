@@ -24,6 +24,11 @@ from app.reports.helpers import (
     safe_str,
 )
 from app.reports.export_engine import ExcelReportBuilder
+from app.utils.currency_formatter import (
+    format_currency,
+    get_excel_currency_num_format,
+    get_branch_currency_settings_from_db,
+)
 
 
 class InventoryReportService:
@@ -307,9 +312,10 @@ class InventoryReportService:
         tot_val = sum(safe_float(it.stock_qty) * safe_float(it.cost_per_unit) for it in items)
         low_stock_count = sum(1 for it in items if safe_float(it.stock_qty) > 0 and safe_float(it.stock_qty) <= safe_float(it.reorder_level))
         out_stock_count = sum(1 for it in items if safe_float(it.stock_qty) <= 0)
+        curr_code, curr_symbol, dec_places = await get_branch_currency_settings_from_db(branch_id, db)
+        num_fmt_curr = get_excel_currency_num_format(currency_symbol=curr_symbol, decimal_places=dec_places)
 
         title = f"Inventory Report - {scope_meta['branch_name']}" if not scope_meta['is_all_branches'] else f"Inventory Report - {scope_meta['client_name'] or 'All Branches'}"
-
         builder = ExcelReportBuilder(
             report_title=title,
             scope_name=scope_meta["scope_name"],
@@ -323,7 +329,7 @@ class InventoryReportService:
             ("TOTAL STOCK QUANTITY", f"{tot_qty:,.2f}", False),
             ("LOW STOCK ITEMS", str(low_stock_count), False),
             ("OUT OF STOCK ITEMS", str(out_stock_count), False),
-            ("TOTAL STOCK VALUE", f"₹{tot_val:,.2f}", True),
+            ("TOTAL STOCK VALUE", format_currency(tot_val, currency_symbol=curr_symbol, decimal_places=dec_places), True),
         ]
 
         summary_headers = [
@@ -335,8 +341,8 @@ class InventoryReportService:
             ("Unit", ALIGN_CENTER, 12),
             ("Stock Qty", ALIGN_RIGHT, 14),
             ("Reorder Level", ALIGN_RIGHT, 14),
-            ("Cost / Unit (₹)", ALIGN_RIGHT, 16),
-            ("Stock Value (₹)", ALIGN_RIGHT, 18),
+            (f"Cost / Unit ({curr_symbol})", ALIGN_RIGHT, 16),
+            (f"Stock Value ({curr_symbol})", ALIGN_RIGHT, 18),
             ("Status", ALIGN_CENTER, 16),
             ("Vendor", ALIGN_LEFT, 24),
         ]
@@ -360,8 +366,8 @@ class InventoryReportService:
                     (it.display_unit or it.unit or "Unit", ALIGN_CENTER, None),
                     (qty, ALIGN_RIGHT, NUM_FMT_QTY),
                     (reorder, ALIGN_RIGHT, NUM_FMT_QTY),
-                    (cpu, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (val, ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (cpu, ALIGN_RIGHT, num_fmt_curr),
+                    (val, ALIGN_RIGHT, num_fmt_curr),
                     (status_txt, ALIGN_CENTER, None),
                     (it.vendor_name or "—", ALIGN_LEFT, None),
                 ]
@@ -369,7 +375,7 @@ class InventoryReportService:
 
         summary_totals = {
             7: (tot_qty, NUM_FMT_QTY),
-            10: (tot_val, NUM_FMT_CURRENCY),
+            10: (tot_val, num_fmt_curr),
         }
 
         builder.add_summary_sheet(
@@ -392,8 +398,8 @@ class InventoryReportService:
             ("Current Stock", ALIGN_RIGHT, 14),
             ("Reorder Level", ALIGN_RIGHT, 14),
             ("Shortage Qty", ALIGN_RIGHT, 14),
-            ("Cost / Unit (₹)", ALIGN_RIGHT, 16),
-            ("Est. Reorder Cost (₹)", ALIGN_RIGHT, 20),
+            (f"Cost / Unit ({curr_symbol})", ALIGN_RIGHT, 16),
+            (f"Est. Reorder Cost ({curr_symbol})", ALIGN_RIGHT, 20),
             ("Vendor Name", ALIGN_LEFT, 22),
             ("Vendor Contact", ALIGN_CENTER, 16),
         ]
@@ -419,15 +425,15 @@ class InventoryReportService:
                     (qty, ALIGN_RIGHT, NUM_FMT_QTY),
                     (reorder, ALIGN_RIGHT, NUM_FMT_QTY),
                     (shortage, ALIGN_RIGHT, NUM_FMT_QTY),
-                    (cpu, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (reorder_cost, ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (cpu, ALIGN_RIGHT, num_fmt_curr),
+                    (reorder_cost, ALIGN_RIGHT, num_fmt_curr),
                     (it.vendor_name or "—", ALIGN_LEFT, None),
                     (it.vendor_phone or "—", ALIGN_CENTER, None),
                 ]
             )
 
         detail_totals = {
-            10: (tot_reorder_cost, NUM_FMT_CURRENCY),
+            10: (tot_reorder_cost, num_fmt_curr),
         }
 
         builder.add_details_sheet(

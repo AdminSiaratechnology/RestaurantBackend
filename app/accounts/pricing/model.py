@@ -2,107 +2,130 @@
 # app/accounts/pricing/model.py
 # =========================================================
 
+from datetime import datetime
+
 from sqlalchemy import (
     Column,
     Float,
     Integer,
     Boolean,
     DateTime,
-    ForeignKey
+    ForeignKey,
+    String,
 )
 
 from sqlalchemy.orm import relationship
-from datetime import datetime
 
 from app.db.base import Base
 
 
+# =========================================================
+# PRICING
+# =========================================================
+
 class Pricing(Base):
+
     __tablename__ = "pricings"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
 
     client_id = Column(
         Integer,
         ForeignKey("clients.id"),
-        nullable=False
+        nullable=False,
     )
 
     item_id = Column(
         Integer,
         ForeignKey("items.id"),
-        nullable=False
+        nullable=False,
     )
 
     branch_id = Column(
         Integer,
-        ForeignKey("branches.id")
+        ForeignKey("branches.id"),
+        nullable=False,
     )
 
     # =====================================================
-    # PRICING
+    # PRICE
     # =====================================================
 
-    price = Column(Float, nullable=False)
+    price = Column(
+        Float,
+        nullable=False,
+    )
 
     cost_price = Column(
         Float,
         nullable=True,
-        default=0.0
+        default=0.0,
     )
-
-    # =====================================================
-    # DISCOUNT
-    # =====================================================
 
     discount = Column(
         Float,
         nullable=True,
-        default=0.0
+        default=0.0,
     )
 
     # =====================================================
     # TAX
     # =====================================================
 
+    # Total GST or VAT percentage
     tax = Column(
         Float,
-        nullable=True,
-        default=5.0
+        nullable=False,
+        default=0.0,
     )
 
+    # GST or VAT
+    tax_type = Column(
+        String(20),
+        nullable=False,
+        default="GST",
+    )
+
+    # GST only
     cgst_rate = Column(
         Float,
-        nullable=True,
-        default=2.5
+        nullable=False,
+        default=0.0,
     )
 
     sgst_rate = Column(
         Float,
-        nullable=True,
-        default=2.5
+        nullable=False,
+        default=0.0,
     )
 
     # =====================================================
     # EXTRA
     # =====================================================
 
-    calories = Column(Integer, nullable=True)
+    calories = Column(
+        Integer,
+        nullable=True,
+    )
 
     is_active = Column(
         Boolean,
-        default=True
+        default=True,
     )
 
     created_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=datetime.utcnow,
     )
 
     updated_at = Column(
         DateTime,
         default=datetime.utcnow,
-        onupdate=datetime.utcnow
+        onupdate=datetime.utcnow,
     )
 
     # =====================================================
@@ -111,60 +134,67 @@ class Pricing(Base):
 
     item = relationship(
         "Item",
-        back_populates="pricings"
+        back_populates="pricings",
     )
 
     client = relationship(
         "Client",
-        back_populates="pricings"
+        back_populates="pricings",
     )
 
     branch = relationship(
         "Branch",
-        back_populates="pricings"
+        back_populates="pricings",
     )
 
     tax_history = relationship(
-    "PricingTaxHistory",
-    back_populates="pricing"
-)
-    
+        "PricingTaxHistory",
+        back_populates="pricing",
+        cascade="all, delete-orphan",
+    )
 
 
+# =========================================================
+# TAX HISTORY
+# =========================================================
 
 class PricingTaxHistory(Base):
+
     __tablename__ = "pricing_tax_history"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
 
     pricing_id = Column(
         Integer,
         ForeignKey("pricings.id"),
-        nullable=False
+        nullable=False,
     )
 
     item_id = Column(
         Integer,
         ForeignKey("items.id"),
-        nullable=False
+        nullable=False,
     )
 
     old_tax = Column(
         Float,
-        nullable=False
+        nullable=False,
     )
 
     new_tax = Column(
         Float,
-        nullable=False
+        nullable=False,
     )
 
     created_at = Column(
         DateTime,
-        default=datetime.utcnow
+        default=datetime.utcnow,
     )
 
     pricing = relationship(
         "Pricing",
-        back_populates="tax_history"
+        back_populates="tax_history",
     )

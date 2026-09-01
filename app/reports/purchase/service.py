@@ -25,6 +25,11 @@ from app.reports.helpers import (
     safe_str,
 )
 from app.reports.export_engine import ExcelReportBuilder
+from app.utils.currency_formatter import (
+    format_currency,
+    get_excel_currency_num_format,
+    get_branch_currency_settings_from_db,
+)
 
 
 class PurchaseReportService:
@@ -406,6 +411,8 @@ class PurchaseReportService:
 
         title = f"Purchase Report - {scope_meta['branch_name']}" if not scope_meta['is_all_branches'] else f"Purchase Report - {scope_meta['client_name'] or 'All Branches'}"
         supp_extra = f" | Supplier: {supplier_name}" if supplier_name else ""
+        curr_code, curr_symbol, dec_places = await get_branch_currency_settings_from_db(branch_id, db)
+        num_fmt_curr = get_excel_currency_num_format(currency_symbol=curr_symbol, decimal_places=dec_places)
 
         builder = ExcelReportBuilder(
             report_title=title,
@@ -418,10 +425,10 @@ class PurchaseReportService:
         # 1. Sheet 1: Purchase Summary
         kpis = [
             ("TOTAL ENTRIES", str(tot_entries), False),
-            ("TOTAL SUBTOTAL", f"₹{tot_subtotal:,.2f}", False),
-            ("TOTAL DISCOUNT", f"₹{tot_discount:,.2f}", False),
-            ("TOTAL TAX", f"₹{tot_tax:,.2f}", False),
-            ("TOTAL PURCHASE AMOUNT", f"₹{tot_amount:,.2f}", True),
+            ("TOTAL SUBTOTAL", format_currency(tot_subtotal, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("TOTAL DISCOUNT", format_currency(tot_discount, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("TOTAL TAX", format_currency(tot_tax, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("TOTAL PURCHASE AMOUNT", format_currency(tot_amount, currency_symbol=curr_symbol, decimal_places=dec_places), True),
         ]
 
         summary_headers = [
@@ -439,10 +446,10 @@ class PurchaseReportService:
             ("Reference No", ALIGN_LEFT, 16),
             ("Payment Terms", ALIGN_LEFT, 16),
             ("Due Date", ALIGN_CENTER, 14),
-            ("Subtotal (₹)", ALIGN_RIGHT, 16),
-            ("Discount (₹)", ALIGN_RIGHT, 14),
-            ("Tax (₹)", ALIGN_RIGHT, 14),
-            ("Total Amount (₹)", ALIGN_RIGHT, 18),
+            (f"Subtotal ({curr_symbol})", ALIGN_RIGHT, 16),
+            (f"Discount ({curr_symbol})", ALIGN_RIGHT, 14),
+            (f"Tax ({curr_symbol})", ALIGN_RIGHT, 14),
+            (f"Total Amount ({curr_symbol})", ALIGN_RIGHT, 18),
             ("Notes", ALIGN_LEFT, 26),
         ]
 
@@ -475,19 +482,19 @@ class PurchaseReportService:
                     (p.reference_number or "—", ALIGN_LEFT, None),
                     (p.payment_terms or "—", ALIGN_LEFT, None),
                     (due_d, ALIGN_CENTER, None),
-                    (safe_float(p.subtotal), ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (safe_float(p.discount_amount), ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (safe_float(p.tax_amount), ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (safe_float(p.grand_total), ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (safe_float(p.subtotal), ALIGN_RIGHT, num_fmt_curr),
+                    (safe_float(p.discount_amount), ALIGN_RIGHT, num_fmt_curr),
+                    (safe_float(p.tax_amount), ALIGN_RIGHT, num_fmt_curr),
+                    (safe_float(p.grand_total), ALIGN_RIGHT, num_fmt_curr),
                     (p.notes or "", ALIGN_LEFT, None),
                 ]
             )
 
         summary_totals = {
-            15: (tot_subtotal, NUM_FMT_CURRENCY),
-            16: (tot_discount, NUM_FMT_CURRENCY),
-            17: (tot_tax, NUM_FMT_CURRENCY),
-            18: (tot_amount, NUM_FMT_CURRENCY),
+            15: (tot_subtotal, num_fmt_curr),
+            16: (tot_discount, num_fmt_curr),
+            17: (tot_tax, num_fmt_curr),
+            18: (tot_amount, num_fmt_curr),
         }
 
         builder.add_summary_sheet(
@@ -516,10 +523,10 @@ class PurchaseReportService:
             ("Display Unit", ALIGN_CENTER, 14),
             ("Conversion Factor", ALIGN_RIGHT, 16),
             ("Quantity", ALIGN_RIGHT, 14),
-            ("Rate (₹)", ALIGN_RIGHT, 14),
+            (f"Rate ({curr_symbol})", ALIGN_RIGHT, 14),
             ("Discount %", ALIGN_RIGHT, 14),
             ("Tax %", ALIGN_RIGHT, 12),
-            ("Item Total (₹)", ALIGN_RIGHT, 18),
+            (f"Item Total ({curr_symbol})", ALIGN_RIGHT, 18),
         ]
 
         detail_rows = []
@@ -566,17 +573,17 @@ class PurchaseReportService:
                             (item.display_unit or "—", ALIGN_CENTER, None),
                             (conv_factor, ALIGN_RIGHT, NUM_FMT_QTY),
                             (qty, ALIGN_RIGHT, NUM_FMT_QTY),
-                            (rate, ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                            (rate, ALIGN_RIGHT, num_fmt_curr),
                             (disc_pct, ALIGN_RIGHT, NUM_FMT_QTY),
                             (tax_pct, ALIGN_RIGHT, NUM_FMT_QTY),
-                            (amt, ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                            (amt, ALIGN_RIGHT, num_fmt_curr),
                         ]
                     )
                     item_counter += 1
 
         detail_totals = {
             15: (total_item_qty, NUM_FMT_QTY),
-            19: (total_item_amount, NUM_FMT_CURRENCY),
+            19: (total_item_amount, num_fmt_curr),
         }
 
         builder.add_details_sheet(

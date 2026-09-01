@@ -29,6 +29,11 @@ from app.reports.helpers import (
     safe_str,
 )
 from app.reports.export_engine import ExcelReportBuilder
+from app.utils.currency_formatter import (
+    format_currency,
+    get_excel_currency_num_format,
+    get_branch_currency_settings_from_db,
+)
 
 
 class FinancialReportService:
@@ -376,6 +381,8 @@ class FinancialReportService:
         tot_profit = round(tot_sales - est_tot_cost, 2)
 
         title = f"Financial Report - {scope_meta['branch_name']}" if not scope_meta['is_all_branches'] else f"Financial Report - {scope_meta['client_name'] or 'All Branches'}"
+        curr_code, curr_symbol, dec_places = await get_branch_currency_settings_from_db(branch_id, db)
+        num_fmt_curr = get_excel_currency_num_format(currency_symbol=curr_symbol, decimal_places=dec_places)
 
         builder = ExcelReportBuilder(
             report_title=title,
@@ -386,11 +393,11 @@ class FinancialReportService:
 
         # 1. Sheet 1: Financial Summary
         kpis = [
-            ("GROSS REVENUE", f"₹{tot_subtotal:,.2f}", False),
-            ("ESTIMATED FOOD COST", f"₹{est_tot_cost:,.2f}", False),
-            ("TAXES COLLECTED", f"₹{tot_taxes:,.2f}", False),
-            ("TOTAL NET REVENUE", f"₹{tot_sales:,.2f}", False),
-            ("ESTIMATED GROSS PROFIT", f"₹{tot_profit:,.2f}", True),
+            ("GROSS REVENUE", format_currency(tot_subtotal, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("ESTIMATED FOOD COST", format_currency(est_tot_cost, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("TAXES COLLECTED", format_currency(tot_taxes, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("TOTAL NET REVENUE", format_currency(tot_sales, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("ESTIMATED GROSS PROFIT", format_currency(tot_profit, currency_symbol=curr_symbol, decimal_places=dec_places), True),
         ]
 
         summary_headers = [
@@ -399,12 +406,12 @@ class FinancialReportService:
             ("Branch ID", ALIGN_CENTER, 12),
             ("Branch Name", ALIGN_LEFT, 22),
             ("Paid Orders", ALIGN_RIGHT, 14),
-            ("Gross Subtotal (₹)", ALIGN_RIGHT, 18),
-            ("Discounts (₹)", ALIGN_RIGHT, 16),
-            ("Taxes Collected (₹)", ALIGN_RIGHT, 18),
-            ("Est. Cost (₹)", ALIGN_RIGHT, 16),
-            ("Net Sales (₹)", ALIGN_RIGHT, 18),
-            ("Gross Profit (₹)", ALIGN_RIGHT, 18),
+            (f"Gross Subtotal ({curr_symbol})", ALIGN_RIGHT, 18),
+            (f"Discounts ({curr_symbol})", ALIGN_RIGHT, 16),
+            (f"Taxes Collected ({curr_symbol})", ALIGN_RIGHT, 18),
+            (f"Est. Cost ({curr_symbol})", ALIGN_RIGHT, 16),
+            (f"Net Sales ({curr_symbol})", ALIGN_RIGHT, 18),
+            (f"Gross Profit ({curr_symbol})", ALIGN_RIGHT, 18),
             ("Profit Margin", ALIGN_RIGHT, 14),
         ]
 
@@ -426,24 +433,24 @@ class FinancialReportService:
                     (r.branch_id, ALIGN_CENTER, None),
                     (branch_map.get(r.branch_id, f"Branch #{r.branch_id}"), ALIGN_LEFT, None),
                     (safe_int(r.orders), ALIGN_RIGHT, None),
-                    (subt, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (disc, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (tx, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (cost, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (net_s, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (profit, ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (subt, ALIGN_RIGHT, num_fmt_curr),
+                    (disc, ALIGN_RIGHT, num_fmt_curr),
+                    (tx, ALIGN_RIGHT, num_fmt_curr),
+                    (cost, ALIGN_RIGHT, num_fmt_curr),
+                    (net_s, ALIGN_RIGHT, num_fmt_curr),
+                    (profit, ALIGN_RIGHT, num_fmt_curr),
                     (f"{margin * 100:.2f}%", ALIGN_RIGHT, None),
                 ]
             )
 
         summary_totals = {
             5: (tot_orders, None),
-            6: (tot_subtotal, NUM_FMT_CURRENCY),
-            7: (tot_discounts, NUM_FMT_CURRENCY),
-            8: (tot_taxes, NUM_FMT_CURRENCY),
-            9: (est_tot_cost, NUM_FMT_CURRENCY),
-            10: (tot_sales, NUM_FMT_CURRENCY),
-            11: (tot_profit, NUM_FMT_CURRENCY),
+            6: (tot_subtotal, num_fmt_curr),
+            7: (tot_discounts, num_fmt_curr),
+            8: (tot_taxes, num_fmt_curr),
+            9: (est_tot_cost, num_fmt_curr),
+            10: (tot_sales, num_fmt_curr),
+            11: (tot_profit, num_fmt_curr),
         }
 
         builder.add_summary_sheet(
@@ -460,10 +467,10 @@ class FinancialReportService:
             ("Sr. No.", ALIGN_CENTER, 8),
             ("Date", ALIGN_CENTER, 14),
             ("Branch Name", ALIGN_LEFT, 22),
-            ("Taxable Amount (₹)", ALIGN_RIGHT, 18),
-            ("GST / Tax Total (₹)", ALIGN_RIGHT, 18),
-            ("Service Charge (₹)", ALIGN_RIGHT, 18),
-            ("Total Tax & Levies (₹)", ALIGN_RIGHT, 20),
+            (f"Taxable Amount ({curr_symbol})", ALIGN_RIGHT, 18),
+            (f"GST / Tax Total ({curr_symbol})", ALIGN_RIGHT, 18),
+            (f"Service Charge ({curr_symbol})", ALIGN_RIGHT, 18),
+            (f"Total Tax & Levies ({curr_symbol})", ALIGN_RIGHT, 20),
         ]
 
         tax_rows = []
@@ -479,10 +486,10 @@ class FinancialReportService:
                     (idx, ALIGN_CENTER, None),
                     (r.rec_date.strftime("%d-%m-%Y") if r.rec_date else "—", ALIGN_CENTER, None),
                     (branch_map.get(r.branch_id, f"Branch #{r.branch_id}"), ALIGN_LEFT, None),
-                    (subt, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (tx, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (sc, ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (tx + sc, ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (subt, ALIGN_RIGHT, num_fmt_curr),
+                    (tx, ALIGN_RIGHT, num_fmt_curr),
+                    (sc, ALIGN_RIGHT, num_fmt_curr),
+                    (tx + sc, ALIGN_RIGHT, num_fmt_curr),
                 ]
             )
 
@@ -492,10 +499,10 @@ class FinancialReportService:
             headers=tax_headers,
             data_rows=tax_rows,
             totals_row={
-                4: (tot_subtotal, NUM_FMT_CURRENCY),
-                5: (tot_gst, NUM_FMT_CURRENCY),
-                6: (tot_sc, NUM_FMT_CURRENCY),
-                7: (tot_taxes, NUM_FMT_CURRENCY),
+                4: (tot_subtotal, num_fmt_curr),
+                5: (tot_gst, num_fmt_curr),
+                6: (tot_sc, num_fmt_curr),
+                7: (tot_taxes, num_fmt_curr),
             },
             empty_message="No tax breakdown available.",
         )

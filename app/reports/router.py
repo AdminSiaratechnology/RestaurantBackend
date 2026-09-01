@@ -29,12 +29,16 @@ router = APIRouter(
 )
 
 SERVICES = {
+    "sale": SalesReportService,
     "sales": SalesReportService,
     "purchase": PurchaseReportService,
+    "purchases": PurchaseReportService,
     "inventory": InventoryReportService,
+    "inventories": InventoryReportService,
     "payment": PaymentReportService,
     "payments": PaymentReportService,
     "financial": FinancialReportService,
+    "financials": FinancialReportService,
     "category": CategoryReportService,
     "categories": CategoryReportService,
     "item": ItemReportService,
@@ -44,6 +48,7 @@ SERVICES = {
     "order": OrderReportService,
     "orders": OrderReportService,
     "tax": TaxReportService,
+    "taxes": TaxReportService,
 }
 
 
@@ -67,7 +72,7 @@ async def check_report_staff_permission(report_type: str, user, role, db: AsyncS
     if not perms.get("manage_reports", False):
         raise HTTPException(status_code=403, detail="manage_reports permission denied")
 
-    if report_type.lower() == "purchase" and not perms.get("manage_purchase", False):
+    if report_type.lower() in ("purchase", "purchases") and not perms.get("manage_purchase", False):
         raise HTTPException(status_code=403, detail="manage_purchase permission denied")
 
 
@@ -114,12 +119,12 @@ async def get_unified_report(
         "page_size": page_size,
     }
 
-    if key == "sales":
+    if key in ("sale", "sales"):
         kwargs["payment_method"] = payment_method
         kwargs["order_type"] = order_type
-    elif key == "purchase":
+    elif key in ("purchase", "purchases"):
         kwargs["supplier_id"] = supplier_id
-    elif key == "inventory":
+    elif key in ("inventory", "inventories"):
         kwargs["category"] = category
         kwargs["godown_id"] = godown_id
         kwargs["status_filter"] = status
@@ -173,12 +178,12 @@ async def export_unified_report(
         "time_range": time_range,
     }
 
-    if key == "sales":
+    if key in ("sale", "sales"):
         kwargs["payment_method"] = payment_method
         kwargs["order_type"] = order_type
-    elif key == "purchase":
+    elif key in ("purchase", "purchases"):
         kwargs["supplier_id"] = supplier_id
-    elif key == "inventory":
+    elif key in ("inventory", "inventories"):
         kwargs["category"] = category
         kwargs["godown_id"] = godown_id
     elif key in ("payment", "payments"):
@@ -208,6 +213,7 @@ async def export_unified_report(
 
 # --- SALES ---
 @router.get("/sales/report")
+@router.get("/sale/report")
 async def get_sales_report_endpoint(
     client_id: Optional[int] = Query(None),
     branch_id: Optional[int] = Query(None),
@@ -223,6 +229,7 @@ async def get_sales_report_endpoint(
     )
 
 @router.get("/sales/export")
+@router.get("/sale/export")
 async def export_sales_report_endpoint(
     client_id: Optional[int] = Query(None),
     branch_id: Optional[int] = Query(None),
