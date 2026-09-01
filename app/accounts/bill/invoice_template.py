@@ -1,4 +1,3 @@
-
 # app/accounts/bill/invoice_template.py
 
 import logging
@@ -26,16 +25,15 @@ logger = logging.getLogger(__name__)
 # CURRENCY
 # =========================================================
 
-RUPEE = "\u20B9"
+from app.utils.currency_formatter import format_currency, get_branch_currency_settings
 
 
-def money(value) -> str:
-    try:
-        amount = float(value or 0)
-    except (TypeError, ValueError):
-        amount = 0.0
+def money(value, branch=None, currency_symbol: str = None, decimal_places: int = None) -> str:
+    _, sym, dec = get_branch_currency_settings(branch)
+    symbol = currency_symbol if currency_symbol is not None else sym
+    decimals = decimal_places if decimal_places is not None else dec
 
-    return f"{RUPEE}{amount:,.2f}"
+    return format_currency(value, currency_symbol=symbol, decimal_places=decimals)
 
 
 # =========================================================
@@ -250,6 +248,8 @@ class InvoiceTemplate:
             "branch",
             None,
         )
+
+        fmt_money = lambda val: money(val, branch=branch)
 
         branch_name = (
             getattr(
@@ -587,11 +587,11 @@ class InvoiceTemplate:
                         normal_style,
                     ),
                     Paragraph(
-                        money(unit_price),
+                        fmt_money(unit_price),
                         normal_style,
                     ),
                     Paragraph(
-                        money(total_price),
+                        fmt_money(total_price),
                         normal_style,
                     ),
                 ]
@@ -785,6 +785,8 @@ class InvoiceTemplate:
                 final_amount
             )
 
+        tax_type = str(getattr(branch, "tax_type", "GST") or "GST").upper()
+
         totals = []
 
         totals.append(
@@ -794,7 +796,7 @@ class InvoiceTemplate:
                     normal_style,
                 ),
                 Paragraph(
-                    money(subtotal),
+                    fmt_money(subtotal),
                     normal_style,
                 ),
             ]
@@ -809,7 +811,7 @@ class InvoiceTemplate:
                         normal_style,
                     ),
                     Paragraph(
-                        money(
+                        fmt_money(
                             service_charge_amount
                         ),
                         normal_style,
@@ -817,42 +819,57 @@ class InvoiceTemplate:
                 ]
             )
 
-        if cgst_amount > 0:
-            totals.append(
-                [
-                    Paragraph(
-                        f"CGST "
-                        f"({cgst_percent:g}%)",
-                        normal_style,
-                    ),
-                    Paragraph(
-                        money(cgst_amount),
-                        normal_style,
-                    ),
-                ]
-            )
+        if tax_type == "VAT":
+            tax_total = safe_float(getattr(bill, "tax_total", 0))
+            vat_amount = tax_total if tax_total > 0 else (cgst_amount + sgst_amount)
+            vat_percent = cgst_percent + sgst_percent
+            if vat_percent == 0 and subtotal > 0 and vat_amount > 0:
+                vat_percent = round((vat_amount / subtotal) * 100, 2)
 
-        if sgst_amount > 0:
-            totals.append(
-                [
-                    Paragraph(
-                        f"SGST "
-                        f"({sgst_percent:g}%)",
-                        normal_style,
-                    ),
-                    Paragraph(
-                        money(sgst_amount),
-                        normal_style,
-                    ),
-                ]
-            )
+            if vat_amount > 0 or vat_percent > 0:
+                totals.append(
+                    [
+                        Paragraph(
+                            f"VAT ({vat_percent:g}%)",
+                            normal_style,
+                        ),
+                        Paragraph(
+                            fmt_money(vat_amount),
+                            normal_style,
+                        ),
+                    ]
+                )
+        else:
+            # GST logic
+            if cgst_amount > 0:
+                totals.append(
+                    [
+                        Paragraph(
+                            f"CGST ({cgst_percent:g}%)",
+                            normal_style,
+                        ),
+                        Paragraph(
+                            fmt_money(cgst_amount),
+                            normal_style,
+                        ),
+                    ]
+                )
 
-        total_discount = (
-            discount_amount
-            + offer_discount
-        )
+            if sgst_amount > 0:
+                totals.append(
+                    [
+                        Paragraph(
+                            f"SGST ({sgst_percent:g}%)",
+                            normal_style,
+                        ),
+                        Paragraph(
+                            fmt_money(sgst_amount),
+                            normal_style,
+                        ),
+                    ]
+                )
 
-        if total_discount > 0:
+        if discount_amount > 0:
             totals.append(
                 [
                     Paragraph(
@@ -860,7 +877,21 @@ class InvoiceTemplate:
                         normal_style,
                     ),
                     Paragraph(
-                        f"-{money(total_discount)}",
+                        f"-{fmt_money(discount_amount)}",
+                        normal_style,
+                    ),
+                ]
+            )
+
+        if offer_discount > 0:
+            totals.append(
+                [
+                    Paragraph(
+                        "Offer Discount",
+                        normal_style,
+                    ),
+                    Paragraph(
+                        f"-{fmt_money(offer_discount)}",
                         normal_style,
                     ),
                 ]
@@ -874,7 +905,7 @@ class InvoiceTemplate:
                         normal_style,
                     ),
                     Paragraph(
-                        money(
+                        fmt_money(
                             round_off_amount
                         ),
                         normal_style,
@@ -889,7 +920,7 @@ class InvoiceTemplate:
                     total_style,
                 ),
                 Paragraph(
-                    f"<b>{money(grand_total)}</b>",
+                    f"<b>{fmt_money(grand_total)}</b>",
                     total_style,
                 ),
             ]
@@ -906,7 +937,7 @@ class InvoiceTemplate:
                         total_style,
                     ),
                     Paragraph(
-                        f"<b>{money(final_amount)}</b>",
+                        f"<b>{fmt_money(final_amount)}</b>",
                         total_style,
                     ),
                 ]
@@ -1021,7 +1052,7 @@ class InvoiceTemplate:
                     normal_style,
                 ),
                 Paragraph(
-                    money(paid_amount),
+                    fmt_money(paid_amount),
                     normal_style,
                 ),
             ],
@@ -1031,7 +1062,7 @@ class InvoiceTemplate:
                     normal_style,
                 ),
                 Paragraph(
-                    money(due_amount),
+                    fmt_money(due_amount),
                     normal_style,
                 ),
             ],
@@ -1187,4 +1218,3 @@ class InvoiceTemplate:
         buffer.seek(0)
 
         return buffer
-

@@ -25,6 +25,11 @@ from app.reports.helpers import (
     safe_str,
 )
 from app.reports.export_engine import ExcelReportBuilder
+from app.utils.currency_formatter import (
+    format_currency,
+    get_excel_currency_num_format,
+    get_branch_currency_settings_from_db,
+)
 
 
 class OrderReportService:
@@ -278,6 +283,9 @@ class OrderReportService:
 
         title = f"Orders Report - {scope['branch_name']}" if not scope['is_all_branches'] else f"Orders Report - {scope['client_name'] or 'All Branches'}"
 
+        curr_code, curr_symbol, dec_places = await get_branch_currency_settings_from_db(branch_id, db)
+        num_fmt_curr = get_excel_currency_num_format(currency_symbol=curr_symbol, decimal_places=dec_places)
+
         builder = ExcelReportBuilder(
             report_title=title,
             scope_name=scope["scope_name"],
@@ -290,7 +298,7 @@ class OrderReportService:
             ("DINE-IN ORDERS", str(summary["dine_in_orders"]), False),
             ("TAKEAWAY ORDERS", str(summary["takeaway_orders"]), False),
             ("DELIVERY ORDERS", str(summary["delivery_orders"]), False),
-            ("TOTAL BILLED AMOUNT", f"₹{summary['total_amount']:,.2f}", True),
+            ("TOTAL BILLED AMOUNT", format_currency(summary['total_amount'], currency_symbol=curr_symbol, decimal_places=dec_places), True),
         ]
 
         headers = [
@@ -304,7 +312,7 @@ class OrderReportService:
             ("Customer Name", ALIGN_LEFT, 22),
             ("Customer Phone", ALIGN_CENTER, 16),
             ("Status", ALIGN_CENTER, 14),
-            ("Order Total (₹)", ALIGN_RIGHT, 18),
+            (f"Order Total ({curr_symbol})", ALIGN_RIGHT, 18),
             ("Notes", ALIGN_LEFT, 24),
         ]
 
@@ -324,7 +332,7 @@ class OrderReportService:
                     (r["customer_name"], ALIGN_LEFT, None),
                     (r["customer_phone"], ALIGN_CENTER, None),
                     (r["status"], ALIGN_CENTER, None),
-                    (r["total_amount"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (r["total_amount"], ALIGN_RIGHT, num_fmt_curr),
                     (r["notes"], ALIGN_LEFT, None),
                 ]
             )
@@ -334,7 +342,7 @@ class OrderReportService:
             kpis=kpis,
             headers=headers,
             data_rows=summary_rows,
-            totals_row={11: (tot_amt, NUM_FMT_CURRENCY)},
+            totals_row={11: (tot_amt, num_fmt_curr)},
             empty_message="No orders recorded for the selected period.",
         )
 

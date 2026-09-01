@@ -27,6 +27,11 @@ from app.reports.helpers import (
     safe_str,
 )
 from app.reports.export_engine import ExcelReportBuilder
+from app.utils.currency_formatter import (
+    format_currency,
+    get_excel_currency_num_format,
+    get_branch_currency_settings_from_db,
+)
 
 
 class ItemReportService:
@@ -238,6 +243,9 @@ class ItemReportService:
 
         title = f"Item Sales Report - {scope['branch_name']}" if not scope['is_all_branches'] else f"Item Sales Report - {scope['client_name'] or 'All Branches'}"
 
+        curr_code, curr_symbol, dec_places = await get_branch_currency_settings_from_db(branch_id, db)
+        num_fmt_curr = get_excel_currency_num_format(currency_symbol=curr_symbol, decimal_places=dec_places)
+
         builder = ExcelReportBuilder(
             report_title=title,
             scope_name=scope["scope_name"],
@@ -249,8 +257,8 @@ class ItemReportService:
             ("TOTAL ITEMS SOLD", f"{summary['total_items_sold']:,.2f}", False),
             ("TOTAL MENU ITEMS", str(summary["total_menu_items"]), False),
             ("TOP SELLING ITEM", summary["top_selling_item"], False),
-            ("AVERAGE PRICE", f"₹{summary['average_item_price']:,.2f}", False),
-            ("TOTAL ITEM SALES", f"₹{summary['total_item_sales']:,.2f}", True),
+            ("AVERAGE PRICE", format_currency(summary['average_item_price'], currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("TOTAL ITEM SALES", format_currency(summary['total_item_sales'], currency_symbol=curr_symbol, decimal_places=dec_places), True),
         ]
 
         headers = [
@@ -261,9 +269,9 @@ class ItemReportService:
             ("Item Name", ALIGN_LEFT, 26),
             ("Category", ALIGN_LEFT, 18),
             ("Food Type", ALIGN_CENTER, 14),
-            ("Unit Price (₹)", ALIGN_RIGHT, 14),
+            (f"Unit Price ({curr_symbol})", ALIGN_RIGHT, 14),
             ("Quantity Sold", ALIGN_RIGHT, 14),
-            ("Sales Amount (₹)", ALIGN_RIGHT, 18),
+            (f"Sales Amount ({curr_symbol})", ALIGN_RIGHT, 18),
             ("Sales Share %", ALIGN_RIGHT, 14),
         ]
 
@@ -281,9 +289,9 @@ class ItemReportService:
                     (r["name"], ALIGN_LEFT, None),
                     (r["category"], ALIGN_LEFT, None),
                     (r["food_type"], ALIGN_CENTER, None),
-                    (r["unit_price"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (r["unit_price"], ALIGN_RIGHT, num_fmt_curr),
                     (r["sold_quantity"], ALIGN_RIGHT, NUM_FMT_QTY),
-                    (r["sales_amount"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (r["sales_amount"], ALIGN_RIGHT, num_fmt_curr),
                     (f"{r['percentage_of_total']:.2f}%", ALIGN_RIGHT, None),
                 ]
             )
@@ -293,7 +301,7 @@ class ItemReportService:
             kpis=kpis,
             headers=headers,
             data_rows=summary_rows,
-            totals_row={9: (tot_qty, NUM_FMT_QTY), 10: (tot_amt, NUM_FMT_CURRENCY)},
+            totals_row={9: (tot_qty, NUM_FMT_QTY), 10: (tot_amt, num_fmt_curr)},
             empty_message="No item sales recorded for the selected period.",
         )
 

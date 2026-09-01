@@ -25,6 +25,11 @@ from app.reports.helpers import (
     safe_str,
 )
 from app.reports.export_engine import ExcelReportBuilder
+from app.utils.currency_formatter import (
+    format_currency,
+    get_excel_currency_num_format,
+    get_branch_currency_settings_from_db,
+)
 
 
 class PaymentReportService:
@@ -359,6 +364,9 @@ class PaymentReportService:
 
         title = f"Payment Report - {scope_meta['branch_name']}" if not scope_meta['is_all_branches'] else f"Payment Report - {scope_meta['client_name'] or 'All Branches'}"
 
+        curr_code, curr_symbol, dec_places = await get_branch_currency_settings_from_db(branch_id, db)
+        num_fmt_curr = get_excel_currency_num_format(currency_symbol=curr_symbol, decimal_places=dec_places)
+
         builder = ExcelReportBuilder(
             report_title=title,
             scope_name=scope_meta["scope_name"],
@@ -369,10 +377,10 @@ class PaymentReportService:
         # 1. Sheet 1: Payment Summary
         kpis = [
             ("TOTAL PAYMENTS", str(tot_payments), False),
-            ("CASH COLLECTED", f"₹{tot_cash:,.2f}", False),
-            ("UPI COLLECTED", f"₹{tot_upi:,.2f}", False),
-            ("CARD COLLECTED", f"₹{tot_card:,.2f}", False),
-            ("TOTAL COLLECTED", f"₹{tot_paid:,.2f}", True),
+            ("CASH COLLECTED", format_currency(tot_cash, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("UPI COLLECTED", format_currency(tot_upi, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("CARD COLLECTED", format_currency(tot_card, currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("TOTAL COLLECTED", format_currency(tot_paid, currency_symbol=curr_symbol, decimal_places=dec_places), True),
         ]
 
         summary_headers = [
@@ -382,10 +390,10 @@ class PaymentReportService:
             ("Invoice No", ALIGN_LEFT, 18),
             ("Payment Date", ALIGN_CENTER, 18),
             ("Payment Method", ALIGN_CENTER, 16),
-            ("Bill Amount (₹)", ALIGN_RIGHT, 16),
-            ("Received (₹)", ALIGN_RIGHT, 16),
-            ("Paid / Settled (₹)", ALIGN_RIGHT, 18),
-            ("Change (₹)", ALIGN_RIGHT, 14),
+            (f"Bill Amount ({curr_symbol})", ALIGN_RIGHT, 16),
+            (f"Received ({curr_symbol})", ALIGN_RIGHT, 16),
+            (f"Paid / Settled ({curr_symbol})", ALIGN_RIGHT, 18),
+            (f"Change ({curr_symbol})", ALIGN_RIGHT, 14),
             ("Reference No", ALIGN_LEFT, 18),
             ("Notes", ALIGN_LEFT, 24),
         ]
@@ -403,19 +411,19 @@ class PaymentReportService:
                     (inv_no, ALIGN_LEFT, None),
                     (p_dt, ALIGN_CENTER, None),
                     ((p.payment_method or "Cash").upper(), ALIGN_CENTER, None),
-                    (safe_float(p.bill_amount), ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (safe_float(p.receive_amount), ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (safe_float(p.paid_amount), ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (safe_float(p.change_amount), ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (safe_float(p.bill_amount), ALIGN_RIGHT, num_fmt_curr),
+                    (safe_float(p.receive_amount), ALIGN_RIGHT, num_fmt_curr),
+                    (safe_float(p.paid_amount), ALIGN_RIGHT, num_fmt_curr),
+                    (safe_float(p.change_amount), ALIGN_RIGHT, num_fmt_curr),
                     (p.payment_reference or "—", ALIGN_LEFT, None),
                     (p.notes or "", ALIGN_LEFT, None),
                 ]
             )
 
         summary_totals = {
-            7: (tot_bill_amt, NUM_FMT_CURRENCY),
-            9: (tot_paid, NUM_FMT_CURRENCY),
-            10: (tot_change, NUM_FMT_CURRENCY),
+            7: (tot_bill_amt, num_fmt_curr),
+            9: (tot_paid, num_fmt_curr),
+            10: (tot_change, num_fmt_curr),
         }
 
         builder.add_summary_sheet(
@@ -432,7 +440,7 @@ class PaymentReportService:
             ("Sr. No.", ALIGN_CENTER, 8),
             ("Payment Method", ALIGN_LEFT, 22),
             ("Transactions Count", ALIGN_RIGHT, 18),
-            ("Total Amount (₹)", ALIGN_RIGHT, 20),
+            (f"Total Amount ({curr_symbol})", ALIGN_RIGHT, 20),
             ("Share of Total %", ALIGN_RIGHT, 18),
         ]
 
@@ -451,7 +459,7 @@ class PaymentReportService:
                     (idx, ALIGN_CENTER, None),
                     (m_name, ALIGN_LEFT, None),
                     (m_data["count"], ALIGN_RIGHT, None),
-                    (m_data["amount"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (m_data["amount"], ALIGN_RIGHT, num_fmt_curr),
                     (f"{pct * 100:.2f}%", ALIGN_RIGHT, None),
                 ]
             )
@@ -461,7 +469,7 @@ class PaymentReportService:
             details_header_title="💳  PAYMENT METHODS DISTRIBUTION",
             headers=method_headers,
             data_rows=method_rows,
-            totals_row={3: (tot_payments, None), 4: (tot_paid, NUM_FMT_CURRENCY)},
+            totals_row={3: (tot_payments, None), 4: (tot_paid, num_fmt_curr)},
             empty_message="No payment method splits available.",
         )
 

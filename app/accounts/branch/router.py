@@ -1,10 +1,20 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
 
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+)
+from sqlalchemy import select
+from app.core.tax import get_tax_type_from_country
 from app.db.config import SessionDep
 
-from app.accounts.branch.model import Branch, statusEnum
+from app.accounts.branch.model import (
+    Branch,
+    statusEnum,
+)
+
 from app.accounts.branch.schema import (
     BranchCreate,
     BranchOut,
@@ -17,18 +27,20 @@ from app.accounts.client.model import Client
 from app.accounts.deps import (
     access_one,
     UserRole,
-    client_access_dependency,
     get_current_user,
     require_roles,
     get_client_if_accessible,
     get_brand_if_accessible,
 )
 
-
 from app.accounts.crm.loyalty.conversion_rule.service import (
     get_or_create_loyalty_conversion_rule,
 )
 
+
+# ============================================================
+# ROUTERS
+# ============================================================
 
 router = APIRouter(
     prefix="/branch",
@@ -74,9 +86,9 @@ async def create_branch(
     db: SessionDep,
     current=Depends(get_current_user),
 ):
-    # --------------------------------------------------------
-    # Validate client access
-    # --------------------------------------------------------
+    # ========================================================
+    # VALIDATE CLIENT ACCESS
+    # ========================================================
 
     client = await get_client_if_accessible(
         client_id=data.client_id,
@@ -84,9 +96,9 @@ async def create_branch(
         current=current,
     )
 
-    # --------------------------------------------------------
-    # Validate brand
-    # --------------------------------------------------------
+    # ========================================================
+    # VALIDATE BRAND
+    # ========================================================
 
     if data.brand_id is not None:
 
@@ -102,36 +114,68 @@ async def create_branch(
                 detail="Brand must belong to the same client",
             )
 
-    # --------------------------------------------------------
-    # Create branch
-    # --------------------------------------------------------
+    # ========================================================
+    # CREATE BRANCH
+    # ========================================================
 
     branch = Branch(
         name=data.name,
         client_id=client.id,
         brand_id=data.brand_id,
+
         address=data.address,
         city=data.city,
+
+        # NEW FIELDS
+        country=data.country,
+        state=data.state,
+        pincode=data.pincode,
+
+        # CURRENCY SETTINGS
+        currency=data.currency,
+        decimal_places=data.decimal_places,
+        tax_type=get_tax_type_from_country(
+            data.country
+        ),
+
+
         status=data.status,
+
+        # Temporary value because branch ID is needed
+        # to generate the actual branch code.
         branch_code="TEMP",
     )
 
     db.add(branch)
 
+    # ========================================================
+    # FLUSH TO GET BRANCH ID
+    # ========================================================
+
     await db.flush()
 
-    # --------------------------------------------------------
-    # Generate branch code & Default Loyalty Conversion Rule
+    # ========================================================
+    # GENERATE BRANCH CODE
     # Example: BR001
-    # --------------------------------------------------------
+    # ========================================================
 
     branch.branch_code = f"BR{branch.id:03d}"
+
+    # ========================================================
+    # COMMIT
+    # ========================================================
 
     await db.commit()
 
     await db.refresh(branch)
 
-    # Automatically create default loyalty conversion rule (10 pts = ₹5) for new branch
+    # ========================================================
+    # DEFAULT LOYALTY CONVERSION RULE
+    #
+    # Example:
+    # 10 points = ₹5
+    # ========================================================
+
     await get_or_create_loyalty_conversion_rule(
         db,
         client_id=branch.client_id,
@@ -152,19 +196,28 @@ async def fetch_branches_with_rbac(
     branch_id: Optional[int] = None,
     brand_id: Optional[int] = None,
 ) -> list[Branch]:
+
     role = UserRole(current["role"])
     user = current["user"]
 
+    # ========================================================
+    # BASE QUERY ACCORDING TO ROLE
+    # ========================================================
+
     # --------------------------------------------------------
-    # 1. BASE QUERY ACCORDING TO ROLE-BASED ACCESS CONTROL
+    # SUPER ADMIN
     # --------------------------------------------------------
 
-    # SUPER ADMIN: can access all branches
     if role == UserRole.SUPER_ADMIN:
+
         query = select(Branch)
 
-    # PARTNER: only branches belonging to clients assigned to that partner
+    # --------------------------------------------------------
+    # PARTNER
+    # --------------------------------------------------------
+
     elif role == UserRole.PARTNER:
+
         query = (
             select(Branch)
             .join(
@@ -176,8 +229,12 @@ async def fetch_branches_with_rbac(
             )
         )
 
-    # CLIENT: only branches belonging to that client
+    # --------------------------------------------------------
+    # CLIENT
+    # --------------------------------------------------------
+
     elif role == UserRole.CLIENT:
+
         query = (
             select(Branch)
             .where(
@@ -185,8 +242,12 @@ async def fetch_branches_with_rbac(
             )
         )
 
-    # STAFF: only their assigned branch
+    # --------------------------------------------------------
+    # STAFF
+    # --------------------------------------------------------
+
     elif role == UserRole.STAFF:
+
         if not user.branch_id:
             return []
 
@@ -197,39 +258,63 @@ async def fetch_branches_with_rbac(
             )
         )
 
-    # UNKNOWN / UNAUTHORIZED ROLE
+    # --------------------------------------------------------
+    # UNKNOWN ROLE
+    # --------------------------------------------------------
+
     else:
+
         raise HTTPException(
             status_code=403,
             detail="Not allowed",
         )
 
-    # --------------------------------------------------------
-    # 2. APPLY OPTIONAL FILTERS (AND LOGIC)
-    # --------------------------------------------------------
+    # ========================================================
+    # OPTIONAL FILTERS
+    # ========================================================
 
     if client_id is not None:
-        query = query.where(Branch.client_id == client_id)
+
+        query = query.where(
+            Branch.client_id == client_id
+        )
 
     if branch_id is not None:
-        query = query.where(Branch.id == branch_id)
+
+        query = query.where(
+            Branch.id == branch_id
+        )
 
     if brand_id is not None:
-        query = query.where(Branch.brand_id == brand_id)
 
-    # --------------------------------------------------------
-    # 3. ORDERING
-    # --------------------------------------------------------
+        query = query.where(
+            Branch.brand_id == brand_id
+        )
 
-    query = query.order_by(Branch.id.desc())
+    # ========================================================
+    # ORDERING
+    # ========================================================
+
+    query = query.order_by(
+        Branch.id.desc()
+    )
 
     result = await db.execute(query)
+
     branches = result.scalars().all()
+
     return list(branches)
 
 
 # ============================================================
-# GET ALL BRANCHES (Supports /branches/all & /branch/get_all_branch)
+# GET ALL BRANCHES
+#
+# Supports:
+#
+# /branch/get_all_branch
+# /branch/all
+# /branches/all
+# /branches/get_all_branch
 # ============================================================
 
 @router.get(
@@ -249,12 +334,29 @@ async def fetch_branches_with_rbac(
     response_model=list[BranchOut],
 )
 async def get_branches(
-    client_id: Optional[int] = Query(None, gt=0, description="Filter by client ID"),
-    branch_id: Optional[int] = Query(None, gt=0, description="Filter by branch ID"),
-    brand_id: Optional[int] = Query(None, gt=0, description="Filter by brand ID"),
+    client_id: Optional[int] = Query(
+        None,
+        gt=0,
+        description="Filter by client ID",
+    ),
+
+    branch_id: Optional[int] = Query(
+        None,
+        gt=0,
+        description="Filter by branch ID",
+    ),
+
+    brand_id: Optional[int] = Query(
+        None,
+        gt=0,
+        description="Filter by brand ID",
+    ),
+
     db: SessionDep = None,
+
     current=Depends(access_one),
 ):
+
     return await fetch_branches_with_rbac(
         db=db,
         current=current,
@@ -285,6 +387,7 @@ async def get_branch(
     db: SessionDep,
     current=Depends(access_one),
 ):
+
     result = await db.execute(
         select(Branch).where(
             Branch.id == branch_id
@@ -294,14 +397,15 @@ async def get_branch(
     branch = result.scalar_one_or_none()
 
     if not branch:
+
         raise HTTPException(
             status_code=404,
             detail="Branch not found",
         )
 
-    # --------------------------------------------------------
-    # Check access
-    # --------------------------------------------------------
+    # ========================================================
+    # CHECK ACCESS
+    # ========================================================
 
     await get_client_if_accessible(
         client_id=branch.client_id,
@@ -334,6 +438,11 @@ async def update_branch(
     db: SessionDep,
     current=Depends(get_current_user),
 ):
+
+    # ========================================================
+    # GET BRANCH
+    # ========================================================
+
     result = await db.execute(
         select(Branch).where(
             Branch.id == branch_id
@@ -343,14 +452,15 @@ async def update_branch(
     branch = result.scalar_one_or_none()
 
     if not branch:
+
         raise HTTPException(
             status_code=404,
             detail="Branch not found",
         )
 
-    # --------------------------------------------------------
-    # Check client access
-    # --------------------------------------------------------
+    # ========================================================
+    # CHECK CLIENT ACCESS
+    # ========================================================
 
     await get_client_if_accessible(
         client_id=branch.client_id,
@@ -358,9 +468,9 @@ async def update_branch(
         current=current,
     )
 
-    # --------------------------------------------------------
-    # Update fields
-    # --------------------------------------------------------
+    # ========================================================
+    # UPDATE BASIC FIELDS
+    # ========================================================
 
     if data.name is not None:
         branch.name = data.name
@@ -371,12 +481,49 @@ async def update_branch(
     if data.city is not None:
         branch.city = data.city
 
+    # ========================================================
+    # UPDATE LOCATION
+    # ========================================================
+
+    # if data.country is not None:
+    #     branch.country = data.country
+
+    if data.country is not None:
+
+        branch.country = data.country
+
+        branch.tax_type = (
+            get_tax_type_from_country(
+                data.country
+            )
+        )
+
+    if data.state is not None:
+        branch.state = data.state
+
+    if data.pincode is not None:
+        branch.pincode = data.pincode
+
+    # ========================================================
+    # UPDATE CURRENCY SETTINGS
+    # ========================================================
+
+    if data.currency is not None:
+        branch.currency = data.currency
+
+    if data.decimal_places is not None:
+        branch.decimal_places = data.decimal_places
+
+    # ========================================================
+    # UPDATE STATUS
+    # ========================================================
+
     if data.status is not None:
         branch.status = data.status
 
-    # --------------------------------------------------------
-    # Update brand
-    # --------------------------------------------------------
+    # ========================================================
+    # UPDATE BRAND
+    # ========================================================
 
     if data.brand_id is not None:
 
@@ -387,12 +534,17 @@ async def update_branch(
         )
 
         if brand.client_id != branch.client_id:
+
             raise HTTPException(
                 status_code=400,
                 detail="Brand must belong to the same client",
             )
 
         branch.brand_id = data.brand_id
+
+    # ========================================================
+    # SAVE
+    # ========================================================
 
     await db.commit()
 
@@ -405,45 +557,67 @@ async def update_branch(
 # DELETE BRANCH
 # ============================================================
 
-@router.delete("/delete_branch/{branch_id}")
-@router.delete("/delet_branch/{branch_id}")
-@branches_router.delete("/delete_branch/{branch_id}")
-@branches_router.delete("/delet_branch/{branch_id}")
-@branches_router.delete("/{branch_id}")
+@router.delete(
+    "/delete_branch/{branch_id}"
+)
+@router.delete(
+    "/delet_branch/{branch_id}"
+)
+@branches_router.delete(
+    "/delete_branch/{branch_id}"
+)
+@branches_router.delete(
+    "/delet_branch/{branch_id}"
+)
+@branches_router.delete(
+    "/{branch_id}"
+)
 async def delete_branch(
     branch_id: int,
     db: SessionDep,
     current=Depends(access_one),
 ):
+
     role = UserRole(current["role"])
     user = current["user"]
 
-    # =====================================================
+    # ========================================================
     # GET BRANCH
-    # =====================================================
+    # ========================================================
 
     result = await db.execute(
-        select(Branch).where(Branch.id == branch_id)
+        select(Branch).where(
+            Branch.id == branch_id
+        )
     )
 
     branch = result.scalar_one_or_none()
 
     if not branch:
+
         raise HTTPException(
             status_code=404,
             detail="Branch not found",
         )
 
-    # =====================================================
+    # ========================================================
     # ACCESS CONTROL
-    # =====================================================
+    # ========================================================
 
+    # --------------------------------------------------------
     # SUPER ADMIN
+    # --------------------------------------------------------
+
     if role == UserRole.SUPER_ADMIN:
+
         pass
 
+    # --------------------------------------------------------
     # PARTNER
+    # --------------------------------------------------------
+
     elif role == UserRole.PARTNER:
+
         client_result = await db.execute(
             select(Client).where(
                 Client.id == branch.client_id
@@ -453,49 +627,70 @@ async def delete_branch(
         client = client_result.scalar_one_or_none()
 
         if not client:
+
             raise HTTPException(
                 status_code=404,
                 detail="Client not found",
             )
 
         if client.partner_id != user.id:
+
             raise HTTPException(
                 status_code=403,
                 detail="You do not have access to this branch",
             )
 
+    # --------------------------------------------------------
     # CLIENT
+    # --------------------------------------------------------
+
     elif role == UserRole.CLIENT:
+
         if branch.client_id != user.id:
+
             raise HTTPException(
                 status_code=403,
                 detail="You do not have access to this branch",
             )
 
+    # --------------------------------------------------------
     # STAFF
+    # --------------------------------------------------------
+
     elif role == UserRole.STAFF:
+
         if branch.id != user.branch_id:
+
             raise HTTPException(
                 status_code=403,
                 detail="You can only delete your assigned branch",
             )
 
+    # --------------------------------------------------------
+    # UNKNOWN
+    # --------------------------------------------------------
+
     else:
+
         raise HTTPException(
             status_code=403,
             detail="Not allowed",
         )
 
-    # =====================================================
+    # ========================================================
     # DELETE
-    # =====================================================
+    # ========================================================
 
     await db.delete(branch)
 
     try:
+
         await db.commit()
+
     except Exception:
+
         await db.rollback()
+
         raise HTTPException(
             status_code=400,
             detail=(
@@ -532,6 +727,11 @@ async def change_branch_status(
     db: SessionDep,
     current=Depends(access_one),
 ):
+
+    # ========================================================
+    # GET BRANCH
+    # ========================================================
+
     result = await db.execute(
         select(Branch).where(
             Branch.id == branch_id
@@ -541,6 +741,7 @@ async def change_branch_status(
     branch = result.scalar_one_or_none()
 
     if not branch:
+
         raise HTTPException(
             status_code=404,
             detail="Branch not found",
@@ -549,16 +750,17 @@ async def change_branch_status(
     role = UserRole(current["role"])
     user = current["user"]
 
-    # --------------------------------------------------------
+    # ========================================================
     # SUPER ADMIN
-    # --------------------------------------------------------
+    # ========================================================
 
     if role == UserRole.SUPER_ADMIN:
+
         pass
 
-    # --------------------------------------------------------
+    # ========================================================
     # PARTNER
-    # --------------------------------------------------------
+    # ========================================================
 
     elif role == UserRole.PARTNER:
 
@@ -571,32 +773,35 @@ async def change_branch_status(
         client = client_result.scalar_one_or_none()
 
         if not client:
+
             raise HTTPException(
                 status_code=404,
                 detail="Client not found",
             )
 
         if client.partner_id != user.id:
+
             raise HTTPException(
                 status_code=403,
                 detail="Not your branch",
             )
 
-    # --------------------------------------------------------
+    # ========================================================
     # CLIENT
-    # --------------------------------------------------------
+    # ========================================================
 
     elif role == UserRole.CLIENT:
 
         if branch.client_id != user.id:
+
             raise HTTPException(
                 status_code=403,
                 detail="Not your branch",
             )
 
-    # --------------------------------------------------------
+    # ========================================================
     # STAFF
-    # --------------------------------------------------------
+    # ========================================================
 
     elif role == UserRole.STAFF:
 
@@ -605,9 +810,9 @@ async def change_branch_status(
             detail="Staff cannot change branch status",
         )
 
-    # --------------------------------------------------------
+    # ========================================================
     # UNKNOWN
-    # --------------------------------------------------------
+    # ========================================================
 
     else:
 
@@ -616,9 +821,9 @@ async def change_branch_status(
             detail="Not allowed",
         )
 
-    # --------------------------------------------------------
-    # Update status
-    # --------------------------------------------------------
+    # ========================================================
+    # UPDATE STATUS
+    # ========================================================
 
     branch.status = data.status
 
@@ -626,4 +831,4 @@ async def change_branch_status(
 
     await db.refresh(branch)
 
-    return branch
+    return branch

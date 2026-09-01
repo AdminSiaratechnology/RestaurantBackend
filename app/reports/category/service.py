@@ -21,6 +21,11 @@ from app.reports.helpers import (
     safe_str,
 )
 from app.reports.export_engine import ExcelReportBuilder
+from app.utils.currency_formatter import (
+    format_currency,
+    get_excel_currency_num_format,
+    get_branch_currency_settings_from_db,
+)
 from app.reports.category.queries import (
     query_categories_with_item_counts,
     query_category_sales_aggregations,
@@ -223,6 +228,9 @@ class CategoryReportService:
 
         title = f"Category Report - {scope['branch_name']}" if not scope['is_all_branches'] else f"Category Report - {scope['client_name'] or 'All Branches'}"
 
+        curr_code, curr_symbol, dec_places = await get_branch_currency_settings_from_db(branch_id, db)
+        num_fmt_curr = get_excel_currency_num_format(currency_symbol=curr_symbol, decimal_places=dec_places)
+
         builder = ExcelReportBuilder(
             report_title=title,
             scope_name=scope["scope_name"],
@@ -236,7 +244,7 @@ class CategoryReportService:
             ("TOTAL MENU ITEMS", str(summary["total_menu_items"]), False),
             ("ACTIVE CATEGORIES", str(summary["active_categories"]), False),
             ("TOP CATEGORY", summary["top_category"], False),
-            ("TOTAL CATEGORY SALES", f"₹{summary['total_category_sales']:,.2f}", True),
+            ("TOTAL CATEGORY SALES", format_currency(summary['total_category_sales'], currency_symbol=curr_symbol, decimal_places=dec_places), True),
         ]
 
         headers = [
@@ -248,7 +256,7 @@ class CategoryReportService:
             ("Total Items", ALIGN_RIGHT, 14),
             ("Active Items", ALIGN_RIGHT, 14),
             ("Sold Qty", ALIGN_RIGHT, 14),
-            ("Sales Amount (₹)", ALIGN_RIGHT, 18),
+            (f"Sales Amount ({curr_symbol})", ALIGN_RIGHT, 18),
             ("Sales Share %", ALIGN_RIGHT, 14),
         ]
 
@@ -267,7 +275,7 @@ class CategoryReportService:
                     (r["total_items"], ALIGN_RIGHT, None),
                     (r["active_items"], ALIGN_RIGHT, None),
                     (r["sold_quantity"], ALIGN_RIGHT, NUM_FMT_QTY),
-                    (r["sales_amount"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (r["sales_amount"], ALIGN_RIGHT, num_fmt_curr),
                     (f"{r['percentage_of_total']:.2f}%", ALIGN_RIGHT, None),
                 ]
             )
@@ -277,7 +285,7 @@ class CategoryReportService:
             kpis=kpis,
             headers=headers,
             data_rows=summary_rows,
-            totals_row={8: (tot_qty, NUM_FMT_QTY), 9: (tot_amt, NUM_FMT_CURRENCY)},
+            totals_row={8: (tot_qty, NUM_FMT_QTY), 9: (tot_amt, num_fmt_curr)},
             empty_message="No categories found for the selected branch/client.",
         )
 

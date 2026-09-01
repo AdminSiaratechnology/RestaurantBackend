@@ -26,6 +26,11 @@ from app.reports.helpers import (
     safe_str,
 )
 from app.reports.export_engine import ExcelReportBuilder
+from app.utils.currency_formatter import (
+    format_currency,
+    get_excel_currency_num_format,
+    get_branch_currency_settings_from_db,
+)
 
 
 class CustomerReportService:
@@ -302,6 +307,8 @@ class CustomerReportService:
         scope = data["scope"]
         summary = data["summary"]
         rows = data["rows"]
+        curr_code, curr_symbol, dec_places = await get_branch_currency_settings_from_db(branch_id, db)
+        num_fmt_curr = get_excel_currency_num_format(currency_symbol=curr_symbol, decimal_places=dec_places)
 
         title = f"Customer Report - {scope['branch_name']}" if not scope['is_all_branches'] else f"Customer Report - {scope['client_name'] or 'All Branches'}"
 
@@ -316,8 +323,8 @@ class CustomerReportService:
             ("TOTAL CUSTOMERS", str(summary["total_customers"]), False),
             ("NEW CUSTOMERS", str(summary["new_customers"]), False),
             ("RETURNING CUSTOMERS", str(summary["returning_customers"]), False),
-            ("AVERAGE SPEND", f"₹{summary['average_spend']:,.2f}", False),
-            ("TOTAL SPEND", f"₹{summary['total_spend']:,.2f}", True),
+            ("AVERAGE SPEND", format_currency(summary['average_spend'], currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("TOTAL SPEND", format_currency(summary['total_spend'], currency_symbol=curr_symbol, decimal_places=dec_places), True),
         ]
 
         headers = [
@@ -332,9 +339,9 @@ class CustomerReportService:
             ("VIP", ALIGN_CENTER, 10),
             ("Visits", ALIGN_RIGHT, 10),
             ("Orders", ALIGN_RIGHT, 10),
-            ("Avg Order (₹)", ALIGN_RIGHT, 16),
-            ("Total Spend (₹)", ALIGN_RIGHT, 18),
-            ("Wallet Balance (₹)", ALIGN_RIGHT, 18),
+            (f"Avg Order ({curr_symbol})", ALIGN_RIGHT, 16),
+            (f"Total Spend ({curr_symbol})", ALIGN_RIGHT, 18),
+            (f"Wallet Balance ({curr_symbol})", ALIGN_RIGHT, 18),
         ]
 
         summary_rows = []
@@ -355,9 +362,9 @@ class CustomerReportService:
                     (r["is_vip"], ALIGN_CENTER, None),
                     (r["total_visits"], ALIGN_RIGHT, None),
                     (r["total_orders"], ALIGN_RIGHT, None),
-                    (r["average_order_value"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (r["total_spend"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (r["wallet_balance"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (r["average_order_value"], ALIGN_RIGHT, num_fmt_curr),
+                    (r["total_spend"], ALIGN_RIGHT, num_fmt_curr),
+                    (r["wallet_balance"], ALIGN_RIGHT, num_fmt_curr),
                 ]
             )
 
@@ -366,7 +373,7 @@ class CustomerReportService:
             kpis=kpis,
             headers=headers,
             data_rows=summary_rows,
-            totals_row={13: (tot_spend, NUM_FMT_CURRENCY), 14: (tot_wallet, NUM_FMT_CURRENCY)},
+            totals_row={12: (tot_spend, num_fmt_curr), 13: (tot_wallet, num_fmt_curr)},
             empty_message="No customer profiles recorded.",
         )
 

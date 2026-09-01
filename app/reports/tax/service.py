@@ -25,6 +25,11 @@ from app.reports.helpers import (
     safe_str,
 )
 from app.reports.export_engine import ExcelReportBuilder
+from app.utils.currency_formatter import (
+    format_currency,
+    get_excel_currency_num_format,
+    get_branch_currency_settings_from_db,
+)
 
 
 class TaxReportService:
@@ -226,6 +231,9 @@ class TaxReportService:
 
         title = f"Tax Report - {scope['branch_name']}" if not scope['is_all_branches'] else f"Tax Report - {scope['client_name'] or 'All Branches'}"
 
+        curr_code, curr_symbol, dec_places = await get_branch_currency_settings_from_db(branch_id, db)
+        num_fmt_curr = get_excel_currency_num_format(currency_symbol=curr_symbol, decimal_places=dec_places)
+
         builder = ExcelReportBuilder(
             report_title=title,
             scope_name=scope["scope_name"],
@@ -235,10 +243,10 @@ class TaxReportService:
 
         kpis = [
             ("TOTAL INVOICES", str(summary["total_invoices"]), False),
-            ("TAXABLE AMOUNT", f"₹{summary['taxable_amount']:,.2f}", False),
-            ("CGST COLLECTED", f"₹{summary['cgst_amount']:,.2f}", False),
-            ("SGST COLLECTED", f"₹{summary['sgst_amount']:,.2f}", False),
-            ("TOTAL TAX COLLECTED", f"₹{summary['total_tax_collected']:,.2f}", True),
+            ("TAXABLE AMOUNT", format_currency(summary['taxable_amount'], currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("CGST COLLECTED", format_currency(summary['cgst_amount'], currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("SGST COLLECTED", format_currency(summary['sgst_amount'], currency_symbol=curr_symbol, decimal_places=dec_places), False),
+            ("TOTAL TAX COLLECTED", format_currency(summary['total_tax_collected'], currency_symbol=curr_symbol, decimal_places=dec_places), True),
         ]
 
         headers = [
@@ -247,14 +255,14 @@ class TaxReportService:
             ("Branch Name", ALIGN_LEFT, 22),
             ("Invoice No", ALIGN_LEFT, 18),
             ("Invoice Date", ALIGN_CENTER, 18),
-            ("Taxable Subtotal (₹)", ALIGN_RIGHT, 18),
+            (f"Taxable Subtotal ({curr_symbol})", ALIGN_RIGHT, 18),
             ("CGST %", ALIGN_RIGHT, 10),
-            ("CGST (₹)", ALIGN_RIGHT, 14),
+            (f"CGST ({curr_symbol})", ALIGN_RIGHT, 14),
             ("SGST %", ALIGN_RIGHT, 10),
-            ("SGST (₹)", ALIGN_RIGHT, 14),
-            ("Service Charge (₹)", ALIGN_RIGHT, 18),
-            ("Total Tax Collected (₹)", ALIGN_RIGHT, 20),
-            ("Final Bill (₹)", ALIGN_RIGHT, 18),
+            (f"SGST ({curr_symbol})", ALIGN_RIGHT, 14),
+            (f"Service Charge ({curr_symbol})", ALIGN_RIGHT, 18),
+            (f"Total Tax Collected ({curr_symbol})", ALIGN_RIGHT, 20),
+            (f"Final Bill ({curr_symbol})", ALIGN_RIGHT, 18),
         ]
 
         summary_rows = []
@@ -273,14 +281,14 @@ class TaxReportService:
                     (r["branch_name"], ALIGN_LEFT, None),
                     (r["invoice_no"], ALIGN_LEFT, None),
                     (r["invoice_date"], ALIGN_CENTER, None),
-                    (r["subtotal"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (r["subtotal"], ALIGN_RIGHT, num_fmt_curr),
                     (f"{r['cgst_percent']:.2f}%", ALIGN_RIGHT, None),
-                    (r["cgst_amount"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (r["cgst_amount"], ALIGN_RIGHT, num_fmt_curr),
                     (f"{r['sgst_percent']:.2f}%", ALIGN_RIGHT, None),
-                    (r["sgst_amount"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (r["service_charge_amount"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (r["total_tax_collected"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
-                    (r["final_amount"], ALIGN_RIGHT, NUM_FMT_CURRENCY),
+                    (r["sgst_amount"], ALIGN_RIGHT, num_fmt_curr),
+                    (r["service_charge_amount"], ALIGN_RIGHT, num_fmt_curr),
+                    (r["total_tax_collected"], ALIGN_RIGHT, num_fmt_curr),
+                    (r["final_amount"], ALIGN_RIGHT, num_fmt_curr),
                 ]
             )
 
@@ -290,12 +298,12 @@ class TaxReportService:
             headers=headers,
             data_rows=summary_rows,
             totals_row={
-                6: (tot_sub, NUM_FMT_CURRENCY),
-                8: (tot_cgst, NUM_FMT_CURRENCY),
-                10: (tot_sgst, NUM_FMT_CURRENCY),
-                11: (tot_sc, NUM_FMT_CURRENCY),
-                12: (tot_tax_all, NUM_FMT_CURRENCY),
-                13: (tot_final, NUM_FMT_CURRENCY),
+                6: (tot_sub, num_fmt_curr),
+                8: (tot_cgst, num_fmt_curr),
+                10: (tot_sgst, num_fmt_curr),
+                11: (tot_sc, num_fmt_curr),
+                12: (tot_tax_all, num_fmt_curr),
+                13: (tot_final, num_fmt_curr),
             },
             empty_message="No taxable transactions recorded for the selected period.",
         )
