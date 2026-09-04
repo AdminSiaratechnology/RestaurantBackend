@@ -7,7 +7,7 @@ from fastapi import (
     Query,
 )
 from sqlalchemy import select
-from app.core.tax import get_tax_type_from_country
+from app.core.tax import get_tax_type_from_country, normalize_tax_type
 from app.db.config import SessionDep
 
 from app.accounts.branch.model import (
@@ -36,6 +36,8 @@ from app.accounts.deps import (
 from app.accounts.crm.loyalty.conversion_rule.service import (
     get_or_create_loyalty_conversion_rule,
 )
+from app.accounts.pricing.service import sync_branch_pricing_tax_type
+from app.accounts.tax.model import TaxBillingSetting
 
 
 # ============================================================
@@ -134,8 +136,10 @@ async def create_branch(
         # CURRENCY SETTINGS
         currency=data.currency,
         decimal_places=data.decimal_places,
-        tax_type=get_tax_type_from_country(
-            data.country
+        tax_type=(
+            normalize_tax_type(data.tax_type)
+            if (getattr(data, "tax_type", None) and str(data.tax_type).strip())
+            else get_tax_type_from_country(data.country)
         ),
 
 
@@ -162,11 +166,30 @@ async def create_branch(
     branch.branch_code = f"BR{branch.id:03d}"
 
     # ========================================================
-    # COMMIT
+    # DEFAULT TAX BILLING SETTINGS
     # ========================================================
 
-    await db.commit()
+    existing_tax_res = await db.execute(
+        select(TaxBillingSetting).where(
+            TaxBillingSetting.branch_id == branch.id
+        )
+    )
+    if not existing_tax_res.scalar_one_or_none():
+        tax_setting = TaxBillingSetting(
+            client_id=branch.client_id,
+            branch_id=branch.id,
+            default_tax_rate=5.0,
+            cgst=2.5 if branch.tax_type == "GST" else 0.0,
+            sgst=2.5 if branch.tax_type == "GST" else 0.0,
+            service_charge=0.0,
+            bill_footer_message="Thank you for dining with us!",
+            enable_service_charge=False,
+            enable_tax=True,
+            round_off_bill=True,
+        )
+        db.add(tax_setting)
 
+    await db.commit()
     await db.refresh(branch)
 
     # ========================================================
@@ -482,21 +505,22 @@ async def update_branch(
         branch.city = data.city
 
     # ========================================================
-    # UPDATE LOCATION
+    # UPDATE LOCATION & TAX TYPE
     # ========================================================
 
-    # if data.country is not None:
-    #     branch.country = data.country
+    tax_type_changed = False
+
+    if getattr(data, "tax_type", None) and str(data.tax_type).strip():
+        new_tax_type = normalize_tax_type(data.tax_type)
+        if new_tax_type != branch.tax_type:
+            branch.tax_type = new_tax_type
+            tax_type_changed = True
+    elif data.country is not None and not branch.tax_type:
+        branch.tax_type = get_tax_type_from_country(data.country)
+        tax_type_changed = True
 
     if data.country is not None:
-
         branch.country = data.country
-
-        branch.tax_type = (
-            get_tax_type_from_country(
-                data.country
-            )
-        )
 
     if data.state is not None:
         branch.state = data.state
@@ -547,6 +571,9 @@ async def update_branch(
     # ========================================================
 
     await db.commit()
+
+    if tax_type_changed:
+        await sync_branch_pricing_tax_type(db, branch)
 
     await db.refresh(branch)
 

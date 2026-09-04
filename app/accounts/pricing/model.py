@@ -5,12 +5,12 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    Column,
-    Float,
-    Integer,
     Boolean,
+    Column,
     DateTime,
+    Float,
     ForeignKey,
+    Integer,
     String,
 )
 
@@ -27,11 +27,17 @@ class Pricing(Base):
 
     __tablename__ = "pricings"
 
+
     id = Column(
         Integer,
         primary_key=True,
         index=True,
     )
+
+
+    # =====================================================
+    # RELATIONS
+    # =====================================================
 
     client_id = Column(
         Integer,
@@ -51,6 +57,7 @@ class Pricing(Base):
         nullable=False,
     )
 
+
     # =====================================================
     # PRICE
     # =====================================================
@@ -62,35 +69,43 @@ class Pricing(Base):
 
     cost_price = Column(
         Float,
-        nullable=True,
+        nullable=False,
         default=0.0,
     )
 
     discount = Column(
         Float,
-        nullable=True,
+        nullable=False,
         default=0.0,
     )
 
+
     # =====================================================
     # TAX
+    #
+    # tax = TOTAL TAX RATE
+    #
+    # India:
+    # tax = 18
+    # CGST = 9
+    # SGST = 9
+    #
+    # Other country:
+    # tax = 15
+    # VAT = 15
     # =====================================================
 
-    # Total GST or VAT percentage
     tax = Column(
         Float,
         nullable=False,
         default=0.0,
     )
 
-    # GST or VAT
     tax_type = Column(
         String(20),
         nullable=False,
-        default="GST",
     )
 
-    # GST only
     cgst_rate = Column(
         Float,
         nullable=False,
@@ -103,6 +118,7 @@ class Pricing(Base):
         default=0.0,
     )
 
+
     # =====================================================
     # EXTRA
     # =====================================================
@@ -114,19 +130,23 @@ class Pricing(Base):
 
     is_active = Column(
         Boolean,
+        nullable=False,
         default=True,
     )
 
     created_at = Column(
         DateTime,
         default=datetime.utcnow,
+        nullable=False,
     )
 
     updated_at = Column(
         DateTime,
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
+        nullable=False,
     )
+
 
     # =====================================================
     # RELATIONSHIPS
@@ -162,6 +182,7 @@ class PricingTaxHistory(Base):
 
     __tablename__ = "pricing_tax_history"
 
+
     id = Column(
         Integer,
         primary_key=True,
@@ -192,6 +213,7 @@ class PricingTaxHistory(Base):
     created_at = Column(
         DateTime,
         default=datetime.utcnow,
+        nullable=False,
     )
 
     pricing = relationship(

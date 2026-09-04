@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.accounts.branch.model import Branch
 from app.accounts.tax.model import TaxBillingSetting
+from app.core.tax import get_branch_tax_config
 
 
 async def create_tax_settings_service(
@@ -46,12 +47,18 @@ async def create_tax_settings_service(
         or (data.service_charge or 0) > 0
     )
 
+    tax_config = get_branch_tax_config(
+        country=branch.country,
+        tax_rate=data.default_tax_rate,
+        decimal_places=branch.decimal_places if hasattr(branch, 'decimal_places') else 2,
+    )
+
     setting = TaxBillingSetting(
         client_id=user.id,
         branch_id=data.branch_id,
-        default_tax_rate=data.default_tax_rate,
-        cgst=data.default_tax_rate / 2,
-        sgst=data.default_tax_rate / 2,
+        default_tax_rate=tax_config["tax_rate"],
+        cgst=tax_config["cgst_rate"],
+        sgst=tax_config["sgst_rate"],
         service_charge=data.service_charge,
         bill_footer_message=data.bill_footer_message,
         enable_service_charge=enable_service,
@@ -126,12 +133,15 @@ async def update_tax_settings_service(
     )
 
     if "default_tax_rate" in update_data:
-        update_data["cgst"] = (
-            update_data["default_tax_rate"] / 2
+        branch_res = await db.execute(select(Branch).where(Branch.id == branch_id))
+        branch = branch_res.scalar_one_or_none()
+        tax_cfg = get_branch_tax_config(
+            country=branch.country if branch else None,
+            tax_rate=update_data["default_tax_rate"],
+            decimal_places=branch.decimal_places if branch and hasattr(branch, 'decimal_places') else 2,
         )
-        update_data["sgst"] = (
-            update_data["default_tax_rate"] / 2
-        )
+        update_data["cgst"] = tax_cfg["cgst_rate"]
+        update_data["sgst"] = tax_cfg["sgst_rate"]
 
     if (
         update_data.get("service_charge", 0) > 0

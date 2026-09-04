@@ -126,8 +126,6 @@ def generate_invoice_pdf(bill):
         ])
     )
 
-    elements.append(table)
-
     elements.append(Spacer(1, 10))
 
     subtotal = safe_float(getattr(bill, "subtotal", 0))
@@ -138,21 +136,24 @@ def generate_invoice_pdf(bill):
         )
     )
 
+    tax_type = str(getattr(bill, "tax_type", None) or getattr(branch, "tax_type", "GST") or "GST").upper()
     cgst_percent = safe_float(getattr(bill, "cgst_percent", 0))
     sgst_percent = safe_float(getattr(bill, "sgst_percent", 0))
     cgst_amount = safe_float(getattr(bill, "cgst_amount", 0))
     sgst_amount = safe_float(getattr(bill, "sgst_amount", 0))
+    vat_percent = safe_float(getattr(bill, "vat_percent", 0))
+    vat_amount = safe_float(getattr(bill, "vat_amount", 0))
     tax_total = safe_float(getattr(bill, "tax_total", 0))
 
     if tax_type == "VAT":
-        vat_amount = tax_total if tax_total > 0 else (cgst_amount + sgst_amount)
-        vat_percent = cgst_percent + sgst_percent
-        if vat_percent == 0 and subtotal > 0 and vat_amount > 0:
-            vat_percent = round((vat_amount / subtotal) * 100, 2)
-        if vat_amount > 0 or vat_percent > 0:
+        v_amount = vat_amount if vat_amount > 0 else tax_total
+        v_percent = vat_percent if vat_percent > 0 else (cgst_percent + sgst_percent)
+        if v_percent == 0 and subtotal > 0 and v_amount > 0:
+            v_percent = round((v_amount / subtotal) * 100, 2)
+        if v_amount > 0 or v_percent > 0:
             elements.append(
                 Paragraph(
-                    f"<b>VAT ({vat_percent:g}%):</b> {fmt_money(vat_amount)}",
+                    f"<b>VAT ({v_percent:g}%):</b> {fmt_money(v_amount)}",
                     styles["BodyText"],
                 )
             )

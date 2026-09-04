@@ -29,11 +29,11 @@ from app.utils.currency_formatter import format_currency, get_branch_currency_se
 
 
 def money(value, branch=None, currency_symbol: str = None, decimal_places: int = None) -> str:
-    _, sym, dec = get_branch_currency_settings(branch)
+    code, sym, dec = get_branch_currency_settings(branch)
     symbol = currency_symbol if currency_symbol is not None else sym
     decimals = decimal_places if decimal_places is not None else dec
 
-    return format_currency(value, currency_symbol=symbol, decimal_places=decimals)
+    return format_currency(value, currency_symbol=symbol, decimal_places=decimals, currency_code=code, for_pdf=True)
 
 
 # =========================================================
@@ -600,10 +600,10 @@ class InvoiceTemplate:
         item_table = Table(
             item_data,
             colWidths=[
-                30 * mm,
-                10 * mm,
-                15 * mm,
-                17 * mm,
+                26 * mm,
+                8 * mm,
+                18 * mm,
+                20 * mm,
             ],
             repeatRows=1,
         )
@@ -785,7 +785,7 @@ class InvoiceTemplate:
                 final_amount
             )
 
-        tax_type = str(getattr(branch, "tax_type", "GST") or "GST").upper()
+        tax_type = str(getattr(bill, "tax_type", None) or getattr(branch, "tax_type", "GST") or "GST").upper()
 
         totals = []
 
@@ -821,8 +821,12 @@ class InvoiceTemplate:
 
         if tax_type == "VAT":
             tax_total = safe_float(getattr(bill, "tax_total", 0))
-            vat_amount = tax_total if tax_total > 0 else (cgst_amount + sgst_amount)
-            vat_percent = cgst_percent + sgst_percent
+            vat_amount = safe_float(getattr(bill, "vat_amount", 0))
+            vat_percent = safe_float(getattr(bill, "vat_percent", 0))
+            if vat_amount <= 0 and tax_total > 0:
+                vat_amount = tax_total
+            if vat_percent <= 0 and (cgst_percent + sgst_percent) > 0:
+                vat_percent = cgst_percent + sgst_percent
             if vat_percent == 0 and subtotal > 0 and vat_amount > 0:
                 vat_percent = round((vat_amount / subtotal) * 100, 2)
 
