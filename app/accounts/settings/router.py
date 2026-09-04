@@ -14,7 +14,9 @@ from app.db.config import SessionDep
 from app.accounts.deps import get_current_user
 from app.accounts.client.model import Client
 from app.accounts.branch.model import Branch
-from app.accounts.tax.model import TaxBillingSetting
+
+from app.utils.currency_formatter import get_currency_symbol
+
 from app.accounts.legaldetails.model import LegalCompliance
 
 
@@ -101,6 +103,9 @@ async def _fetch_settings_data(
         res_l = await db.execute(select(LegalCompliance).where(LegalCompliance.branch_id == branch.id))
         legal_setting = res_l.scalar_one_or_none()
 
+    curr_code = (branch.currency if branch and getattr(branch, "currency", None) else "INR").upper()
+    curr_symbol = get_currency_symbol(currency_code=curr_code)
+
     return {
         "id": settings_id,
         "client_id": resolved_client_id,
@@ -115,8 +120,8 @@ async def _fetch_settings_data(
         "enable_service_charge": (tax_setting.enable_service_charge if tax_setting else False),
         "enable_tax": (tax_setting.enable_tax if tax_setting else True),
         "round_off_bill": (tax_setting.round_off_bill if tax_setting else True),
-        "currency": "INR",
-        "currency_symbol": "₹",
+        "currency": curr_code,
+        "currency_symbol": curr_symbol,
         "bill_footer_message": (tax_setting.bill_footer_message if tax_setting else "Thank you for dining with us!") or "Thank you for dining with us!",
         "zomato_restaurant_id": "",
         "swiggy_restaurant_id": "",

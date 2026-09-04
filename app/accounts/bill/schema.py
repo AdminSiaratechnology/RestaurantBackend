@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.accounts.bill.enum import PaymentStatus
 
@@ -42,12 +42,23 @@ class PricingOut(BaseModel):
     is_active: bool
     created_at: datetime
 
+    tax_type: str
+
+    @field_validator("tax_type", mode="before")
+    @classmethod
+    def validate_tax_type(cls, v):
+        if v and str(v).strip():
+            return str(v).strip().upper()
+        return "VAT"
+
     cgst_rate: float | None = None
     sgst_rate: float | None = None
+    vat_rate: float | None = None
 
     discounted_price: float | None = None
     cgst_amount: float | None = None
     sgst_amount: float | None = None
+    vat_amount: float | None = None
     total_tax_amount: float | None = None
     total_price: float | None = None
 
@@ -97,7 +108,6 @@ class BillOut(BaseModel):
 
     payment_status: PaymentStatus
     payment_method: Optional[str] = None
-
     created_at: datetime
 
     items: List[ItemOut] = Field(
@@ -106,16 +116,27 @@ class BillOut(BaseModel):
 
     subtotal: float
 
-    cgst_percent: float
-    cgst_amount: float
+    tax_type: str
 
-    sgst_percent: float
-    sgst_amount: float
+    @field_validator("tax_type", mode="before")
+    @classmethod
+    def validate_tax_type(cls, v):
+        if v and str(v).strip():
+            return str(v).strip().upper()
+        return "VAT"
+    cgst_percent: float = 0.0
+    cgst_amount: float = 0.0
 
-    service_charge_percent: float
-    service_charge_amount: float
+    sgst_percent: float = 0.0
+    sgst_amount: float = 0.0
 
-    tax_total: float
+    vat_percent: float = 0.0
+    vat_amount: float = 0.0
+
+    service_charge_percent: float = 0.0
+    service_charge_amount: float = 0.0
+
+    tax_total: float = 0.0
 
     discount_amount: float
     round_off_amount: float

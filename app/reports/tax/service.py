@@ -70,6 +70,7 @@ class TaxReportService:
             func.coalesce(func.sum(Bill.subtotal), 0).label("taxable_amount"),
             func.coalesce(func.sum(Bill.cgst_amount), 0).label("cgst_amount"),
             func.coalesce(func.sum(Bill.sgst_amount), 0).label("sgst_amount"),
+            func.coalesce(func.sum(getattr(Bill, "vat_amount", 0)), 0).label("vat_amount"),
             func.coalesce(func.sum(Bill.service_charge_amount), 0).label("service_charge_amount"),
             func.coalesce(func.sum(Bill.tax_total + Bill.service_charge_amount), 0).label("total_tax_collected"),
         ).where(*conditions)
@@ -82,6 +83,7 @@ class TaxReportService:
             "taxable_amount": round(safe_float(s_row.taxable_amount), 2),
             "cgst_amount": round(safe_float(s_row.cgst_amount), 2),
             "sgst_amount": round(safe_float(s_row.sgst_amount), 2),
+            "vat_amount": round(safe_float(getattr(s_row, "vat_amount", 0)), 2),
             "service_charge_amount": round(safe_float(s_row.service_charge_amount), 2),
             "total_tax_collected": round(safe_float(s_row.total_tax_collected), 2),
             "total_tax": round(safe_float(s_row.total_tax_collected), 2),
@@ -138,6 +140,7 @@ class TaxReportService:
         for idx, b in enumerate(bills, start=offset + 1):
             b_name = b.branch.name if b.branch else f"Branch #{b.branch_id}"
             inv_date = b.created_at.strftime("%d-%m-%Y %H:%M") if b.created_at else "—"
+            b_tax_type = str(getattr(b, "tax_type", None) or (b.branch.tax_type if b.branch else "GST") or "GST").upper()
 
             rows.append(
                 {
@@ -148,10 +151,13 @@ class TaxReportService:
                     "invoice_no": b.invoice_no,
                     "invoice_date": inv_date,
                     "subtotal": round(safe_float(b.subtotal), 2),
+                    "tax_type": b_tax_type,
                     "cgst_percent": round(safe_float(b.cgst_percent), 2),
                     "cgst_amount": round(safe_float(b.cgst_amount), 2),
                     "sgst_percent": round(safe_float(b.sgst_percent), 2),
                     "sgst_amount": round(safe_float(b.sgst_amount), 2),
+                    "vat_percent": round(safe_float(getattr(b, "vat_percent", 0)), 2),
+                    "vat_amount": round(safe_float(getattr(b, "vat_amount", 0)), 2),
                     "service_charge_percent": round(safe_float(b.service_charge_percent), 2),
                     "service_charge_amount": round(safe_float(b.service_charge_amount), 2),
                     "total_tax_collected": round(safe_float(b.tax_total + b.service_charge_amount), 2),

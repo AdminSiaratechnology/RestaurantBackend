@@ -64,6 +64,8 @@ class BranchCreate(BaseModel):
         le=6,
     )
 
+    tax_type: str | None = None
+
     status: statusEnum = statusEnum.ACTIVE
 
     client_id: int
@@ -218,6 +220,8 @@ class BranchUpdate(BaseModel):
         ge=0,
         le=6,
     )
+
+    tax_type: str | None = None
 
     brand_id: int | None = None
 

@@ -1,7 +1,3 @@
-# =========================================================
-# app/accounts/pricing/schema.py
-# =========================================================
-
 from datetime import datetime
 
 from pydantic import (
@@ -12,10 +8,6 @@ from pydantic import (
     field_validator,
 )
 
-
-# =========================================================
-# BASE
-# =========================================================
 
 class PricingBase(BaseModel):
 
@@ -33,47 +25,37 @@ class PricingBase(BaseModel):
     discount: float = Field(
         default=0,
         ge=0,
+        le=100,
     )
+
+    # TOTAL TAX RATE
+    #
+    # GST:
+    #   tax=18 -> CGST=9 + SGST=9
+    #
+    # VAT:
+    #   tax=15 -> VAT=15
 
     tax: float = Field(
         default=0,
         ge=0,
+        le=100,
     )
 
     calories: int | None = None
 
     is_active: bool = True
 
-    @field_validator("tax")
-    @classmethod
-    def validate_tax(
-        cls,
-        value: float,
-    ) -> float:
 
-        if value > 100:
-
-            raise ValueError(
-                "Tax rate cannot exceed 100%"
-            )
-
-        return value
-
-
-# =========================================================
-# CREATE
-# =========================================================
-
-class PricingCreate(PricingBase):
-
+class PricingCreate(
+    PricingBase
+):
     branch_id: int
 
 
-# =========================================================
-# UPDATE
-# =========================================================
-
-class PricingUpdate(BaseModel):
+class PricingUpdate(
+    BaseModel
+):
 
     price: float | None = Field(
         default=None,
@@ -88,41 +70,23 @@ class PricingUpdate(BaseModel):
     discount: float | None = Field(
         default=None,
         ge=0,
+        le=100,
     )
 
     tax: float | None = Field(
         default=None,
         ge=0,
+        le=100,
     )
 
     calories: int | None = None
 
     is_active: bool | None = None
 
-    @field_validator("tax")
-    @classmethod
-    def validate_tax(
-        cls,
-        value: float | None,
-    ) -> float | None:
 
-        if value is None:
-            return None
-
-        if value > 100:
-
-            raise ValueError(
-                "Tax rate cannot exceed 100%"
-            )
-
-        return value
-
-
-# =========================================================
-# OUTPUT
-# =========================================================
-
-class PricingOut(BaseModel):
+class PricingOut(
+    BaseModel
+):
 
     id: int
 
@@ -132,69 +96,79 @@ class PricingOut(BaseModel):
 
     item_id: int
 
-    # =====================================================
-    # PRICE
-    # =====================================================
-
     price: float
 
-    cost_price: float | None = 0.0
+    cost_price: float = 0.0
 
-    discount: float | None = 0.0
-
-    # =====================================================
-    # TAX
-    # =====================================================
+    discount: float = 0.0
 
     tax: float = 0.0
 
-    tax_type: str
+    tax_type: str = "GST"
+
+    @field_validator(
+        "tax_type",
+        mode="before",
+    )
+    @classmethod
+    def validate_tax_type(
+        cls,
+        value,
+    ):
+        if value is None:
+            return "GST"
+
+        value = str(value).strip().upper()
+
+        if value not in {
+            "GST",
+            "VAT",
+        }:
+            return "GST"
+
+        return value
 
     cgst_rate: float = 0.0
 
     sgst_rate: float = 0.0
 
-    # =====================================================
-    # EXTRA
-    # =====================================================
-
     calories: int | None = None
 
-    is_active: bool | None = True
+    is_active: bool = True
 
     created_at: datetime
 
     # =====================================================
-    # CALCULATIONS
+    # DISCOUNTED PRICE
     # =====================================================
 
     @computed_field
     @property
-    def discounted_price(self) -> float:
-
-        base = self.price or 0.0
-
-        discount = self.discount or 0.0
-
-        discounted = base - (
-            base * discount / 100
-        )
+    def discounted_price(
+        self,
+    ) -> float:
 
         return round(
-            discounted,
+            self.price
+            - (
+                self.price
+                * self.discount
+                / 100
+            ),
             2,
         )
 
     # =====================================================
-    # GST AMOUNT
+    # CGST
     # =====================================================
 
     @computed_field
     @property
-    def cgst_amount(self) -> float:
+    def cgst_amount(
+        self,
+    ) -> float:
 
         if self.tax_type != "GST":
-
             return 0.0
 
         return round(
@@ -204,12 +178,17 @@ class PricingOut(BaseModel):
             2,
         )
 
+    # =====================================================
+    # SGST
+    # =====================================================
+
     @computed_field
     @property
-    def sgst_amount(self) -> float:
+    def sgst_amount(
+        self,
+    ) -> float:
 
         if self.tax_type != "GST":
-
             return 0.0
 
         return round(
@@ -220,15 +199,34 @@ class PricingOut(BaseModel):
         )
 
     # =====================================================
+    # VAT RATE
+    # =====================================================
+
+    @computed_field
+    @property
+    def vat_rate(
+        self,
+    ) -> float:
+
+        if self.tax_type != "VAT":
+            return 0.0
+
+        return round(
+            self.tax,
+            2,
+        )
+
+    # =====================================================
     # VAT AMOUNT
     # =====================================================
 
     @computed_field
     @property
-    def vat_amount(self) -> float:
+    def vat_amount(
+        self,
+    ) -> float:
 
         if self.tax_type != "VAT":
-
             return 0.0
 
         return round(
@@ -244,7 +242,9 @@ class PricingOut(BaseModel):
 
     @computed_field
     @property
-    def total_tax_amount(self) -> float:
+    def total_tax_amount(
+        self,
+    ) -> float:
 
         if self.tax_type == "GST":
 
@@ -265,7 +265,9 @@ class PricingOut(BaseModel):
 
     @computed_field
     @property
-    def total_price(self) -> float:
+    def total_price(
+        self,
+    ) -> float:
 
         return round(
             self.discounted_price
@@ -278,11 +280,9 @@ class PricingOut(BaseModel):
     )
 
 
-# =========================================================
-# TAX HISTORY
-# =========================================================
-
-class TaxHistoryOut(BaseModel):
+class TaxHistoryOut(
+    BaseModel
+):
 
     id: int
 

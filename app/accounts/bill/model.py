@@ -118,6 +118,11 @@ class Bill(Base):
         nullable=False,
     )
 
+    tax_type = Column(
+        String(20),
+        nullable=False,
+    )
+
     cgst_percent = Column(
         Float,
         default=0.0,
@@ -137,6 +142,18 @@ class Bill(Base):
     )
 
     sgst_amount = Column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )
+
+    vat_percent = Column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )
+
+    vat_amount = Column(
         Float,
         default=0.0,
         nullable=False,

@@ -24,7 +24,9 @@ from app.db.base import Base
 # ============================================================
 
 class statusEnum(str, enum.Enum):
+
     ACTIVE = "active"
+
     INACTIVE = "inactive"
 
 
@@ -33,13 +35,16 @@ class statusEnum(str, enum.Enum):
 # ============================================================
 
 class Branch(Base):
+
     __tablename__ = "branches"
+
 
     id = Column(
         Integer,
         primary_key=True,
         index=True,
     )
+
 
     # ========================================================
     # BASIC DETAILS
@@ -60,6 +65,7 @@ class Branch(Base):
         nullable=False,
     )
 
+
     # ========================================================
     # LOCATION
     # ========================================================
@@ -67,23 +73,18 @@ class Branch(Base):
     country = Column(
         String(100),
         nullable=False,
-        default="India",
-        server_default="India",
     )
 
     state = Column(
         String(100),
         nullable=False,
-        default="Delhi",
-        server_default="Delhi",
     )
 
     pincode = Column(
         String(20),
         nullable=False,
-        default="110001",
-        server_default="110001",
     )
+
 
     # ========================================================
     # CURRENCY
@@ -92,32 +93,29 @@ class Branch(Base):
     currency = Column(
         String(3),
         nullable=False,
-        default="INR",
-        server_default="INR",
     )
 
     decimal_places = Column(
         Integer,
         nullable=False,
         default=2,
-        server_default="2",
     )
+
 
     # ========================================================
     # TAX TYPE
     #
-    # India -> GST
-    # Other countries -> VAT
+    # Automatically derived from country
     #
-    # Automatically controlled by backend
+    # India       -> GST
+    # Other       -> VAT
     # ========================================================
 
     tax_type = Column(
         String(20),
         nullable=False,
-        default="GST",
-        server_default="GST",
     )
+
 
     # ========================================================
     # STATUS
@@ -138,6 +136,7 @@ class Branch(Base):
         server_default="active",
     )
 
+
     # ========================================================
     # CLIENT
     # ========================================================
@@ -148,6 +147,7 @@ class Branch(Base):
         nullable=False,
         index=True,
     )
+
 
     # ========================================================
     # BRAND
@@ -160,6 +160,7 @@ class Branch(Base):
         index=True,
     )
 
+
     # ========================================================
     # BRANCH CODE
     # ========================================================
@@ -171,6 +172,7 @@ class Branch(Base):
         index=True,
     )
 
+
     # ========================================================
     # CREATED AT
     # ========================================================
@@ -180,6 +182,7 @@ class Branch(Base):
         server_default=func.now(),
         nullable=False,
     )
+
 
     # ========================================================
     # RELATIONSHIPS
