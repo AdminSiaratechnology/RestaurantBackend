@@ -59,6 +59,10 @@ from app.accounts.crm.customer_notes.router import router as customer_notes_rout
 from app.accounts.purchase.router import router as purchase_router
 from app.accounts.rep_purchase.router import router as rep_purchase_router
 from app.reports.router import router as reports_router
+from app.accounts.online_order.router import router as online_order_router
+from app.accounts.online_platforms.rauter import router as online_platforms_router
+from app.accounts.online_item_mappings.router import router as online_item_mappings_router
+from app.accounts.webhooks.router import router as webhooks_router
 
 
 
@@ -205,3 +209,7 @@ app.include_router(customer_notes_router)
 app.include_router(purchase_router)
 app.include_router(rep_purchase_router)
 app.include_router(reports_router)
+app.include_router(online_order_router)
+app.include_router(online_platforms_router)
+app.include_router(online_item_mappings_router)
+app.include_router(webhooks_router)

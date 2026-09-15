@@ -1,3 +1,4 @@
+from app.accounts.payment.enum import PaymentMethod
 from fastapi import HTTPException
 
 from sqlalchemy import select
@@ -223,6 +224,9 @@ async def apply_offer_service(
 async def make_payment_service(
     db,
     data: PaymentCreate,
+    *,
+    razorpay_verified: bool = False,
+    wallet_discount_override: float | None = None,
 ):
 
     # ========================================================
@@ -246,12 +250,20 @@ async def make_payment_service(
     for item in data.payments:
 
         if item.payment_amount <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Payment amount must be greater than zero",
+            )
 
+        if (
+            (item.payment_method == PaymentMethod.razorpay or item.payment_method == "razorpay")
+            and not razorpay_verified
+        ):
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Payment amount must be "
-                    "greater than zero"
+                    "Razorpay payments must be completed "
+                    "through Razorpay verification."
                 ),
             )
 
@@ -368,11 +380,20 @@ async def make_payment_service(
         "wallet_discount": 0.0,
     }
 
-    # ========================================================
-    # ONLY CALCULATE WALLET WHEN USER SELECTED IT
-    # ========================================================
+    if wallet_discount_override is not None:
 
-    if data.use_wallet is True:
+        wallet_discount = round(
+            float(wallet_discount_override or 0.0),
+            2,
+        )
+
+        if wallet_discount < 0:
+            wallet_discount = 0.0
+
+        if wallet_discount > amount_after_offer:
+            wallet_discount = amount_after_offer
+
+    elif data.use_wallet is True:
 
         # ----------------------------------------------------
         # CUSTOMER REQUIRED
@@ -583,7 +604,7 @@ async def make_payment_service(
         # ====================================================
 
         if (
-            data.use_wallet is True
+            (data.use_wallet is True or wallet_discount_override is not None)
             and wallet_discount > 0
         ):
 

@@ -573,6 +573,7 @@ async def get_customers_service(
     customers = result.scalars().all()
 
     from app.accounts.crm.loyalty.model import CustomerLoyaltyAccount
+    from app.accounts.crm.wallet.model import CustomerWalletAccount
     for customer in customers:
         # Centralized classification consistency
         expected_type = determine_customer_type(
@@ -592,6 +593,14 @@ async def get_customers_service(
         points_bal = loyalty_res.scalar_one_or_none()
         if points_bal is not None:
             customer.loyalty_points = float(points_bal)
+
+        wallet_res = await db.execute(
+            select(CustomerWalletAccount.balance)
+            .where(CustomerWalletAccount.customer_id == customer.id)
+        )
+        w_bal = wallet_res.scalar_one_or_none()
+        if w_bal is not None:
+            customer.wallet_balance = float(w_bal)
 
     return customers
 
@@ -1164,6 +1173,27 @@ async def recalculate_customer_crm(
 
         customer.loyalty_points = float(
             loyalty_acc.current_points_balance
+            or 0.0
+        )
+
+    # =====================================================
+    # WALLET BALANCE
+    # =====================================================
+
+    from app.accounts.crm.wallet.model import CustomerWalletAccount
+    wallet_stmt = (
+        select(CustomerWalletAccount)
+        .where(
+            CustomerWalletAccount.customer_id
+            == customer.id
+        )
+    )
+    wallet_res = await db.execute(wallet_stmt)
+    wallet_acc = wallet_res.scalar_one_or_none()
+
+    if wallet_acc:
+        customer.wallet_balance = float(
+            wallet_acc.balance
             or 0.0
         )
 

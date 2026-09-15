@@ -293,6 +293,13 @@ class Bill(Base):
 
     offer = relationship(
         "Offer",
+        foreign_keys="[Bill.offer_id]",
+        lazy="selectin",
+    )
+
+    razorpay_offer = relationship(
+        "Offer",
+        foreign_keys="[Bill.razorpay_offer_id]",
         lazy="selectin",
     )
 
@@ -306,4 +313,50 @@ class Bill(Base):
         Float,
         default=0.0,
         nullable=False,
+    )
+
+
+# =====================================================
+# RAZORPAY
+# =====================================================
+
+    razorpay_order_id = Column(
+        String(100),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
+    razorpay_order_amount = Column(
+        Float,
+        nullable=True,
+    )
+
+    razorpay_offer_id = Column(
+        Integer,
+        ForeignKey("offers.id"),
+        nullable=True,
+    )
+
+    razorpay_wallet_discount = Column(
+        Float,
+        default=0.0,
+        nullable=False,
+    )
+
+    razorpay_payment_id = Column(
+        String(100),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
+    razorpay_signature = Column(
+        String(255),
+        nullable=True,
+    )
+
+    payment_verified_at = Column(
+        DateTime,
+        nullable=True,
     )

@@ -94,10 +94,6 @@ class Client(Base):
         back_populates="client"
     )
 
-    # client = relationship(
-    #     "Client",
-    #     back_populates="crm_rank_rules"
-    # )
 
     crm_rank_rules = relationship(
         "CRMBranchRankRule",

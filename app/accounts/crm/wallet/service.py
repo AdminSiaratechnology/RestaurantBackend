@@ -596,6 +596,10 @@ async def convert_loyalty_points_to_wallet(
 
         wallet.balance = wallet_balance_after
 
+        # Keep customer's cached wallet balance in sync.
+        if hasattr(customer, "wallet_balance"):
+            customer.wallet_balance = wallet_balance_after
+
         # ====================================================
         # 11. LOYALTY TRANSACTION
         # ====================================================

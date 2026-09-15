@@ -12,3 +12,5 @@ class PaymentMethod(str, Enum):
     credit = "credit"
 
     split = "split"
+
+    razorpay = "razorpay"

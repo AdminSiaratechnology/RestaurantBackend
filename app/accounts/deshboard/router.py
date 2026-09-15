@@ -931,6 +931,7 @@ async def new_clients_card(
 async def get_client_overview(
     db: SessionDep,
     client_id: int,
+    branch_id: int | None = None,
     scope: str = "all_branches",
     filter_type: str = "weekly",
     current=Depends(access_four)
@@ -944,52 +945,54 @@ async def get_client_overview(
         today_start = datetime(today.year, today.month, today.day)
 
         # 1. Total Sales & Today Sales
+        sales_where = [Order.client_id == client_id, Order.status == "served"]
+        if branch_id:
+            sales_where.append(Order.branch_id == branch_id)
         sales_result = await db.execute(
             select(func.coalesce(func.sum(Order.total_amount), 0))
-            .where(
-                Order.client_id == client_id,
-                Order.status == "served"
-            )
+            .where(*sales_where)
         )
         total_sales = float(sales_result.scalar() or 0)
 
+        today_sales_where = [Order.client_id == client_id, Order.status == "served", Order.created_at >= today_start]
+        if branch_id:
+            today_sales_where.append(Order.branch_id == branch_id)
         today_sales_result = await db.execute(
             select(func.coalesce(func.sum(Order.total_amount), 0))
-            .where(
-                Order.client_id == client_id,
-                Order.status == "served",
-                Order.created_at >= today_start
-            )
+            .where(*today_sales_where)
         )
         today_sales = float(today_sales_result.scalar() or 0)
 
         # 2. Orders Count & Today Orders
+        orders_where = [Order.client_id == client_id]
+        if branch_id:
+            orders_where.append(Order.branch_id == branch_id)
         orders_result = await db.execute(
             select(func.count(Order.id))
-            .where(Order.client_id == client_id)
+            .where(*orders_where)
         )
         orders_count = orders_result.scalar() or 0
 
+        today_orders_where = [Order.client_id == client_id, Order.created_at >= today_start]
+        if branch_id:
+            today_orders_where.append(Order.branch_id == branch_id)
         today_orders_result = await db.execute(
             select(func.count(Order.id))
-            .where(
-                Order.client_id == client_id,
-                Order.created_at >= today_start
-            )
+            .where(*today_orders_where)
         )
         today_orders = today_orders_result.scalar() or 0
 
         # 3. Gross Profit & Today Gross Profit
         try:
+            food_cost_where = [Order.client_id == client_id, Order.status == "served"]
+            if branch_id:
+                food_cost_where.append(Order.branch_id == branch_id)
             food_cost_result = await db.execute(
                 select(func.coalesce(func.sum(OrderItem.quantity * Pricing.cost_price), 0))
                 .join(Order, Order.id == OrderItem.order_id)
                 .join(Item, Item.id == OrderItem.item_id)
                 .join(Pricing, Pricing.item_id == Item.id)
-                .where(
-                    Order.client_id == client_id,
-                    Order.status == "served"
-                )
+                .where(*food_cost_where)
             )
             food_cost = float(food_cost_result.scalar() or 0)
         except Exception:
@@ -1001,16 +1004,15 @@ async def get_client_overview(
             gross_profit = max(0.0, round(total_sales - food_cost, 2))
 
         try:
+            today_food_cost_where = [Order.client_id == client_id, Order.status == "served", Order.created_at >= today_start]
+            if branch_id:
+                today_food_cost_where.append(Order.branch_id == branch_id)
             today_food_cost_result = await db.execute(
                 select(func.coalesce(func.sum(OrderItem.quantity * Pricing.cost_price), 0))
                 .join(Order, Order.id == OrderItem.order_id)
                 .join(Item, Item.id == OrderItem.item_id)
                 .join(Pricing, Pricing.item_id == Item.id)
-                .where(
-                    Order.client_id == client_id,
-                    Order.status == "served",
-                    Order.created_at >= today_start
-                )
+                .where(*today_food_cost_where)
             )
             today_food_cost = float(today_food_cost_result.scalar() or 0)
         except Exception:
@@ -1022,34 +1024,40 @@ async def get_client_overview(
             today_gross_profit = max(0.0, round(today_sales - today_food_cost, 2))
 
         # 4. Active Customers & Today Active Customers
+        cust_where = [Customer.client_id == client_id]
+        if branch_id:
+            cust_where.append(Customer.branch_id == branch_id)
         customers_result = await db.execute(
             select(func.count(Customer.id))
-            .where(Customer.client_id == client_id)
+            .where(*cust_where)
         )
         active_customers = customers_result.scalar() or 0
 
+        today_cust_where = [Customer.client_id == client_id, Customer.created_at >= today_start]
+        if branch_id:
+            today_cust_where.append(Customer.branch_id == branch_id)
         today_customers_result = await db.execute(
             select(func.count(Customer.id))
-            .where(
-                Customer.client_id == client_id,
-                Customer.created_at >= today_start
-            )
+            .where(*today_cust_where)
         )
         today_active_customers = today_customers_result.scalar() or 0
 
         # 5. Sales Trend
         days_count = 30 if filter_type == "monthly" else 7
         start_date = today - timedelta(days=days_count - 1)
+        trend_where = [
+            Order.client_id == client_id,
+            Order.status == "served",
+            Order.created_at >= datetime.combine(start_date, datetime.min.time())
+        ]
+        if branch_id:
+            trend_where.append(Order.branch_id == branch_id)
         trend_result = await db.execute(
             select(
                 func.date(Order.created_at).label("day"),
                 func.coalesce(func.sum(Order.total_amount), 0).label("revenue")
             )
-            .where(
-                Order.client_id == client_id,
-                Order.status == "served",
-                Order.created_at >= datetime.combine(start_date, datetime.min.time())
-            )
+            .where(*trend_where)
             .group_by(func.date(Order.created_at))
             .order_by(func.date(Order.created_at))
         )
@@ -1065,6 +1073,9 @@ async def get_client_overview(
             })
 
         # 6. Top Selling Menu Items
+        top_where = [Order.client_id == client_id, Order.status == "served"]
+        if branch_id:
+            top_where.append(Order.branch_id == branch_id)
         top_result = await db.execute(
             select(
                 Item.name,
@@ -1073,10 +1084,7 @@ async def get_client_overview(
             )
             .join(OrderItem, OrderItem.item_id == Item.id)
             .join(Order, Order.id == OrderItem.order_id)
-            .where(
-                Order.client_id == client_id,
-                Order.status == "served"
-            )
+            .where(*top_where)
             .group_by(Item.name)
             .order_by(desc("total_revenue"))
             .limit(5)
@@ -1093,11 +1101,14 @@ async def get_client_overview(
             })
 
         # 7. Recent Orders
+        recent_where = [Order.client_id == client_id]
+        if branch_id:
+            recent_where.append(Order.branch_id == branch_id)
         recent_result = await db.execute(
             select(Order, Branch.name.label("branch_name"), Table.name.label("table_name"))
             .join(Branch, Order.branch_id == Branch.id)
             .outerjoin(Table, Order.table_id == Table.id)
-            .where(Order.client_id == client_id)
+            .where(*recent_where)
             .order_by(desc(Order.created_at))
             .limit(5)
         )
@@ -1116,9 +1127,12 @@ async def get_client_overview(
             })
 
         # 8. Kitchen Status
+        status_where = [Order.client_id == client_id]
+        if branch_id:
+            status_where.append(Order.branch_id == branch_id)
         status_result = await db.execute(
             select(Order.status, func.count(Order.id))
-            .where(Order.client_id == client_id)
+            .where(*status_where)
             .group_by(Order.status)
         )
         status_counts = {status: count for status, count in status_result.all()}
@@ -1133,13 +1147,16 @@ async def get_client_overview(
 
         # 9. Inventory Alerts
         try:
+            inv_where = [
+                Branch.client_id == client_id,
+                InventoryItem.stock_qty <= InventoryItem.reorder_level
+            ]
+            if branch_id:
+                inv_where.append(InventoryItem.branch_id == branch_id)
             inv_result = await db.execute(
                 select(InventoryItem, Branch.name.label("branch_name"))
                 .join(Branch, InventoryItem.branch_id == Branch.id)
-                .where(
-                    Branch.client_id == client_id,
-                    InventoryItem.stock_qty <= InventoryItem.reorder_level
-                )
+                .where(*inv_where)
                 .limit(5)
             )
             inv_rows = inv_result.all()
@@ -1155,9 +1172,12 @@ async def get_client_overview(
             inventory_alerts = []
 
         # 10. Staff Overview
+        staff_where = [Staff.client_id == client_id]
+        if branch_id:
+            staff_where.append(Staff.branch_id == branch_id)
         staff_result = await db.execute(
             select(Staff.is_active, func.count(Staff.id))
-            .where(Staff.client_id == client_id)
+            .where(*staff_where)
             .group_by(Staff.is_active)
         )
         staff_counts = {is_active: count for is_active, count in staff_result.all()}

@@ -4,7 +4,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from app.accounts.auth.model import authenticate_user
 from app.accounts.auth.schemas import LoginRequest, ChangePasswordRequest
-from app.accounts.auth.utils import verify_password, hash_password
+from app.accounts.auth.utils import verify_password, hash_password, create_access_token, create_refresh_token
 from app.db.config import SessionDep
 from app.accounts.enum import UserRole
 from app.accounts.superadmin.model import SuperAdmin
@@ -12,6 +12,14 @@ from app.accounts.partner.model import Partner
 from app.accounts.client.model import Client
 from app.accounts.staff.model import Staff
 from app.core.settings import settings
+from app.accounts.auth.schemas import (
+    LoginRequest,
+    ChangePasswordRequest,
+    RefreshTokenRequest
+)
+from uuid import uuid4
+
+
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 security = HTTPBearer()
@@ -139,3 +147,61 @@ async def logout(credentials: HTTPAuthorizationCredentials = Depends(security)):
         await Cache.set(f"blacklist:{token}", "true", expire=expire)
 
     return {"message": "Successfully logged out"}
+
+
+
+
+@router.post("/refresh")
+async def refresh_access_token(
+    data: RefreshTokenRequest,
+    db: SessionDep,
+):
+    refresh_token = data.refresh_token
+
+    try:
+        payload = jwt.decode(
+            refresh_token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
+    except JWTError:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid refresh token"
+        )
+
+    # Make sure this is actually a refresh token
+    if payload.get("type") != "refresh":
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid token type"
+        )
+
+    user_id = payload.get("user_id")
+    role = payload.get("role")
+
+    if not user_id or not role:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid refresh token"
+        )
+
+    # Verify user still exists
+    user = await find_user_by_id_and_role(
+        int(user_id),
+        role,
+        db
+    )
+
+    # Create new access token
+    new_access_token = create_access_token({
+        "user_id": user.id,
+        "role": role,
+        "jti": str(uuid4())
+    })
+
+    return {
+        "access_token": new_access_token,
+        "token_type": "bearer",
+        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+    }
