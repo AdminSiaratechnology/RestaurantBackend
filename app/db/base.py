@@ -41,6 +41,11 @@ try:
     from app.accounts.crm.loyalty.conversion_rule.model import LoyaltyConversionRule
     from app.accounts.crm.loyalty.wallet_discount_rule.model import WalletDiscountRule
     from app.accounts.crm.customer_notes.model import CustomerNote
+    from app.accounts.online_order.model import OnlineOrderDetail
+    from app.accounts.online_platforms.model import OnlinePlatformConnection
+    from app.accounts.online_item_mappings.model import OnlinePlatformItemMapping
+    from app.accounts.webhooks.model import WebhookEvent
+
 except ImportError:
     pass
 
@@ -58,4 +63,4 @@ try:
     )
 except ImportError:
     pass
-
+

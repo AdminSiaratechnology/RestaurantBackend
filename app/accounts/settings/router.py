@@ -5,6 +5,7 @@ FastAPI REST Router for System & Restaurant Settings.
 """
 
 from typing import Optional, Dict, Any
+from app.accounts.tax.model import TaxBillingSetting
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select

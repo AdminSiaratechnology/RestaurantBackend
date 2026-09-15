@@ -1,10 +1,16 @@
+from app.core.settings import settings
 from fastapi import HTTPException
 from sqlalchemy import select
 from app.accounts.superadmin.model import SuperAdmin
 from app.accounts.partner.model import Partner
 from app.accounts.client.model import Client
 from app.accounts.staff.model import Staff
-from app.accounts.auth.utils import verify_password, create_access_token
+# from app.accounts.auth.utils import create_refresh_token, verify_password, create_access_token
+from app.accounts.auth.utils import (
+    verify_password,
+    create_access_token,
+    create_refresh_token
+)
 from app.accounts.enum import UserRole
 from app.core.cache import Cache
 from app.core.redis import redis_client
@@ -81,6 +87,7 @@ async def authenticate_user(data, db, request, response, allowed_roles: list):
     }
 
     access_token = create_access_token(token_data)
+    refresh_token = create_refresh_token(token_data)
 
     user_payload = {
         "id": user.id,
@@ -121,6 +128,9 @@ async def authenticate_user(data, db, request, response, allowed_roles: list):
 
     return {
         "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         "role": role.value,
         "user": user_payload
     }

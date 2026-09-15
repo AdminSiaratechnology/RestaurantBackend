@@ -253,3 +253,9 @@ class Branch(Base):
         back_populates="branch",
         cascade="all, delete-orphan",
     )
+
+    online_platform_connections = relationship(
+        "OnlinePlatformConnection",
+        back_populates="branch",
+        cascade="all, delete-orphan",
+    )

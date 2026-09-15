@@ -33,7 +33,11 @@ router = APIRouter(
     prefix="/payment",
     tags=["Payment"],
 )
+from app.accounts.payment.razorpay_router import (
+    router as razorpay_payment_router,
+)
 
+router.include_router(razorpay_payment_router)
 
 # ============================================================
 # MAKE PAYMENT

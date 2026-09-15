@@ -64,3 +64,9 @@ class Item(Base):
         back_populates="item",
         cascade="all, delete-orphan"
     )
+
+    online_platform_mappings = relationship(
+        "OnlinePlatformItemMapping",
+        back_populates="item",
+        cascade="all, delete-orphan",
+    )
