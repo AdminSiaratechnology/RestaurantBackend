@@ -265,6 +265,19 @@ class TableService:
     ):
         table.status = status
 
+        status_val = status.value if hasattr(status, "value") else str(status)
+        if status_val == "available":
+            from app.accounts.table_qr.model import RestaurantSession, SessionStatus
+            from sqlalchemy import update
+            await db.execute(
+                update(RestaurantSession)
+                .where(
+                    RestaurantSession.table_id == table.id,
+                    RestaurantSession.status == SessionStatus.ACTIVE.value,
+                )
+                .values(status=SessionStatus.COMPLETED.value)
+            )
+
         await db.commit()
         await db.refresh(table)
         

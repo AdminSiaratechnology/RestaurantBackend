@@ -63,7 +63,9 @@ from app.accounts.online_order.router import router as online_order_router
 from app.accounts.online_platforms.rauter import router as online_platforms_router
 from app.accounts.online_item_mappings.router import router as online_item_mappings_router
 from app.accounts.webhooks.router import router as webhooks_router
-
+from app.accounts.table_qr.router import router as table_qr_router
+from app.accounts.table_qr.public_router import public_router as public_qr_router
+from app.accounts.notification.router import notification_router, public_notification_router
 
 
 app = FastAPI()
@@ -213,3 +215,7 @@ app.include_router(online_order_router)
 app.include_router(online_platforms_router)
 app.include_router(online_item_mappings_router)
 app.include_router(webhooks_router)
+app.include_router(table_qr_router)
+app.include_router(public_qr_router)
+app.include_router(notification_router)
+app.include_router(public_notification_router)

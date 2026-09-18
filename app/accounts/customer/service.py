@@ -277,6 +277,7 @@ async def create_customer_service(
 async def find_existing_customer(
     db,
     *,
+    client_id: Optional[int] = None,
     name: Optional[str] = None,
     phone: Optional[str] = None,
     email: Optional[str] = None,
@@ -326,38 +327,65 @@ async def find_existing_customer(
         return None
 
     # ---------------------------------------------------------
-    # NAME + PHONE
+    # NAME + PHONE / UNIQUE PHONE PER CLIENT
     # ---------------------------------------------------------
 
     if phone:
-        result = await db.execute(
-            select(Customer).where(
-                Customer.name == name,
-                Customer.phone == phone,
-            )
+        # First check exact match: name + phone
+        stmt = select(Customer).where(
+            Customer.name == name,
+            Customer.phone == phone,
         )
+        if client_id is not None:
+            stmt = stmt.where(Customer.client_id == client_id)
 
+        result = await db.execute(stmt)
         customer = result.scalar_one_or_none()
 
         if customer:
             return customer
 
+        # Since (phone, client_id) is unique in DB, check by phone directly
+        # to prevent unique constraint conflicts on slight name variations
+        stmt_phone = select(Customer).where(Customer.phone == phone)
+        if client_id is not None:
+            stmt_phone = stmt_phone.where(Customer.client_id == client_id)
+
+        res_phone = await db.execute(stmt_phone)
+        customer_by_phone = res_phone.scalar_one_or_none()
+        if customer_by_phone:
+            if not customer_by_phone.name or customer_by_phone.name.lower() in guest_names:
+                customer_by_phone.name = name
+            return customer_by_phone
+
     # ---------------------------------------------------------
-    # NAME + EMAIL
+    # NAME + EMAIL / UNIQUE EMAIL PER CLIENT
     # ---------------------------------------------------------
 
     if email:
-        result = await db.execute(
-            select(Customer).where(
-                Customer.name == name,
-                Customer.email == email,
-            )
+        stmt = select(Customer).where(
+            Customer.name == name,
+            Customer.email == email,
         )
+        if client_id is not None:
+            stmt = stmt.where(Customer.client_id == client_id)
 
+        result = await db.execute(stmt)
         customer = result.scalar_one_or_none()
 
         if customer:
             return customer
+
+        stmt_email = select(Customer).where(Customer.email == email)
+        if client_id is not None:
+            stmt_email = stmt_email.where(Customer.client_id == client_id)
+
+        res_email = await db.execute(stmt_email)
+        customer_by_email = res_email.scalar_one_or_none()
+        if customer_by_email:
+            if not customer_by_email.name or customer_by_email.name.lower() in guest_names:
+                customer_by_email.name = name
+            return customer_by_email
 
     return None
 
@@ -485,8 +513,26 @@ async def find_or_create_customer(
     except IntegrityError:
         await db.rollback()
 
-        # Try finding again in case another request
-        # created the customer concurrently.
+        # Try finding again in case another request created the customer concurrently
+        # or unique constraint (phone, client_id) was triggered
+        if phone:
+            stmt = select(Customer).where(Customer.phone == phone)
+            if client_id is not None:
+                stmt = stmt.where(Customer.client_id == client_id)
+            res = await db.execute(stmt)
+            existing_c = res.scalar_one_or_none()
+            if existing_c:
+                return existing_c, False
+
+        if email:
+            stmt = select(Customer).where(Customer.email == email)
+            if client_id is not None:
+                stmt = stmt.where(Customer.client_id == client_id)
+            res = await db.execute(stmt)
+            existing_c = res.scalar_one_or_none()
+            if existing_c:
+                return existing_c, False
+
         customer = await find_existing_customer(
             db=db,
             client_id=client_id,

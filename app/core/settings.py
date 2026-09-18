@@ -179,6 +179,11 @@ class Settings:
         "development",
     )
 
+    PUBLIC_APP_URL: str = os.getenv(
+        "PUBLIC_APP_URL",
+        "http://localhost:5173",
+    )
+
     DEBUG: bool = (
         os.getenv(
             "DEBUG",

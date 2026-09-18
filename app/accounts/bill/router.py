@@ -1986,6 +1986,19 @@ async def update_bill_status(
         if table:
             if data.payment_status == PaymentStatus.complete:
                 table.status = TableStatus.available
+                from app.accounts.table_qr.model import RestaurantSession, SessionStatus
+                if order and order.restaurant_session_id:
+                    sess = await db.get(RestaurantSession, order.restaurant_session_id)
+                    if sess:
+                        sess.status = SessionStatus.COMPLETED.value
+                await db.execute(
+                    update(RestaurantSession)
+                    .where(
+                        RestaurantSession.table_id == table.id,
+                        RestaurantSession.status == SessionStatus.ACTIVE.value,
+                    )
+                    .values(status=SessionStatus.COMPLETED.value)
+                )
             elif data.payment_status in [
                 PaymentStatus.pending,
                 PaymentStatus.edited,
@@ -2086,6 +2099,12 @@ async def update_bill_status(
             )
         except Exception as err:
             print("[CRM Event Publisher Error]:", err)
+
+        try:
+            from app.accounts.notification.service import NotificationService
+            await NotificationService.send_bill_completed(db, bill)
+        except Exception as notif_err:
+            print("[Notification Bill Completed Error]:", notif_err)
 
     return bill
 

@@ -6,8 +6,11 @@ class OrderStatusUpdate(BaseModel):
 
 
 ALLOWED_STATUS_FLOW = {
-    "pending": ["preparing"],
-    "preparing": ["ready"],
+    "pending": ["accepted", "preparing", "rejected", "cancelled"],
+    "accepted": ["preparing", "rejected", "cancelled"],
+    "preparing": ["ready", "cancelled"],
     "ready": ["served"],
-    "served": []
+    "served": [],
+    "rejected": [],
+    "cancelled": [],
 }

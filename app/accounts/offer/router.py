@@ -155,3 +155,25 @@ async def get_offer_usage(
         offer_id,
         current
     )
+
+
+@router.post("/{offer_id}/send-notification")
+async def send_offer_notification(
+    offer_id: int,
+    db: SessionDep,
+    target_type: str = "branch",
+    target_id: int | None = None,
+    current=Depends(access_four),
+):
+    """Broadcasts push notifications for this offer to eligible customer devices."""
+    from app.accounts.notification.service import NotificationService
+
+    res = await NotificationService.send_offer_campaign(
+        db=db,
+        offer_id=offer_id,
+        target_type=target_type,
+        target_id=target_id,
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=res.get("message"))
+    return res
