@@ -10,11 +10,6 @@ from app.accounts.pricing.model import Pricing
 from app.accounts.table.model import Table
 
 
-
-
-
-
-
 async def get_orders_all_branches(
     db,
     client_id: int,

@@ -146,6 +146,13 @@ class Order(Base):
         nullable=True,
     )
 
+    restaurant_session_id = Column(
+        Integer,
+        ForeignKey("restaurant_sessions.id"),
+        nullable=True,
+        index=True,
+    )
+
     # =====================================================
     # RELATIONSHIPS
     # =====================================================
@@ -167,6 +174,12 @@ class Order(Base):
         "Customer",
         back_populates="orders",
         foreign_keys=[customer_id],
+    )
+
+    restaurant_session = relationship(
+        "RestaurantSession",
+        back_populates="orders",
+        foreign_keys=[restaurant_session_id],
     )
 
     order_items = relationship(

@@ -1,7 +1,7 @@
 from app.accounts.payment.enum import PaymentMethod
 from fastapi import HTTPException
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.accounts.bill.model import Bill
@@ -22,6 +22,9 @@ from app.accounts.crm.wallet.service import (
 )
 
 from app.accounts.order.model import Order
+from app.accounts.table.model import Table
+from app.accounts.table.enum import TableStatus
+from app.accounts.table_qr.model import RestaurantSession, SessionStatus
 
 from app.core.cache import Cache
 
@@ -262,7 +265,7 @@ async def make_payment_service(
             raise HTTPException(
                 status_code=400,
                 detail=(
-                    "Razorpay payments must be completed "
+                    "Razorpay payments must be completed"
                     "through Razorpay verification."
                 ),
             )
@@ -694,12 +697,41 @@ async def make_payment_service(
         )
 
         # ====================================================
+        # CLOSE TABLE SESSION & FREE TABLE
+        # ====================================================
+        order_obj = await db.get(Order, bill.order_id)
+        if order_obj:
+            if order_obj.restaurant_session_id:
+                sess = await db.get(RestaurantSession, order_obj.restaurant_session_id)
+                if sess:
+                    sess.status = SessionStatus.COMPLETED.value
+            if order_obj.table_id:
+                tbl = await db.get(Table, order_obj.table_id)
+                if tbl:
+                    tbl.status = TableStatus.available
+                await db.execute(
+                    update(RestaurantSession)
+                    .where(
+                        RestaurantSession.table_id == order_obj.table_id,
+                        RestaurantSession.status == SessionStatus.ACTIVE.value,
+                    )
+                    .values(status=SessionStatus.COMPLETED.value)
+                )
+
+        # ====================================================
         # COMMIT
         # ====================================================
 
         await db.commit()
 
         await db.refresh(payment)
+
+        # Trigger bill completed notification to QR session and CRM
+        try:
+            from app.accounts.notification.service import NotificationService
+            await NotificationService.send_bill_completed(db, bill)
+        except Exception:
+            pass
 
         # ====================================================
         # CACHE

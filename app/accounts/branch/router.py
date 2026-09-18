@@ -584,18 +584,18 @@ async def update_branch(
 # DELETE BRANCH
 # ============================================================
 
-@router.delete(
-    "/delete_branch/{branch_id}"
-)
-@router.delete(
-    "/delet_branch/{branch_id}"
-)
-@branches_router.delete(
-    "/delete_branch/{branch_id}"
-)
-@branches_router.delete(
-    "/delet_branch/{branch_id}"
-)
+# @router.delete(
+#     "/delete_branch/{branch_id}"
+# )
+# @router.delete(
+#     "/delet_branch/{branch_id}"
+# )
+# @branches_router.delete(
+#     "/delete_branch/{branch_id}"
+# )
+# @branches_router.delete(
+#     "/delet_branch/{branch_id}"
+# )
 @branches_router.delete(
     "/{branch_id}"
 )

@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy import (
     delete,
     select,
+    update,
 )
 
 from sqlalchemy.orm import (
@@ -16,6 +17,7 @@ from sqlalchemy.orm import (
 
 from app.accounts.order.model import (
     Order,
+    OrderItem,
     OrderSource,
 )
 
@@ -310,15 +312,13 @@ async def update_order_status_service(
     # -----------------------------------------------------
 
     valid_statuses = {
-
         "pending",
-
+        "accepted",
         "preparing",
-
         "ready",
-
         "served",
-
+        "rejected",
+        "cancelled",
     }
 
     if new_status not in valid_statuses:
@@ -414,6 +414,13 @@ async def update_order_status_service(
 
     order.status = new_status
 
+    # Also synchronize all order items to match the new order status
+    await db.execute(
+        update(OrderItem)
+        .where(OrderItem.order_id == order.id)
+        .values(order_status=new_status)
+    )
+
     # -----------------------------------------------------
     # UPDATE ONLINE ORDER DETAIL
     # -----------------------------------------------------
@@ -455,6 +462,18 @@ async def update_order_status_service(
     await db.commit()
 
     await db.refresh(order)
+
+    # Trigger FCM order status notification safely
+    try:
+        from app.accounts.notification.service import NotificationService
+        await NotificationService.send_order_status_update(
+            db=db,
+            order=order,
+            old_status=current_status,
+            new_status=new_status,
+        )
+    except Exception as notif_err:
+        pass
 
     return {
 
@@ -619,6 +638,18 @@ async def cancel_order_service(
     await db.commit()
 
     await db.refresh(order)
+
+    # Trigger FCM cancellation notification safely
+    try:
+        from app.accounts.notification.service import NotificationService
+        await NotificationService.send_order_status_update(
+            db=db,
+            order=order,
+            old_status=old_status,
+            new_status="cancelled",
+        )
+    except Exception as notif_err:
+        pass
 
     return {
 

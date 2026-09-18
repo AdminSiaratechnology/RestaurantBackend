@@ -45,6 +45,12 @@ try:
     from app.accounts.online_platforms.model import OnlinePlatformConnection
     from app.accounts.online_item_mappings.model import OnlinePlatformItemMapping
     from app.accounts.webhooks.model import WebhookEvent
+    from app.accounts.table_qr.model import TableQRCode, RestaurantSession
+    from app.accounts.notification.model import (
+        DeviceToken,
+        CustomerNotificationPreference,
+        Notification,
+    )
 
 except ImportError:
     pass

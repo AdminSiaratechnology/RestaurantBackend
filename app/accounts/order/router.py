@@ -2906,6 +2906,8 @@ async def update_order_item_status(
             for item in all_items
         ]
 
+        old_order_status = order.status
+
         # ----------------------------------------------------
         # ORDER STATUS
         # ----------------------------------------------------
@@ -2950,6 +2952,19 @@ async def update_order_item_status(
         await db.refresh(
             order_item
         )
+
+        # Trigger FCM status update notification safely only if order status actually transitioned
+        if old_order_status != order.status:
+            try:
+                from app.accounts.notification.service import NotificationService
+                await NotificationService.send_order_status_update(
+                    db=db,
+                    order=order,
+                    old_status=old_order_status,
+                    new_status=order.status,
+                )
+            except Exception:
+                pass
 
         await Cache.delete(
             f"kitchen:branch:"
