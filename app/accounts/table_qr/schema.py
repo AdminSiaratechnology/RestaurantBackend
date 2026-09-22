@@ -94,3 +94,15 @@ class PaymentVerifyOut(BaseModel):
     order_id: int
     payment_id: int
     order_status: str
+
+
+class PublicPaymentFailureReq(BaseModel):
+    bill_id: int
+    razorpay_order_id: str | None = None
+    razorpay_payment_id: str | None = None
+    error_code: str | None = None
+    error_description: str | None = None
+    error_source: str | None = None
+    error_step: str | None = None
+    error_reason: str | None = None
+

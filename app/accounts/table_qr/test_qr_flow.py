@@ -29,6 +29,11 @@ from app.accounts.payment.model import Payment
 from app.accounts.order.model import Order, OrderItem
 
 
+from app.accounts.tax.model import TaxBillingSetting
+from app.accounts.crm.customer_history.model import CustomerVisitHistory
+from app.accounts.crm.rank_rules.model import CRMBranchRankRule
+from app.accounts.offer.model import Offer
+
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.types import JSON
 from sqlalchemy.ext.compiler import compiles
@@ -57,6 +62,10 @@ async def db_session():
         Payment.__table__,
         TableQRCode.__table__,
         RestaurantSession.__table__,
+        TaxBillingSetting.__table__,
+        CustomerVisitHistory.__table__,
+        CRMBranchRankRule.__table__,
+        Offer.__table__,
     ]
     async with engine.begin() as conn:
         await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=target_tables))

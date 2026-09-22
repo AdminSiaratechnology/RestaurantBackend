@@ -19,6 +19,7 @@ from app.accounts.table_qr.model import RestaurantSession
 from app.accounts.table_qr.schema import (
     PaymentVerifyOut,
     PublicOrderCreateReq,
+    PublicPaymentFailureReq,
     QRResolutionOut,
     RazorpayInitiateOut,
     RazorpayPaymentVerifyReq,
@@ -246,6 +247,22 @@ async def verify_payment(
         session=session,
         data=data,
     )
+
+
+@public_router.post(
+    "/payment/failure",
+)
+async def record_payment_failure(
+    data: PublicPaymentFailureReq,
+    db: SessionDep,
+    session: RestaurantSession = Depends(get_session_from_header),
+):
+    return await PublicCustomerQRService.record_payment_failure(
+        db=db,
+        session=session,
+        data=data,
+    )
+
 
 
 @public_router.post("/bill/request")

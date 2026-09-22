@@ -585,46 +585,24 @@ async def partner_dashboard(
 
 
 
-    # Total partners
-    total_partners = (await db.execute(
-        select(func.count()).select_from(Partner)
-    )).scalar()
-
-    # Active partners
-    active_partners = (await db.execute(
-        select(func.count()).where(Partner.is_active == True)
-    )).scalar()
-
-    # Today partners
-    today_partners = (await db.execute(
-        select(func.count()).where(
-            Partner.created_at >= today_start,
-            Partner.created_at <= today_end
+    # 1. Fetch total, active, today, yesterday, last 7, prev 7 with single conditional aggregation
+    stats_res = await db.execute(
+        select(
+            func.count(Partner.id).label("total"),
+            func.count(case((Partner.is_active.is_(True), Partner.id))).label("active"),
+            func.count(case(((Partner.created_at >= today_start) & (Partner.created_at <= today_end), Partner.id))).label("today"),
+            func.count(case(((Partner.created_at >= yesterday_start) & (Partner.created_at <= yesterday_end), Partner.id))).label("yesterday"),
+            func.count(case((Partner.created_at >= last_7_start, Partner.id))).label("last_7"),
+            func.count(case(((Partner.created_at >= prev_7_start) & (Partner.created_at < prev_7_end), Partner.id))).label("prev_7"),
         )
-    )).scalar()
-
-    # Yesterday partners
-    yesterday_partners = (await db.execute(
-        select(func.count()).where(
-            Partner.created_at >= yesterday_start,
-            Partner.created_at <= yesterday_end
-        )
-    )).scalar()
-
-    # Last 7 days
-    last_7_partners = (await db.execute(
-        select(func.count()).where(Partner.created_at >= last_7_start)
-    )).scalar()
-
-    # Previous 7 days
-    prev_7_partners = (await db.execute(
-        select(func.count()).where(
-            Partner.created_at >= prev_7_start,
-            Partner.created_at < prev_7_end
-        )
-    )).scalar()
-
-
+    )
+    stats_row = stats_res.one()
+    total_partners = stats_row.total or 0
+    active_partners = stats_row.active or 0
+    today_partners = stats_row.today or 0
+    yesterday_partners = stats_row.yesterday or 0
+    last_7_partners = stats_row.last_7 or 0
+    prev_7_partners = stats_row.prev_7 or 0
 
     active_percentage = 0
     if total_partners > 0:
@@ -633,26 +611,25 @@ async def partner_dashboard(
     today_trend = calculate_trend(today_partners, yesterday_partners)
     weekly_trend = calculate_trend(last_7_partners, prev_7_partners)
 
-
+    # 2. Fetch 7-day daily counts in single grouped query
+    graph_res = await db.execute(
+        select(
+            func.date(Partner.created_at).label("day"),
+            func.count(Partner.id).label("count")
+        )
+        .where(Partner.created_at >= last_7_start)
+        .group_by(func.date(Partner.created_at))
+    )
+    daily_map = {str(row.day): row.count for row in graph_res.all()}
 
     graph = []
     for i in range(7):
-        day_start = today_start - timedelta(days=i)
-        day_end = day_start + timedelta(days=1)
-
-        count = (await db.execute(
-            select(func.count()).where(
-                Partner.created_at >= day_start,
-                Partner.created_at < day_end
-            )
-        )).scalar()
-
+        day_date = (today_start - timedelta(days=6 - i)).date()
+        date_str = str(day_date)
         graph.append({
-            "date": day_start.strftime("%Y-%m-%d"),
-            "count": count
+            "date": date_str,
+            "count": daily_map.get(date_str, 0)
         })
-
-    graph.reverse()
 
 
 
@@ -940,7 +917,10 @@ async def get_client_overview(
         # Check permissions
         await get_client_if_accessible(client_id, db, current)
 
-        # Today's boundaries
+        cache_key = f"dashboard:client-overview:client:{client_id}:branch:{branch_id or 'all'}:filter:{filter_type}"
+        cached = await Cache.get(cache_key)
+        if cached:
+            return cached
         today = datetime.utcnow().date()
         today_start = datetime(today.year, today.month, today.day)
 
@@ -1241,7 +1221,7 @@ async def get_client_overview(
                 "absent": 0
             }
 
-        return {
+        response_data = {
             "total_sales": total_sales,
             "gross_profit": gross_profit,
             "orders": orders_count,
@@ -1257,6 +1237,8 @@ async def get_client_overview(
             "inventory_alerts": inventory_alerts,
             "staff_overview": staff_overview
         }
+        await Cache.set(cache_key, response_data, expire=60)
+        return response_data
 
     except SQLAlchemyError as e:
         raise HTTPException(

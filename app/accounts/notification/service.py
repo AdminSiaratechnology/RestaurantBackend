@@ -1,5 +1,6 @@
 # app/accounts/notification/service.py
 
+import asyncio
 import json
 import logging
 import os
@@ -292,7 +293,7 @@ class NotificationService:
                         ),
                     ),
                 )
-                response = messaging_mod.send_each_for_multicast(message)
+                response = await asyncio.to_thread(messaging_mod.send_each_for_multicast, message)
                 sent_count = response.success_count
                 failed_count = response.failure_count
 

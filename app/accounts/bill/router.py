@@ -28,7 +28,7 @@ from app.db.config import SessionDep, get_db
 from app.accounts.deps import get_current_user, UserRole
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.accounts.bill.service import _calculate_offer_discount
+from app.accounts.bill.service import _calculate_offer_discount, complete_bill_transaction, get_or_create_bill_for_order
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
@@ -1932,11 +1932,10 @@ async def update_bill_status(
     data: BillStatusUpdate,
     db: SessionDep
 ):
-    print("HANDLE CUSTOMER CALLED")####################################
     result = await db.execute(
         select(Bill).where(
             Bill.id == bill_id
-        )
+        ).with_for_update()
     )
 
     bill = result.scalar_one_or_none()
@@ -1950,10 +1949,6 @@ async def update_bill_status(
     # ==========================================
     # ALREADY UPDATED
     # ==========================================
-    # NOTE: Ye guard hi customer/visit-history creation ko
-    # idempotent banata hai — complete/cancel ho chuke bill
-    # ke liye function dobara chalega hi nahi.
-
     if bill.payment_status in [
         PaymentStatus.complete,
         PaymentStatus.cancel
@@ -1967,9 +1962,21 @@ async def update_bill_status(
         )
 
     # ==========================================
-    # UPDATE STATUS
+    # COMPLETE STATUS
     # ==========================================
+    if data.payment_status == PaymentStatus.complete:
+        bill = await complete_bill_transaction(
+            db=db,
+            bill=bill,
+            payment_method=bill.payment_method,
+        )
+        await db.commit()
+        await db.refresh(bill)
+        return bill
 
+    # ==========================================
+    # OTHER STATUSES (CANCEL / EDITED / PENDING)
+    # ==========================================
     bill.payment_status = data.payment_status
 
     order = await db.get(
@@ -1984,75 +1991,16 @@ async def update_bill_status(
         )
 
         if table:
-            if data.payment_status == PaymentStatus.complete:
-                table.status = TableStatus.available
-                from app.accounts.table_qr.model import RestaurantSession, SessionStatus
-                if order and order.restaurant_session_id:
-                    sess = await db.get(RestaurantSession, order.restaurant_session_id)
-                    if sess:
-                        sess.status = SessionStatus.COMPLETED.value
-                await db.execute(
-                    update(RestaurantSession)
-                    .where(
-                        RestaurantSession.table_id == table.id,
-                        RestaurantSession.status == SessionStatus.ACTIVE.value,
-                    )
-                    .values(status=SessionStatus.COMPLETED.value)
-                )
-            elif data.payment_status in [
+            if data.payment_status in [
                 PaymentStatus.pending,
                 PaymentStatus.edited,
+                PaymentStatus.cancel,
             ]:
-                table.status = TableStatus.occupied
-            elif data.payment_status == PaymentStatus.cancel:
                 table.status = TableStatus.occupied
 
             await Cache.delete(f"tables:branch:{table.branch_id}")
 
-    if data.payment_status == PaymentStatus.complete:
-        bill.payment_status = PaymentStatus.complete
-        bill.paid_amount = (
-            bill.final_amount
-            if bill.final_amount > 0
-            else bill.grand_total
-        )
-        bill.due_amount = 0.0
-
-        # ==========================================
-        # CUSTOMER IDENTIFICATION + VISIT HISTORY
-        # Sirf tab trigger hoga jab payment COMPLETE
-        # ho rahi hai — yahi asli "successful checkout"
-        # moment hai (guard upar isko idempotent bana
-        # chuka hai).
-        # ==========================================
-
-        branch = await db.get(Branch, bill.branch_id)
-
-        customer = await handle_customer_and_visit(
-            db=db,
-            client_id=bill.client_id,
-            branch_id=bill.branch_id,
-            branch_name=branch.name if branch else "",
-            order_id=bill.order_id,
-            bill_id=bill.id,
-            total_amount=bill.final_amount or bill.grand_total,
-            discount=(bill.discount_amount or 0) + (bill.offer_discount or 0),
-            tax=bill.tax_total or 0,
-            payment_method=bill.payment_method,
-            table_name=(table.name if order and order.table_id and table else None),
-            visit_type=bill.order_type,
-            customer_name=bill.customer_name,
-            customer_phone=bill.customer_phone,
-        )
-
-        # Bill ko bhi identified customer se link karo,
-        # taaki future queries (order history, CRM) mein
-        # bill -> customer trace ho sake.
-        print("RETURNED CUSTOMER =", customer)
-        if customer:
-            bill.customer_id = customer.id
-
-    elif data.payment_status == PaymentStatus.cancel:
+    if data.payment_status == PaymentStatus.cancel:
         bill.paid_amount = 0.0
         bill.due_amount = (
             bill.final_amount
@@ -2076,35 +2024,11 @@ async def update_bill_status(
 
     await db.refresh(bill)
 
-    # Invalidate dashboard cache (payment completed / bill status changed)
+    # Invalidate dashboard cache
     await Cache.delete_pattern(f"dashboard:*:branch:{bill.branch_id}")
 
-    # Invalidate invoice PDF cache since bill status changed
+    # Invalidate invoice PDF cache
     await Cache.delete(f"invoice:pdf:{bill.id}")
-
-    print("====== PAYMENT COMPLETE ======")
-    print("Bill ID:", bill.id)
-    print("Customer Name:", bill.customer_name)
-    print("Customer Phone:", bill.customer_phone)
-
-    if data.payment_status == PaymentStatus.complete:
-        try:
-            from app.accounts.crm.events.publisher import crm_event_publisher
-            await crm_event_publisher.publish_bill_completed(
-                bill_id=bill.id,
-                order_id=bill.order_id,
-                customer_id=bill.customer_id or 0,
-                client_id=bill.client_id,
-                branch_id=bill.branch_id
-            )
-        except Exception as err:
-            print("[CRM Event Publisher Error]:", err)
-
-        try:
-            from app.accounts.notification.service import NotificationService
-            await NotificationService.send_bill_completed(db, bill)
-        except Exception as notif_err:
-            print("[Notification Bill Completed Error]:", notif_err)
 
     return bill
 

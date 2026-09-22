@@ -6,6 +6,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.accounts.bill.model import Bill
 from app.accounts.bill.enum import PaymentStatus
+from app.accounts.bill.service import complete_bill_transaction
 
 from app.accounts.payment.model import Payment
 from app.accounts.payment.schema import PaymentCreate
@@ -655,68 +656,32 @@ async def make_payment_service(
             )
 
         # ====================================================
-        # UPDATE BILL CUSTOMER
-        # ========================================================
-
-        if customer_id:
-
-            bill.customer_id = customer_id
-
+        # UPDATE BILL & EXECUTE AUTHORITATIVE COMPLETION
         # ====================================================
-        # UPDATE BILL
-        # ========================================================
-
-        bill.paid_amount = final_amount
-
-        bill.due_amount = 0.0
-
-        bill.payment_status = (
-            PaymentStatus.complete
-        )
-
-        bill.payment_method = payment_method
 
         bill.offer_id = data.offer_id
-
         bill.offer_discount = round(
             offer_discount,
             2,
         )
-
-        # IMPORTANT:
-        # This is zero when wallet was not selected.
-
         bill.wallet_discount = round(
             wallet_discount,
             2,
         )
-
         bill.final_amount = round(
             final_amount,
             2,
         )
+        if customer_id:
+            bill.customer_id = customer_id
 
-        # ====================================================
-        # CLOSE TABLE SESSION & FREE TABLE
-        # ====================================================
-        order_obj = await db.get(Order, bill.order_id)
-        if order_obj:
-            if order_obj.restaurant_session_id:
-                sess = await db.get(RestaurantSession, order_obj.restaurant_session_id)
-                if sess:
-                    sess.status = SessionStatus.COMPLETED.value
-            if order_obj.table_id:
-                tbl = await db.get(Table, order_obj.table_id)
-                if tbl:
-                    tbl.status = TableStatus.available
-                await db.execute(
-                    update(RestaurantSession)
-                    .where(
-                        RestaurantSession.table_id == order_obj.table_id,
-                        RestaurantSession.status == SessionStatus.ACTIVE.value,
-                    )
-                    .values(status=SessionStatus.COMPLETED.value)
-                )
+        await complete_bill_transaction(
+            db=db,
+            bill=bill,
+            payment_method=payment_method,
+            paid_amount=final_amount,
+            customer_id=customer_id,
+        )
 
         # ====================================================
         # COMMIT
@@ -725,25 +690,7 @@ async def make_payment_service(
         await db.commit()
 
         await db.refresh(payment)
-
-        # Trigger bill completed notification to QR session and CRM
-        try:
-            from app.accounts.notification.service import NotificationService
-            await NotificationService.send_bill_completed(db, bill)
-        except Exception:
-            pass
-
-        # ====================================================
-        # CACHE
-        # ========================================================
-
-        await Cache.delete_pattern(
-            f"dashboard:*:branch:{bill.branch_id}"
-        )
-
-        await Cache.delete(
-            f"invoice:pdf:{bill.id}"
-        )
+        await db.refresh(bill)
 
         return payment
 

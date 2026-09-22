@@ -9,16 +9,15 @@ logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException, status
 from sqlalchemy import select, update
-from sqlalchemy.exc import SQLAlchemyError, IntegrityError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.accounts.bill.enum import PaymentStatus
 from app.accounts.bill.model import Bill
-from app.accounts.bill.router import _calculate_bill_totals
+from app.accounts.bill.service import get_or_create_bill_for_order
 from app.accounts.branch.model import Branch, statusEnum as BranchStatus
-from app.accounts.crm.customer_history.checkout_service import handle_customer_and_visit
-from app.accounts.customer.model import Customer, CustomerTypeEnum
+from app.accounts.customer.model import Customer
 from app.accounts.customer.service import find_or_create_customer
 from app.accounts.item.model import Item
 from app.accounts.order.enum import OrderType
@@ -460,6 +459,8 @@ class PublicCustomerQRService:
 
         customer = None
         if clean_phone or clean_email:
+            # Phone/email provided → resolve or create a real Customer record,
+            # exactly like the main DINE-IN POS flow.
             customer, _ = await find_or_create_customer(
                 db=db,
                 client_id=session.client_id,
@@ -469,75 +470,32 @@ class PublicCustomerQRService:
                 phone=clean_phone,
                 email=clean_email,
             )
-        else:
-            # Table QR diner ordering with name only (no phone/email provided)
-            session = await db.merge(session)
-            if session.customer_id:
-                customer = await db.get(Customer, session.customer_id)
-                if customer:
-                    customer.name = clean_name
-                    await db.commit()
-                    await db.refresh(customer)
 
-            if not customer:
-                guest_phone = f"GUEST-QR-{session.id}"
-                stmt = select(Customer).where(
-                    Customer.client_id == session.client_id,
-                    Customer.phone == guest_phone,
-                )
-                res = await db.execute(stmt)
-                customer = res.scalar_one_or_none()
-
-                if not customer:
-                    customer = Customer(
-                        client_id=session.client_id,
-                        branch_id=session.branch_id,
-                        branch_name=branch.name,
-                        name=clean_name,
-                        phone=guest_phone,
-                        email=None,
-                        customer_source="QR-Ordering",
-                        customer_type=CustomerTypeEnum.NEW,
-                        is_vip=False,
-                    )
-                    db.add(customer)
-                    try:
-                        await db.commit()
-                        await db.refresh(customer)
-                    except IntegrityError:
-                        await db.rollback()
-                        res = await db.execute(stmt)
-                        customer = res.scalar_one()
-
-        if not customer:
-            raise HTTPException(
-                status_code=400,
-                detail="Unable to attach customer details.",
-            )
-
+        # Persist customer (if found) on the session
         session = await db.merge(session)
-        session.customer_id = customer.id
+        if customer:
+            session.customer_id = customer.id
         await db.commit()
         await db.refresh(session)
 
         # Associate active device tokens from this session to the customer for future engagement
-        try:
-            from app.accounts.notification.model import DeviceToken
-            await db.execute(
-                update(DeviceToken)
-                .where(DeviceToken.qr_session_id == session.id)
-                .values(customer_id=customer.id)
-            )
-            await db.commit()
-        except Exception as dt_err:
-            logger.warning(f"Error associating device tokens with customer: {dt_err}")
+        if customer:
+            try:
+                from app.accounts.notification.model import DeviceToken
+                await db.execute(
+                    update(DeviceToken)
+                    .where(DeviceToken.qr_session_id == session.id)
+                    .values(customer_id=customer.id)
+                )
+                await db.commit()
+            except Exception as dt_err:
+                logger.warning(f"Error associating device tokens with customer: {dt_err}")
 
-        display_phone = None if (customer.phone and customer.phone.startswith("GUEST-")) else customer.phone
         return {
-            "customer_id": customer.id,
-            "name": customer.name,
-            "phone": display_phone,
-            "email": customer.email,
+            "customer_id": customer.id if customer else None,
+            "name": clean_name,
+            "phone": clean_phone,
+            "email": clean_email,
         }
 
     @staticmethod
@@ -670,6 +628,26 @@ class PublicCustomerQRService:
         db.add(order)
         await db.flush()
 
+        # Batch fetch items and active branch pricings upfront (eliminate N+1 loop)
+        req_item_ids = [req_item.item_id for req_item in data.items]
+        items_res = await db.execute(
+            select(Item).where(Item.id.in_(req_item_ids))
+        )
+        items_map = {it.id: it for it in items_res.scalars().all()}
+
+        pricings_res = await db.execute(
+            select(Pricing).where(
+                Pricing.item_id.in_(req_item_ids),
+                Pricing.client_id == session.client_id,
+                Pricing.branch_id == session.branch_id,
+                Pricing.is_active.is_(True)
+            ).order_by(Pricing.id.desc())
+        )
+        pricings_map = {}
+        for p in pricings_res.scalars().all():
+            if p.item_id not in pricings_map:
+                pricings_map[p.item_id] = p
+
         total_amount = 0.0
 
         for req_item in data.items:
@@ -679,7 +657,7 @@ class PublicCustomerQRService:
                     detail=f"Invalid quantity for item {req_item.item_id}",
                 )
 
-            db_item = await db.get(Item, req_item.item_id)
+            db_item = items_map.get(req_item.item_id)
             if not db_item or not db_item.is_active:
                 raise HTTPException(
                     status_code=404,
@@ -692,12 +670,14 @@ class PublicCustomerQRService:
                     detail=f"Item {db_item.name} does not belong to this branch",
                 )
 
-            pricing = await resolve_pricing(
-                db=db,
-                db_item=db_item,
-                client_id=session.client_id,
-                branch_id=session.branch_id,
-            )
+            pricing = pricings_map.get(db_item.id)
+            if not pricing:
+                pricing = await resolve_pricing(
+                    db=db,
+                    db_item=db_item,
+                    client_id=session.client_id,
+                    branch_id=session.branch_id,
+                )
 
             snap = order_item_line_snapshot(pricing, req_item.quantity)
 
@@ -763,43 +743,10 @@ class PublicCustomerQRService:
                 detail="Order not found for this session",
             )
 
-        bill_res = await db.execute(
-            select(Bill).where(Bill.order_id == order.id)
-        )
-        bill = bill_res.scalar_one_or_none()
-
-        branch = await db.get(Branch, session.branch_id)
-
-        if not bill:
-            calculated = _calculate_bill_totals(
-                subtotal=order.total_amount,
-                tax_total=0.0,
-                service_charge_percent=0.0,
-                discount_amount=0.0,
-                offer_discount=0.0,
-                round_off_enabled=True,
-            )
-
-            bill = Bill(
-                order_id=order.id,
-                client_id=session.client_id,
-                branch_id=session.branch_id,
-                customer_id=session.customer_id,
-                invoice_no=f"INV-QR-{secrets.token_hex(4).upper()}",
-                order_type=order.order_type,
-                customer_name=order.customer_name,
-                customer_phone=order.customer_phone,
-                payment_status=PaymentStatus.pending,
-                subtotal=calculated["subtotal"],
-                tax_type=branch.tax_type if branch else "GST",
-                grand_total=calculated["grand_total"],
-                final_amount=calculated["final_amount"],
-                due_amount=calculated["final_amount"],
-                paid_amount=0.0,
-            )
-            db.add(bill)
-            await db.commit()
-            await db.refresh(bill)
+        # Use the shared DINE-IN bill creation that loads real branch
+        # TaxBillingSetting, calculates GST/VAT, and applies service charge.
+        bill = await get_or_create_bill_for_order(db, order.id)
+        await db.commit()
 
         if bill.payment_status == PaymentStatus.complete:
             raise HTTPException(
@@ -883,63 +830,15 @@ class PublicCustomerQRService:
             razorpay_verified=True,
         )
 
-        order_res = await db.execute(
-            select(Order)
-            .options(selectinload(Order.order_items))
-            .where(Order.id == bill.order_id)
-        )
-        order = order_res.scalar_one_or_none()
-        if order:
-            order.status = "confirmed"
-            for oi in order.order_items:
-                oi.order_status = "confirmed"
-
-        branch = await db.get(Branch, session.branch_id)
-        branch_name = branch.name if branch else ""
-
-        if bill.customer_id:
-            cust = await db.get(Customer, bill.customer_id)
-            c_name = cust.name if cust else bill.customer_name
-            c_phone = cust.phone if cust else bill.customer_phone
-            c_email = cust.email if cust else None
-        else:
-            c_name = bill.customer_name
-            c_phone = bill.customer_phone
-            c_email = None
-
-        await handle_customer_and_visit(
-            db=db,
-            client_id=session.client_id,
-            branch_id=session.branch_id,
-            branch_name=branch_name,
-            order_id=bill.order_id,
-            bill_id=bill.id,
-            total_amount=bill.grand_total,
-            discount=bill.discount_amount + bill.offer_discount,
-            tax=bill.tax_total,
-            payment_method="razorpay",
-            visit_type="dine_in",
-            customer_name=c_name,
-            customer_phone=c_phone,
-            customer_email=c_email,
-        )
-
-        # Mark table session completed and free table
-        session.status = SessionStatus.COMPLETED.value
-        tbl = await db.get(Table, session.table_id)
-        if tbl:
-            tbl.status = TableStatus.available
-
-        await db.commit()
-
-        # Trigger payment success and bill completed FCM notifications safely
-        try:
-            from app.accounts.notification.service import NotificationService
-            if order:
-                await NotificationService.send_payment_success(db, order, bill)
-            await NotificationService.send_bill_completed(db, bill)
-        except Exception as pay_notif_err:
-            logger.warning(f"FCM payment notification failed: {pay_notif_err}")
+        # make_payment_service() → complete_bill_transaction() has already:
+        #   - Set bill.payment_status = complete
+        #   - Released the table (TableStatus.available)
+        #   - Completed the RestaurantSession
+        #   - Called handle_customer_and_visit() (CRM, visit history, stats)
+        #   - Recalculated customer loyalty rank
+        #   - Invalidated caches
+        #   - Published CRM event
+        #   - Sent FCM bill-completed notification
 
         return {
             "status": "success",
@@ -949,3 +848,40 @@ class PublicCustomerQRService:
             "payment_id": payment.id,
             "order_status": "confirmed",
         }
+
+    @staticmethod
+    async def record_payment_failure(
+        db: AsyncSession,
+        session: RestaurantSession,
+        data: Any,
+    ) -> dict[str, Any]:
+        from datetime import datetime
+        bill_res = await db.execute(
+            select(Bill)
+            .where(
+                Bill.id == data.bill_id,
+                Bill.branch_id == session.branch_id,
+            )
+            .with_for_update()
+        )
+        bill = bill_res.scalar_one_or_none()
+        if not bill:
+            raise HTTPException(status_code=404, detail="Bill not found")
+
+        if bill.payment_status != PaymentStatus.complete:
+            bill.razorpay_error_code = data.error_code or "QR_PAYMENT_FAILED"
+            bill.razorpay_error_description = data.error_description or "Payment failed or cancelled during QR checkout"
+            bill.razorpay_error_source = data.error_source
+            bill.razorpay_error_step = data.error_step
+            bill.razorpay_error_reason = data.error_reason
+            bill.razorpay_error_at = datetime.utcnow()
+            if data.razorpay_payment_id:
+                bill.razorpay_payment_id = data.razorpay_payment_id
+            await db.commit()
+
+        return {
+            "status": "success",
+            "message": "Payment failure recorded",
+            "bill_id": bill.id,
+        }
+
