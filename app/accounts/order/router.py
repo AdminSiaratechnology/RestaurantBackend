@@ -1554,8 +1554,27 @@ async def create_order(
             )
 
         # =================================================
-        # CREATE ORDER ITEMS
+        # BATCH FETCH ITEMS & PRICINGS (ELIMINATE N+1)
         # =================================================
+
+        item_ids = [item.item_id for item in data.items]
+        items_res = await db.execute(
+            select(Item).where(Item.id.in_(item_ids))
+        )
+        items_map = {it.id: it for it in items_res.scalars().all()}
+
+        pricings_res = await db.execute(
+            select(Pricing).where(
+                Pricing.item_id.in_(item_ids),
+                Pricing.client_id == data.client_id,
+                Pricing.branch_id == data.branch_id,
+                Pricing.is_active.is_(True)
+            ).order_by(Pricing.id.desc())
+        )
+        pricings_map = {}
+        for p in pricings_res.scalars().all():
+            if p.item_id not in pricings_map:
+                pricings_map[p.item_id] = p
 
         total = 0.0
 
@@ -1572,13 +1591,10 @@ async def create_order(
                 )
 
             # ---------------------------------------------
-            # GET ITEM
+            # GET ITEM (FROM BATCH MAP)
             # ---------------------------------------------
 
-            db_item = await db.get(
-                Item,
-                item.item_id,
-            )
+            db_item = items_map.get(item.item_id)
 
             if not db_item:
 
@@ -1622,15 +1638,17 @@ async def create_order(
                 )
 
             # ---------------------------------------------
-            # PRICING
+            # PRICING (FROM BATCH MAP OR RESOLVE FALLBACK)
             # ---------------------------------------------
 
-            pricing = await resolve_pricing(
-                db=db,
-                db_item=db_item,
-                client_id=data.client_id,
-                branch_id=data.branch_id,
-            )
+            pricing = pricings_map.get(db_item.id)
+            if not pricing:
+                pricing = await resolve_pricing(
+                    db=db,
+                    db_item=db_item,
+                    client_id=data.client_id,
+                    branch_id=data.branch_id,
+                )
 
             # ---------------------------------------------
             # PRICE SNAPSHOT

@@ -40,6 +40,9 @@ pool = redis.ConnectionPool.from_url(
     REDIS_URL,
     decode_responses=True,
     max_connections=100,
+    socket_timeout=1.0,
+    socket_connect_timeout=1.0,
+    retry_on_timeout=False,
 )
 
 redis_client = redis.Redis(connection_pool=pool)

@@ -360,3 +360,33 @@ class Bill(Base):
         DateTime,
         nullable=True,
     )
+
+    razorpay_error_code = Column(
+        String(100),
+        nullable=True,
+    )
+
+    razorpay_error_description = Column(
+        Text,
+        nullable=True,
+    )
+
+    razorpay_error_source = Column(
+        String(50),
+        nullable=True,
+    )
+
+    razorpay_error_step = Column(
+        String(50),
+        nullable=True,
+    )
+
+    razorpay_error_reason = Column(
+        String(100),
+        nullable=True,
+    )
+
+    razorpay_error_at = Column(
+        DateTime,
+        nullable=True,
+    )
