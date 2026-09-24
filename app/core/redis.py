@@ -4,48 +4,52 @@ app/core/redis.py
 Async Redis client module for the Restaurant Management System.
 
 Responsibilities:
-  - Create async Redis connection using a connection pool.
-  - Provide health check utility.
-  - Provide graceful connection teardown.
+  - Create async Redis connection using a shared connection pool.
+  - Provide health check utility with structured, safe logging.
+  - Provide graceful connection teardown on shutdown.
   - Expose a test endpoint (dev only).
 
-Redis failures are always caught and logged — they never crash the API.
+Redis failures are caught and logged safely to prevent API disruption.
 """
 
 import logging
+from urllib.parse import urlparse
 import redis.asyncio as redis
 from fastapi import APIRouter
-from decouple import config
+from app.core.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# Sanitize Redis URL for safe logging (hides passwords if present)
+def get_sanitized_redis_url(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+        hostname = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 6379
+        db = parsed.path.lstrip("/") or "0"
+        return f"redis://{hostname}:{port}/{db}"
+    except Exception:
+        return "redis://***"
+
+REDIS_URL = settings.REDIS_URL
+SANITIZED_REDIS_URL = get_sanitized_redis_url(REDIS_URL)
+
 # ---------------------------------------------------------------------------
-# Connection Pool
+# Shared Connection Pool & Async Client
 # ---------------------------------------------------------------------------
-
-# pool = redis.ConnectionPool(
-#     host="localhost",
-#     port=6379,
-#     db=0,
-#     decode_responses=True,
-#     max_connections=100,
-# )
-
-# # Shared async Redis client — reuses the connection pool across all requests.
-# redis_client: redis.Redis = redis.Redis(connection_pool=pool)
-
-REDIS_URL = config("REDIS_URL", default="redis://localhost:6379")
 
 pool = redis.ConnectionPool.from_url(
     REDIS_URL,
     decode_responses=True,
     max_connections=100,
-    socket_timeout=1.0,
-    socket_connect_timeout=1.0,
+    socket_timeout=2.0,
+    socket_connect_timeout=2.0,
     retry_on_timeout=False,
 )
 
-redis_client = redis.Redis(connection_pool=pool)
+redis_client: redis.Redis = redis.Redis(connection_pool=pool)
+
+
 # ---------------------------------------------------------------------------
 # Health Check
 # ---------------------------------------------------------------------------
@@ -59,10 +63,12 @@ async def check_redis_health() -> bool:
     """
     try:
         await redis_client.ping()
-        logger.info("Redis connection healthy.")
+        logger.info(f"Redis connection healthy ({SANITIZED_REDIS_URL}).")
+        print("Redis Connected")
         return True
     except Exception as e:
-        logger.error(f"Redis Health Check Failed: {e}")
+        logger.error(f"Redis Health Check Failed ({SANITIZED_REDIS_URL}): {e}")
+        print(f"Redis Unavailable ({type(e).__name__})")
         return False
 
 
@@ -97,7 +103,7 @@ async def redis_test() -> dict:
     try:
         await redis_client.set("test", "Hello Memurai!")
         value = await redis_client.get("test")
-        return {"status": "ok", "message": value}
+        return {"status": "ok", "message": value, "redis_url": SANITIZED_REDIS_URL}
     except Exception as e:
         logger.error(f"Redis test endpoint error: {e}")
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": str(e), "redis_url": SANITIZED_REDIS_URL}

@@ -3,7 +3,7 @@
 from app.accounts.bill.enum import PaymentStatus
 from app.accounts.bill.model import Bill
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, distinct
 from sqlalchemy.orm import selectinload
 from app.accounts.branch.model import Branch
 from app.accounts.client.model import Client
@@ -512,3 +512,90 @@ class TableService:
             "order_id": order.id,
             "payment_status": bill.payment_status if bill else "pending"
         }
+
+    @staticmethod
+    async def update_layout(
+        db,
+        table,
+        data,
+    ):
+        """
+        Persist canvas layout position for a table.
+        Only updates fields that are explicitly provided (not None).
+        Does NOT touch status, orders, billing, QR, or any business logic.
+        """
+        if data.pos_x is not None:
+            table.pos_x = data.pos_x
+        if data.pos_y is not None:
+            table.pos_y = data.pos_y
+        if data.rotation is not None:
+            table.rotation = data.rotation
+        if data.layout_width is not None:
+            table.layout_width = data.layout_width
+        if data.layout_height is not None:
+            table.layout_height = data.layout_height
+
+        await db.commit()
+        await db.refresh(table)
+
+        # Invalidate the branch table cache so the next list request
+        # returns fresh position data.
+        await Cache.delete(f"tables:branch:{table.branch_id}")
+
+        return table
+
+    @staticmethod
+    async def update_floor(
+        db,
+        table,
+        data,
+    ):
+        """
+        Atomically update table floor assignment and position (pos_x, pos_y).
+        Does NOT alter active orders, bills, QR codes, sessions, or table ID.
+        """
+        if data.floor:
+            table.floor = data.floor.strip()
+        if data.pos_x is not None:
+            table.pos_x = data.pos_x
+        if data.pos_y is not None:
+            table.pos_y = data.pos_y
+
+        await db.commit()
+        await db.refresh(table)
+
+        await Cache.delete(f"tables:branch:{table.branch_id}")
+
+        return table
+
+    @staticmethod
+    async def get_floors(
+        db,
+        role,
+        user,
+        branch_id: int | None = None,
+    ) -> list[str]:
+        """
+        Returns the unique set of floor names for a branch.
+        Floors are derived from the Table.floor string field — no separate Floor model.
+        Respects the same branch isolation as get_tables.
+        """
+        query = await TableService.build_table_query(role, user)
+
+        if branch_id:
+            # Validate staff branch access
+            if role == UserRole.STAFF and branch_id != user.branch_id:
+                raise HTTPException(403, "Not allowed to access this branch")
+            query = query.where(Table.branch_id == branch_id)
+
+        # SELECT DISTINCT floor FROM tables WHERE ...
+        floors_query = (
+            select(distinct(Table.floor))
+            .select_from(query.subquery())
+            .where(Table.floor.isnot(None))
+            .where(Table.is_active == True)
+        )
+
+        result = await db.execute(floors_query)
+        floors = [row[0] for row in result.fetchall() if row[0]]
+        return sorted(floors)

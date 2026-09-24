@@ -77,9 +77,9 @@ async def super_admin_login(
     )
 
 
-# ✅ Client Portal
+# ✅ Client / Staff Portal
 @router.post("/login/staff")
-async def client_login(
+async def staff_login(
     data: LoginRequest,
     db: SessionDep,
     request: Request,
