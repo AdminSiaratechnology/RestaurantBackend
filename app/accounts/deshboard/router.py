@@ -904,6 +904,13 @@ async def new_clients_card(
     }
 
 
+def calculate_growth(current_val: float, previous_val: float) -> float:
+    """Return percentage growth from previous_val to current_val, rounded to 1 dp."""
+    if previous_val == 0:
+        return 0.0 if current_val == 0 else 100.0
+    return round((current_val - previous_val) / previous_val * 100, 1)
+
+
 @router.get("/client-overview")
 async def get_client_overview(
     db: SessionDep,
@@ -923,6 +930,17 @@ async def get_client_overview(
             return cached
         today = datetime.utcnow().date()
         today_start = datetime(today.year, today.month, today.day)
+
+        # ── Prior-period windows ──────────────────────────────────────────────
+        # "Today vs same day last week"
+        prior_today_start = today_start - timedelta(days=7)
+        prior_today_end   = prior_today_start + timedelta(days=1)
+
+        # "This period vs previous period" (7 or 30 days)
+        period_days  = 30 if filter_type == "monthly" else 7
+        period_start = datetime.combine(today - timedelta(days=period_days - 1), datetime.min.time())
+        prev_period_start = period_start - timedelta(days=period_days)
+        prev_period_end   = period_start
 
         # 1. Total Sales & Today Sales
         sales_where = [Order.client_id == client_id, Order.status == "served"]
@@ -1021,6 +1039,144 @@ async def get_client_overview(
             .where(*today_cust_where)
         )
         today_active_customers = today_customers_result.scalar() or 0
+
+        # ── Prior-period metrics (for growth %) ───────────────────────────────
+        # a) Prior-today sales (same day last week)
+        prior_today_sales_where = [
+            Order.client_id == client_id, Order.status == "served",
+            Order.created_at >= prior_today_start,
+            Order.created_at < prior_today_end
+        ]
+        if branch_id:
+            prior_today_sales_where.append(Order.branch_id == branch_id)
+        prior_today_sales_res = await db.execute(
+            select(func.coalesce(func.sum(Order.total_amount), 0)).where(*prior_today_sales_where)
+        )
+        prior_today_sales = float(prior_today_sales_res.scalar() or 0)
+
+        # b) Prior-period sales (previous 7 or 30 days)
+        prior_period_sales_where = [
+            Order.client_id == client_id, Order.status == "served",
+            Order.created_at >= prev_period_start,
+            Order.created_at < prev_period_end
+        ]
+        if branch_id:
+            prior_period_sales_where.append(Order.branch_id == branch_id)
+        prior_period_sales_res = await db.execute(
+            select(func.coalesce(func.sum(Order.total_amount), 0)).where(*prior_period_sales_where)
+        )
+        prior_period_sales = float(prior_period_sales_res.scalar() or 0)
+
+        # c) Prior-today orders
+        prior_today_orders_where = [
+            Order.client_id == client_id,
+            Order.created_at >= prior_today_start,
+            Order.created_at < prior_today_end
+        ]
+        if branch_id:
+            prior_today_orders_where.append(Order.branch_id == branch_id)
+        prior_today_orders_res = await db.execute(
+            select(func.count(Order.id)).where(*prior_today_orders_where)
+        )
+        prior_today_orders = int(prior_today_orders_res.scalar() or 0)
+
+        # d) Prior-period orders
+        prior_period_orders_where = [
+            Order.client_id == client_id,
+            Order.created_at >= prev_period_start,
+            Order.created_at < prev_period_end
+        ]
+        if branch_id:
+            prior_period_orders_where.append(Order.branch_id == branch_id)
+        prior_period_orders_res = await db.execute(
+            select(func.count(Order.id)).where(*prior_period_orders_where)
+        )
+        prior_period_orders = int(prior_period_orders_res.scalar() or 0)
+
+        # e) Prior-today gross profit (approximate with same fallback logic)
+        try:
+            prior_today_fc_where = [
+                Order.client_id == client_id, Order.status == "served",
+                Order.created_at >= prior_today_start,
+                Order.created_at < prior_today_end
+            ]
+            if branch_id:
+                prior_today_fc_where.append(Order.branch_id == branch_id)
+            prior_today_fc_res = await db.execute(
+                select(func.coalesce(func.sum(OrderItem.quantity * Pricing.cost_price), 0))
+                .join(Order, Order.id == OrderItem.order_id)
+                .join(Item, Item.id == OrderItem.item_id)
+                .join(Pricing, Pricing.item_id == Item.id)
+                .where(*prior_today_fc_where)
+            )
+            prior_today_fc = float(prior_today_fc_res.scalar() or 0)
+        except Exception:
+            prior_today_fc = 0.0
+        if prior_today_sales > 0 and prior_today_fc == 0:
+            prior_today_gp = round(prior_today_sales * 0.75, 2)
+        else:
+            prior_today_gp = max(0.0, round(prior_today_sales - prior_today_fc, 2))
+
+        # f) Prior-period gross profit
+        try:
+            prior_period_fc_where = [
+                Order.client_id == client_id, Order.status == "served",
+                Order.created_at >= prev_period_start,
+                Order.created_at < prev_period_end
+            ]
+            if branch_id:
+                prior_period_fc_where.append(Order.branch_id == branch_id)
+            prior_period_fc_res = await db.execute(
+                select(func.coalesce(func.sum(OrderItem.quantity * Pricing.cost_price), 0))
+                .join(Order, Order.id == OrderItem.order_id)
+                .join(Item, Item.id == OrderItem.item_id)
+                .join(Pricing, Pricing.item_id == Item.id)
+                .where(*prior_period_fc_where)
+            )
+            prior_period_fc = float(prior_period_fc_res.scalar() or 0)
+        except Exception:
+            prior_period_fc = 0.0
+        if prior_period_sales > 0 and prior_period_fc == 0:
+            prior_period_gp = round(prior_period_sales * 0.75, 2)
+        else:
+            prior_period_gp = max(0.0, round(prior_period_sales - prior_period_fc, 2))
+
+        # g) Prior-today active customers (created on same day last week)
+        prior_today_cust_where = [
+            Customer.client_id == client_id,
+            Customer.created_at >= prior_today_start,
+            Customer.created_at < prior_today_end
+        ]
+        if branch_id:
+            prior_today_cust_where.append(Customer.branch_id == branch_id)
+        prior_today_cust_res = await db.execute(
+            select(func.count(Customer.id)).where(*prior_today_cust_where)
+        )
+        prior_today_customers = int(prior_today_cust_res.scalar() or 0)
+
+        # h) Prior-period customers
+        prior_period_cust_where = [
+            Customer.client_id == client_id,
+            Customer.created_at >= prev_period_start,
+            Customer.created_at < prev_period_end
+        ]
+        if branch_id:
+            prior_period_cust_where.append(Customer.branch_id == branch_id)
+        prior_period_cust_res = await db.execute(
+            select(func.count(Customer.id)).where(*prior_period_cust_where)
+        )
+        prior_period_customers = int(prior_period_cust_res.scalar() or 0)
+
+        # ── Compute growth percentages ────────────────────────────────────────
+        today_sales_growth    = calculate_growth(today_sales, prior_today_sales)
+        today_profit_growth   = calculate_growth(today_gross_profit, prior_today_gp)
+        today_orders_growth   = calculate_growth(today_orders, prior_today_orders)
+        today_customers_growth = calculate_growth(today_active_customers, prior_today_customers)
+
+        period_sales_growth    = calculate_growth(total_sales, prior_period_sales)
+        period_profit_growth   = calculate_growth(gross_profit, prior_period_gp)
+        period_orders_growth   = calculate_growth(orders_count, prior_period_orders)
+        period_customers_growth = calculate_growth(active_customers, prior_period_customers)
 
         # 5. Sales Trend
         days_count = 30 if filter_type == "monthly" else 7
@@ -1230,6 +1386,17 @@ async def get_client_overview(
             "today_gross_profit": today_gross_profit,
             "today_orders": today_orders,
             "today_active_customers": today_active_customers,
+            # Growth % vs same day last week (for "Today" filter cards)
+            "today_sales_growth": today_sales_growth,
+            "today_profit_growth": today_profit_growth,
+            "today_orders_growth": today_orders_growth,
+            "today_customers_growth": today_customers_growth,
+            # Growth % vs previous period (for "Till Today" filter cards)
+            "period_sales_growth": period_sales_growth,
+            "period_profit_growth": period_profit_growth,
+            "period_orders_growth": period_orders_growth,
+            "period_customers_growth": period_customers_growth,
+            "filter_type": filter_type,
             "sales_trend": sales_trend,
             "top_selling_items": top_selling_items,
             "recent_orders": recent_orders,

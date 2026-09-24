@@ -22,7 +22,9 @@ from app.accounts.table.schema import (
     TableUpdate,
     TableOut,
     TableStatus,
-    TableStatusUpdate
+    TableStatusUpdate,
+    TableLayoutUpdate,
+    TableFloorUpdate,
 )
 
 from app.accounts.table.service import TableService
@@ -59,7 +61,9 @@ async def get_tables(
     db: SessionDep,
     current=Depends(access_four),
     branch_id: int | None = None,
-    filter_status: TableStatus | None = None
+    filter_status: TableStatus | None = None,
+    client_id: int | None = None,
+    brand_id: int | None = None,
 ):
     return await TableService.get_tables(
         db,
@@ -83,17 +87,30 @@ async def table_dashboard_all_branches_client(
     )
 
 
+# ── Floor Layout Endpoints ─────────────────────────────────────────────────────
+
 @router.get(
-    "/all-branches",
-    operation_id="table_dashboard_all_branches_v1"
+    "/floors",
+    response_model=list[str],
+    summary="Get unique floor names for a branch",
+    description=(
+        "Returns the distinct set of floor strings from active tables in the branch. "
+        "These are derived from the Table.floor field — no separate Floor model exists. "
+        "Respects the same branch isolation rules as GET /tables/see_table."
+    ),
 )
-async def table_dashboard_all_branches(
+async def get_floors(
     db: SessionDep,
-    current=Depends(access_four)
+    current=Depends(access_four),
+    branch_id: int | None = None,
+    client_id: int | None = None,
+    brand_id: int | None = None,
 ):
-    return await TableService.table_dashboard_all_branches(
+    return await TableService.get_floors(
         db=db,
-        client_id=current["user"].id
+        role=current["role"],
+        user=current["user"],
+        branch_id=branch_id,
     )
 
 
@@ -261,3 +278,68 @@ async def update_table_status(
         table,
         data.status
     )
+
+
+# ── Floor Layout Endpoints ─────────────────────────────────────────────────────
+
+
+@router.patch(
+    "/{table_id}/layout",
+    response_model=TableOut,
+    summary="Update table canvas layout position",
+    description=(
+        "Persists the table's visual position (pos_x, pos_y), rotation, and "
+        "optional display size (layout_width, layout_height) on the floor canvas. "
+        "This endpoint ONLY affects the visual layout — it has zero effect on "
+        "orders, billing, QR codes, sessions, or table status."
+    ),
+)
+async def update_table_layout(
+    table_id: int,
+    data: TableLayoutUpdate,
+    db: SessionDep,
+    current=Depends(access_four),
+):
+    # get_table_by_id enforces branch isolation via build_table_query
+    table = await TableService.get_table_by_id(
+        db,
+        table_id,
+        current["role"],
+        current["user"],
+    )
+
+    return await TableService.update_layout(
+        db,
+        table,
+        data,
+    )
+
+
+@router.patch(
+    "/{table_id}/floor",
+    response_model=TableOut,
+    summary="Update table floor assignment and layout position",
+    description=(
+        "Atomically updates a table's floor assignment and optional (pos_x, pos_y) layout position. "
+        "Respects branch isolation and has zero side-effects on active orders, bills, QR codes, or sessions."
+    ),
+)
+async def update_table_floor(
+    table_id: int,
+    data: TableFloorUpdate,
+    db: SessionDep,
+    current=Depends(access_four),
+):
+    table = await TableService.get_table_by_id(
+        db,
+        table_id,
+        current["role"],
+        current["user"],
+    )
+
+    return await TableService.update_floor(
+        db,
+        table,
+        data,
+    )
+

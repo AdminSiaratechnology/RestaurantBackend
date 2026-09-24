@@ -1,7 +1,7 @@
 from enum import Enum
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.orm import relationship
 from app.accounts.table.enum import TableShape, TableStatus
@@ -59,6 +59,19 @@ class Table(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow
     )
+
+    # ── Floor Layout / Canvas Position Fields ──────────────────────────────
+    # These are purely visual positioning fields for the Floor Layout canvas.
+    # They have NO effect on orders, billing, QR, sessions, or table status.
+    # All nullable — tables without saved positions are auto-placed on canvas.
+
+    pos_x = Column(Float, nullable=True)          # Canvas X position (px)
+    pos_y = Column(Float, nullable=True)          # Canvas Y position (px)
+    rotation = Column(Float, nullable=True, default=0.0)  # Rotation degrees (0–360)
+    layout_width = Column(Float, nullable=True)   # Canvas display width (px)
+    layout_height = Column(Float, nullable=True)  # Canvas display height (px)
+
+    # ──────────────────────────────────────────────────────────────────────
 
     branch = relationship(
         "Branch",

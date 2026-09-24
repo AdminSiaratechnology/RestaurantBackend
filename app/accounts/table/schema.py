@@ -1,7 +1,8 @@
 
 from app.accounts.table.enum import TableShape, TableStatus
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
+from typing import Optional
 
 
 
@@ -61,6 +62,7 @@ class TableOut(BaseModel):
 
     name: str
     floor: str | None
+    floor_id: str | None = None
 
     number_of_seats: int
 
@@ -73,11 +75,50 @@ class TableOut(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # ── Layout / Canvas Position Fields ──
+    pos_x: Optional[float] = None
+    pos_y: Optional[float] = None
+    rotation: Optional[float] = None
+    layout_width: Optional[float] = None
+    layout_height: Optional[float] = None
+
+    @model_validator(mode='after')
+    def set_floor_id(self):
+        if self.floor:
+            self.floor_id = self.floor.strip().lower().replace(" ", "_")
+        else:
+            self.floor_id = "unassigned"
+        return self
+
     class Config:
         from_attributes = True
 
 class TableStatusUpdate(BaseModel):
     status: TableStatus
+
+
+# ── Layout Update Schema (for PATCH /tables/{id}/layout) ─────────────────────
+class TableLayoutUpdate(BaseModel):
+    """
+    Payload for updating a table's visual position on the floor canvas.
+    All fields optional — only provided fields are updated.
+    This schema has NO effect on order/billing/QR/status logic.
+    """
+    pos_x: Optional[float] = Field(default=None, ge=0, description="Canvas X position in px")
+    pos_y: Optional[float] = Field(default=None, ge=0, description="Canvas Y position in px")
+    rotation: Optional[float] = Field(default=None, ge=0, le=360, description="Rotation in degrees")
+    layout_width: Optional[float] = Field(default=None, gt=0, description="Canvas width in px")
+    layout_height: Optional[float] = Field(default=None, gt=0, description="Canvas height in px")
+
+
+# ── Floor Update Schema (for PATCH /tables/{id}/floor) ───────────────────────
+class TableFloorUpdate(BaseModel):
+    """
+    Payload for updating a table's floor assignment and optionally its layout position.
+    """
+    floor: str = Field(..., min_length=1, description="Target floor name")
+    pos_x: Optional[float] = Field(default=None, ge=0, description="Canvas X position in px")
+    pos_y: Optional[float] = Field(default=None, ge=0, description="Canvas Y position in px")
 
 
 
@@ -124,4 +165,4 @@ class TableDetailsOut(BaseModel):
     order_id: int | None
     total_amount: float
 
-    items: list[TableOrderItemOut]
+    items: list[TableOrderItemOut]

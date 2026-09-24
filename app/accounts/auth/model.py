@@ -29,6 +29,10 @@ _ROLE_TABLE_MAP = {
 }
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 async def authenticate_user(data, db, request, response, allowed_roles: list):
     email = data.email
 
@@ -36,9 +40,14 @@ async def authenticate_user(data, db, request, response, allowed_roles: list):
     client_ip = request.client.host if request and request.client else "unknown"
     rate_limit_key = f"login:{client_ip}"
     
-    # attempts = await redis_client.get(rate_limit_key)
-    # if attempts and int(attempts) >= 5:
-    #     raise HTTPException(429, "Too many login attempts. Please try again later.")
+    try:
+        attempts = await redis_client.get(rate_limit_key)
+        if attempts and int(attempts) >= 5:
+            raise HTTPException(429, "Too many login attempts. Please try again later.")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.warning(f"Redis rate limit check skipped: {e}")
 
     # 🔍 Search user in all tables
     user = None
@@ -64,14 +73,20 @@ async def authenticate_user(data, db, request, response, allowed_roles: list):
 
     if not user:
         # Increment failed attempts
-        await redis_client.incr(rate_limit_key)
-        await redis_client.expire(rate_limit_key, 900) # 15 mins
+        try:
+            await redis_client.incr(rate_limit_key)
+            await redis_client.expire(rate_limit_key, 900)  # 15 mins
+        except Exception as e:
+            logger.warning(f"Redis rate limit increment failed: {e}")
         raise HTTPException(401, "Invalid email or password")
 
     # 🔐 Password check
     if not verify_password(data.password, user.password_hash):
-        await redis_client.incr(rate_limit_key)
-        await redis_client.expire(rate_limit_key, 900)
+        try:
+            await redis_client.incr(rate_limit_key)
+            await redis_client.expire(rate_limit_key, 900)
+        except Exception as e:
+            logger.warning(f"Redis rate limit increment failed: {e}")
         raise HTTPException(401, "Invalid email or password")
 
     # 🔐 Role restriction
@@ -101,7 +116,10 @@ async def authenticate_user(data, db, request, response, allowed_roles: list):
         user_payload["client_id"] = user.id
 
     # Clear login attempts on success
-    await redis_client.delete(rate_limit_key)
+    try:
+        await redis_client.delete(rate_limit_key)
+    except Exception as e:
+        logger.warning(f"Redis rate limit key deletion failed: {e}")
 
     # Store active session in Redis
     session_data = {

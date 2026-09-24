@@ -146,7 +146,7 @@ class Settings:
 
     REDIS_URL: str = os.getenv(
         "REDIS_URL",
-        "redis://localhost:6379/0",
+        "redis://127.0.0.1:6379/0",
     )
 
     # ========================================================
